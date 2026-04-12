@@ -7,9 +7,14 @@
  *
  *   abort                         -- runtime.runtimePanicAt fallback (dead code)
  *   write                         -- runtime.putchar (dead code)
- *   mmap                          -- runtime_unix.preinit: heap allocation (LIVE with gc != none)
+ *   mmap                          -- runtime_unix.preinit: heap allocation (LIVE)
  *   raise                         -- tinygo_handle_fatal_signal (dead code)
- *   tinygo_register_fatal_signals -- tinygo main startup (called, but noop is safe)
+ *   tinygo_register_fatal_signals -- tinygo main startup (called, noop)
+ *   memcpy                        -- runtime.stringConcat, runtime.sliceAppend
+ *   memmove                       -- runtime.sliceAppend (overlap-safe)
+ *   memset                        -- runtime.alloc (zero new blocks), GC mark phase
+ *   tinygo_scanCurrentStack       -- GC stack/register scanner trampoline
+ *   __ehdr_start                  -- synthetic ELF header for findGlobals()
  */
 
     .text
@@ -96,6 +101,84 @@ memmove:
     rep movsb
 .memmove_done:
     ret
+
+    /* ---- memset: fill memory with a byte value ---------------------- */
+    /* memset(dest=rdi, c=esi, n=rdx) -> rax = dest                     */
+    .global memset
+memset:
+    movq    %rdi, %r8               /* save dest for return value */
+    movb    %sil, %al               /* byte value to fill */
+    movq    %rdx, %rcx              /* count */
+    rep stosb                       /* fill [rdi..rdi+rcx) with al */
+    movq    %r8, %rax               /* return original dest */
+    ret
+
+    /* ---- tinygo_scanCurrentStack: GC register/stack scanner --------- */
+    /* Pushes all callee-saved registers onto the stack so the GC can    */
+    /* scan them for heap pointers, then calls tinygo_scanstack(rsp).    */
+    /* Canonical implementation from TinyGo's src/runtime/asm_amd64.S.  */
+    .global tinygo_scanCurrentStack
+tinygo_scanCurrentStack:
+    pushq   %rbx
+    pushq   %rbp
+    pushq   %r12
+    pushq   %r13
+    pushq   %r14
+    pushq   %r15
+    subq    $8, %rsp                /* maintain 16-byte stack alignment */
+    movq    %rsp, %rdi              /* pass RSP as first arg */
+    callq   tinygo_scanstack        /* Go function in gc_stack_raw.go */
+    addq    $56, %rsp               /* clean up: 6 regs (48) + align (8) */
+    retq
+
+    /* ================================================================= */
+    /* Synthetic ELF header for findGlobals()                            */
+    /*                                                                   */
+    /* os_linux.go:findGlobals() parses the ELF header at __ehdr_start   */
+    /* to locate writable PT_LOAD segments for GC root scanning. GRUB    */
+    /* does not load the real ELF header into memory, so we provide a    */
+    /* fake header that describes exactly the globals region              */
+    /* (_globals_start to _globals_end).                                 */
+    /*                                                                   */
+    /* Overrides ld.lld's auto-defined __ehdr_start (user-defined global */
+    /* symbols take precedence over linker-generated hidden symbols).    */
+    /* ================================================================= */
+
+    .section .rodata,"a",@progbits
+    .align 8
+    .global __ehdr_start
+__ehdr_start:
+    /* --- Elf64_Ehdr (64 bytes) --- */
+    .byte   0x7f, 0x45, 0x4c, 0x46  /* e_ident[0..3]: ELF magic */
+    .byte   2                        /* e_ident[4]: ELFCLASS64 */
+    .byte   1                        /* e_ident[5]: ELFDATA2LSB (little-endian) */
+    .byte   1                        /* e_ident[6]: EV_CURRENT */
+    .byte   0                        /* e_ident[7]: ELFOSABI_NONE */
+    .byte   0                        /* e_ident[8]: ABI version */
+    .zero   7                        /* e_ident[9..15]: padding */
+    .short  2                        /* e_type: ET_EXEC */
+    .short  0x3E                     /* e_machine: EM_X86_64 */
+    .long   1                        /* e_version: EV_CURRENT */
+    .quad   0                        /* e_entry: (unused by findGlobals) */
+    .quad   64                       /* e_phoff: program headers at offset 64 (right after this header) */
+    .quad   0                        /* e_shoff: (unused) */
+    .long   0                        /* e_flags */
+    .short  64                       /* e_ehsize: sizeof(Elf64_Ehdr) */
+    .short  56                       /* e_phentsize: sizeof(Elf64_Phdr) */
+    .short  1                        /* e_phnum: 1 program header */
+    .short  0                        /* e_shentsize: (unused) */
+    .short  0                        /* e_shnum: (unused) */
+    .short  0                        /* e_shstrndx: (unused) */
+
+    /* --- Elf64_Phdr (56 bytes) — describes the writable globals region --- */
+    .long   1                        /* p_type: PT_LOAD */
+    .long   6                        /* p_flags: PF_R | PF_W */
+    .quad   0                        /* p_offset: (unused by findGlobals) */
+    .quad   _globals_start           /* p_vaddr: start of .data+.bss */
+    .quad   0                        /* p_paddr: (unused) */
+    .quad   0                        /* p_filesz: (unused by findGlobals) */
+    .quad   _globals_size            /* p_memsz: size of globals region */
+    .quad   0                        /* p_align: (unused) */
 
     /* ---- Heap region (4 MiB, NOBITS) -------------------------------- */
     /* Defined here as an @nobits section so the linker places it in a    */

@@ -32,7 +32,13 @@ SECTIONS
 
     /* .bss holds the stack AND the 4 KiB-aligned page tables (pml4, pdp,
      * pd). CR3 requires 4 KiB alignment on PML4, so ALIGN(4096) is
-     * load-bearing — do not relax it. */
+     * load-bearing — do not relax it.
+     *
+     * NOTE: The conservative GC scans this region for root pointers.
+     * Page table entries (e.g., 0x83 flags) may cause false positives
+     * (the GC treats them as live heap pointers, preventing some blocks
+     * from being freed). This is harmless for correctness but slightly
+     * reduces GC effectiveness. */
     .bss : ALIGN(4096)
     {
         *(COMMON)
@@ -40,12 +46,13 @@ SECTIONS
     }
 
     _globals_end = .;
+    _globals_size = _globals_end - _globals_start;
 
     /* Heap region: 4 MiB, page-aligned. The .heap input section is defined
      * in stubs.S as @nobits, so ld.lld emits it in a PT_LOAD segment with
      * memsz > filesz. The ELF loader (GRUB or QEMU) zero-fills the
-     * memsz - filesz gap, satisfying the leaking GC's assumption that
-     * mmap'd memory is pre-zeroed.
+     * memsz - filesz gap, satisfying the GC's assumption that heap memory
+     * is pre-zeroed.
      *
      * NOTE: Do NOT use (NOLOAD) here. Despite its name, (NOLOAD) has
      * different semantics in GNU ld (skip loading entirely) vs ld.lld
@@ -59,7 +66,7 @@ SECTIONS
     }
 
     /* _stack_top is defined in boot.S as a label; re-export it here
-     * for potential future use by gc=conservative. */
+     * for the GC's stack scanning (markRoots scans sp to stackTop). */
     _stack_top = stack_top;
 
     /DISCARD/ :
