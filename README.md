@@ -1,18 +1,35 @@
 # gooos
 
-An experimental x86_64 "hello world" kernel written in **TinyGo + GNU assembly**. The goal is to learn and document what it takes to boot a Go-language kernel from a GRUB/Multiboot entry all the way to printing a message on the VGA text console — and to do it with as little C glue as possible.
+An experimental x86_64 operating system written in **Go (TinyGo) + GNU assembly**. The project explores how far Go can go as a kernel language — boot, memory management, garbage collection, and beyond — with assembly used only where the hardware demands it.
 
-## What it does
+## Progress
 
-On boot, `gooos` performs the canonical 32→64-bit bring-up for a Multiboot 1 kernel and then hands control to a Go function:
+| Milestone | Status | Description |
+|---|---|---|
+| Boot to VGA output | Done | Multiboot 1 boot, 32→64-bit transition, VGA text "Hello, World!" |
+| Heap allocation (leaking GC) | Done | 4 MiB heap via linker-defined region, bump allocator, `make`/`append`/`new` working |
+| Conservative GC (mark/sweep) | Done | Automatic garbage collection with real memory reclamation, `runtime.GC()` + `runtime.ReadMemStats()` |
+| Serial output (COM1) | Planned | Logging channel independent of VGA; requires port I/O (assembly or C glue) |
+| IDT + interrupt handlers | Planned | Interrupt Descriptor Table setup, ISR/IRQ stubs (assembly), handler dispatch in Go |
+| PIT / timer | Planned | Programmable Interval Timer for preemptive scheduling; requires IDT first |
+| PS/2 keyboard driver | Planned | Keyboard input via IRQ1; requires IDT first |
+| Virtual memory management | Planned | Page-fault handler, on-demand paging, kernel/user address space separation |
+| Userspace | Planned | Ring 3 execution, syscall interface (assembly for `syscall`/`sysret`) |
+| Filesystem | Planned | Minimal in-memory or FAT filesystem |
+| SMP | Planned | Multi-core boot (AP startup via SIPI, requires assembly for trampoline) |
+| Scheduler / goroutines | Planned | Preemptive task switching; TinyGo `scheduler` integration |
 
-1. GRUB (or QEMU's built-in Multiboot loader) loads the kernel ELF at physical address `0x100000`.
-2. `src/boot.S` (32-bit) sets up a 16 KiB stack, builds a 4-level page table that identity-maps the first 1 GiB via 2 MiB huge pages, enables `CR4.PAE`, `EFER.LME`, and `CR0.PG`, loads a 64-bit GDT, and far-jumps into 64-bit code.
-3. `src/boot.S` (64-bit) reloads data segment registers and calls `kernel_main`.
-4. `src/main.go` defines `kernel_main` via TinyGo's `//export` directive. It clears the VGA text buffer at `0xB8000` and writes `Hello, World!` in bright white on black at the top-left corner.
-5. On return, `boot.S` disables interrupts and halts the CPU forever.
+### Where assembly is unavoidable
 
-No cgo (`import "C"`), no heap, no GC, no interrupts, no drivers. Everything the kernel needs is hand-written assembly or TinyGo with only `unsafe` imported.
+Go cannot express certain CPU-level operations. These remain in assembly (or minimal C):
+
+- **Boot bootstrap** (`boot.S`): Multiboot header, 32→64-bit mode switch, page table setup, GDT load, `lgdt`/`ljmp`
+- **GC stack scanner** (`stubs.S`): `tinygo_scanCurrentStack` pushes callee-saved registers for the GC to scan
+- **Libc stubs** (`stubs.S`): `memcpy`, `memset`, `mmap` — low-level memory operations called by TinyGo's runtime
+- **Future: IDT setup**: `lidt` instruction, ISR/IRQ entry stubs that save registers and call Go handlers
+- **Future: Context switch**: Save/restore register state for task switching
+- **Future: Syscall entry**: `syscall`/`sysret` transition between ring 0 and ring 3
+- **Future: SMP trampoline**: AP startup code must run in real mode / 16-bit protected mode
 
 ## Architecture
 
@@ -38,15 +55,24 @@ No cgo (`import "C"`), no heap, no GC, no interrupts, no drivers. Everything the
                                     +--------------------------------------+
                                     |  long_mode_start  (boot.S, .code64)  |
                                     |  - reload DS/ES/FS/GS/SS             |
-                                    |  - call kernel_main                  |
+                                    |  - call main(0, nil)                 |
                                     +--------------------+-----------------+
                                                          |
                                                          v
+                                +------------------------------------------+
+                                |  TinyGo runtime main (runtime_unix.go)   |
+                                |  - preinit(): mmap stub -> heap init     |
+                                |  - initHeap(): GC block metadata setup   |
+                                |  - initAll(): package init               |
+                                |  - callMain() -> user main()             |
+                                +--------------------+---------------------+
+                                                     |
+                                                     v
                                           +-----------------------------+
-                                          |  kernel_main  (main.go,     |
-                                          |   TinyGo, //export)         |
-                                          |  - clear VGA text buffer    |
-                                          |  - write "Hello, World!"    |
+                                          |  main()  (main.go)          |
+                                          |  - allocate objects         |
+                                          |  - runtime.GC()            |
+                                          |  - display stats on VGA    |
                                           +--------------+--------------+
                                                          |
                                                          v
@@ -54,22 +80,6 @@ No cgo (`import "C"`), no heap, no GC, no interrupts, no drivers. Everything the
                                           |  hang:  cli ; hlt ; jmp .   |
                                           +-----------------------------+
 ```
-
-See `impldoc/helloworld_cgo_design.md` for the full design (memory layout, GDT bits, register sequence, linker script, troubleshooting matrix), and `impldoc/helloworld_cgo_implementation_report.md` for what was actually built and where it deviated from the design.
-
-## Status
-
-| Component | Status |
-|---|---|
-| Boot assembly (`boot.S`) | Implemented, assembles cleanly |
-| TinyGo `kernel_main` (`main.go`) | Implemented |
-| Linker script (`linker.ld`) | Implemented |
-| Multiboot 1 header | Valid (`grub-file --is-x86-multiboot` exits 0) |
-| `.multiboot` placement | File offset `0x158`, VMA `0x00100000` |
-| No SSE/MMX/AVX in output | Verified (0 matches in `objdump -d`) |
-| `kernel_main` exported as C ABI symbol | Verified (`T kernel_main`) |
-| No undefined symbols after link | Verified |
-| QEMU runtime verification | **Pending** (requires a display — run it yourself) |
 
 ## Repository layout
 
@@ -82,14 +92,17 @@ gooos/
 ├── grub/
 │   └── grub.cfg                                    # single-menuentry GRUB config for the ISO
 ├── impldoc/
-│   ├── helloworld_cgo_design.md                    # English design specification
-│   └── helloworld_cgo_implementation_report.md     # English implementation report
+│   ├── helloworld_cgo_design.md                    # boot + VGA hello-world design
+│   ├── helloworld_cgo_implementation_report.md     # hello-world implementation report
+│   ├── heap_gc_design.md                           # heap allocator (leaking GC) design
+│   ├── conservative_gc_design.md                   # conservative GC (mark/sweep) design
+│   └── conservetive_gc_desing_guide.md             # conservative GC reference guide
 └── src/
     ├── boot.S                                      # multiboot header + 32->64 bootstrap + GDT
-    ├── linker.ld                                   # ENTRY(_start), VMA 0x100000, ALIGN(4096) .bss
-    ├── main.go                                     # TinyGo kernel_main, //export
-    ├── stubs.S                                     # dead-code stubs: abort, write, mmap, raise, ...
-    └── target.json                                 # TinyGo bare-metal target definition
+    ├── linker.ld                                   # section layout, heap region, globals symbols
+    ├── main.go                                     # conservative GC demo (runtime.GC + ReadMemStats)
+    ├── stubs.S                                     # mmap, memcpy, memset, tinygo_scanCurrentStack, synthetic ELF header
+    └── target.json                                 # TinyGo target: gc=conservative, scheduler=none
 ```
 
 ## Prerequisites
@@ -117,7 +130,7 @@ sudo apt install -y build-essential grub-pc-bin grub-common xorriso mtools qemu-
 make build
 ```
 
-Under the hood this runs three commands:
+Under the hood this runs four commands:
 
 ```bash
 as --64 src/boot.S -o tmp/boot.o
@@ -130,7 +143,7 @@ ld.lld -m elf_x86_64 -n -T src/linker.ld -o tmp/kernel.bin tmp/boot.o tmp/stubs.
 
 TinyGo's `target.json` has `linkerscript` and `extra-files` fields that would, in theory, let a single `tinygo build` assemble `boot.S`, link with our linker script, and produce `kernel.bin` in one command. In practice, TinyGo 0.33.0 resolves those paths **relative to its own install directory** (`/usr/local/lib/tinygo/`), not relative to the target.json file or the project root. That makes the single-step approach unusable for out-of-tree projects.
 
-What saves the day is the undocumented behaviour that `tinygo build -o <file>.o` emits a relocatable ELF object instead of a fully linked binary. We use that to compile the Go code, assemble the assembly sources ourselves with GNU `as`, and drive `ld.lld` directly. See the implementation report (§3.1, §3.2) for details.
+What saves the day is the undocumented behaviour that `tinygo build -o <file>.o` emits a relocatable ELF object instead of a fully linked binary. We use that to compile the Go code, assemble the assembly sources ourselves with GNU `as`, and drive `ld.lld` directly.
 
 ### Verify the build
 
@@ -138,8 +151,7 @@ What saves the day is the undocumented behaviour that `tinygo build -o <file>.o`
 make check-multiboot                                                       # grub-file --is-x86-multiboot
 objdump -h tmp/kernel.bin                                                  # expect .multiboot at File off < 0x2000
 readelf -l tmp/kernel.bin                                                  # expect first LOAD at VirtAddr 0x100000
-objdump -d tmp/kernel.bin | grep -cE 'xmm|movaps|movups|movsd|movss'       # must print 0
-nm tmp/kernel.bin | grep kernel_main                                       # must show a T symbol
+nm tmp/kernel.bin | grep " U "                                             # must be empty (no unresolved symbols)
 ```
 
 ## Run in QEMU
@@ -161,17 +173,7 @@ make run-kernel
 
 Both commands pass `-no-reboot -no-shutdown` so a triple-fault freezes the guest instead of silently rebooting, which makes bring-up bugs immediately visible.
 
-**Success**: the QEMU window shows `Hello, World!` in bright white on black at the top-left of the VGA text console. The guest stays halted (no reboot loop).
-
-## Out of scope / future work
-
-Not implemented in this milestone, in rough order of likelihood:
-
-1. Heap and GC (parse the Multiboot memory map, implement a page-frame allocator, plug TinyGo's `conservative` GC into `malloc`/`free`).
-2. Serial output on COM1 for a real logging channel.
-3. IDT + interrupt handlers, so we can enable the keyboard and the PIT.
-4. PS/2 keyboard driver.
-5. ACPI, SMP, userspace, filesystems — long-term.
+**Expected output**: the QEMU window shows the conservative GC demo — allocation statistics, GC reclamation results, and a confirmation that post-GC allocation succeeds.
 
 ## License
 
