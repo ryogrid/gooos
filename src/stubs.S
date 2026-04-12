@@ -11,7 +11,6 @@
  *   raise                         -- tinygo_handle_fatal_signal (dead code)
  *   tinygo_register_fatal_signals -- tinygo main startup (called, noop)
  *   memcpy                        -- runtime.stringConcat, runtime.sliceAppend
- *   memmove                       -- runtime.sliceAppend (overlap-safe)
  *   memset                        -- runtime.alloc (zero new blocks), GC mark phase
  *   tinygo_scanCurrentStack       -- GC stack/register scanner trampoline
  *   __ehdr_start                  -- synthetic ELF header for findGlobals()
@@ -78,28 +77,6 @@ memcpy:
     movq    %rdi, %rax
     movq    %rdx, %rcx
     rep movsb
-    ret
-
-    /* ---- memmove: overlap-safe byte copy ----------------------------- */
-    .global memmove
-memmove:
-    /* memmove(dest=rdi, src=rsi, n=rdx) -> rax = dest */
-    movq    %rdi, %rax
-    cmpq    %rsi, %rdi
-    je      .memmove_done
-    jb      .memmove_fwd
-    /* dest > src: copy backward to handle overlap */
-    leaq    -1(%rdi, %rdx), %rdi
-    leaq    -1(%rsi, %rdx), %rsi
-    movq    %rdx, %rcx
-    std
-    rep movsb
-    cld
-    ret
-.memmove_fwd:
-    movq    %rdx, %rcx
-    rep movsb
-.memmove_done:
     ret
 
     /* ---- memset: fill memory with a byte value ---------------------- */
