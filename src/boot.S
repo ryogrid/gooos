@@ -27,6 +27,7 @@
     .align 16
 stack_bottom:
     .skip 16384                      /* 16 KiB kernel stack */
+    .global stack_top
 stack_top:
 
     .align 4096
@@ -56,7 +57,7 @@ gdt64_pointer:
     .text
     .code32
     .global _start
-    .extern kernel_main
+    .extern main
 _start:
     /* Set up the stack (grows down). */
     movl    $stack_top, %esp
@@ -123,10 +124,14 @@ long_mode_start:
     movw    %ax, %gs
     movw    %ax, %ss
 
-    /* Call the Go-defined entry point (exposed via //export kernel_main). */
-    call    kernel_main
+    /* Call TinyGo's runtime entry point (main from runtime_unix.go).
+     * Signature: main(argc int32, argv *unsafe.Pointer) int
+     * Pass argc=0, argv=nil since this is a bare-metal kernel. */
+    xorl    %edi, %edi              /* argc = 0 */
+    xorl    %esi, %esi              /* argv = nil (zero-extended to 64-bit) */
+    call    main
 
-    /* If kernel_main ever returns, disable interrupts and halt forever. */
+    /* If main ever returns, disable interrupts and halt forever. */
 hang:
     cli
     hlt

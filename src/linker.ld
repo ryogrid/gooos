@@ -1,4 +1,4 @@
-/* src/linker.ld — minimal kernel layout. Load address = 1 MiB. */
+/* src/linker.ld — kernel layout with heap region. Load address = 1 MiB. */
 
 ENTRY(_start)
 
@@ -23,6 +23,8 @@ SECTIONS
         *(.rodata .rodata.*)
     }
 
+    _globals_start = .;
+
     .data : ALIGN(16)
     {
         *(.data .data.*)
@@ -36,6 +38,29 @@ SECTIONS
         *(COMMON)
         *(.bss .bss.*)
     }
+
+    _globals_end = .;
+
+    /* Heap region: 4 MiB, page-aligned. The .heap input section is defined
+     * in stubs.S as @nobits, so ld.lld emits it in a PT_LOAD segment with
+     * memsz > filesz. The ELF loader (GRUB or QEMU) zero-fills the
+     * memsz - filesz gap, satisfying the leaking GC's assumption that
+     * mmap'd memory is pre-zeroed.
+     *
+     * NOTE: Do NOT use (NOLOAD) here. Despite its name, (NOLOAD) has
+     * different semantics in GNU ld (skip loading entirely) vs ld.lld
+     * (set SHT_NOBITS). Using an explicit @nobits input section is
+     * portable across both linkers. */
+    .heap : ALIGN(4096)
+    {
+        _heap_start = .;
+        *(.heap)
+        _heap_end = .;
+    }
+
+    /* _stack_top is defined in boot.S as a label; re-export it here
+     * for potential future use by gc=conservative. */
+    _stack_top = stack_top;
 
     /DISCARD/ :
     {
