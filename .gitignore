@@ -4,6 +4,8 @@
 # Scratch / build output
 tmp/
 
+TODO.md
+
 # Backup archive of reference docs (not tracked; originals live at repo root)
 62cc81656d955f9c12cc7ee4f4c083c7-*.zip
 62cc81656d955f9c12cc7ee4f4c083c7-*/
