@@ -41,6 +41,15 @@ func vgaClear() {
 	}
 }
 
+// vgaClearLine clears a VGA row from the given column to end of line.
+func vgaClearLine(row int, fromCol int) {
+	vga := (*[vgaCells]uint16)(unsafe.Pointer(vgaAddr))
+	offset := row*vgaWidth + fromCol
+	for i := offset; i < (row+1)*vgaWidth && i < vgaCells; i++ {
+		vga[i] = uint16(' ') | colorAttr
+	}
+}
+
 // utoa converts a uint64 to its decimal string representation.
 // Implemented manually because importing strconv or fmt would pull in
 // OS-dependent runtime code that does not work in bare-metal.
@@ -123,9 +132,14 @@ func main() {
 	vgaWriteLine(3, "PIT: 100 Hz timer started")
 	serialPrintln("PIT: 100 Hz timer started")
 
+	// Register keyboard IRQ1 handler (vector 33).
+	registerHandler(33, handleKeyboard)
+	vgaWriteLine(4, "Keyboard: ready")
+	serialPrintln("Keyboard: ready")
+
 	// Enable maskable interrupts.
 	sti()
-	vgaWriteLine(4, "Interrupts: enabled")
+	vgaWriteLine(5, "Interrupts: enabled")
 	serialPrintln("Interrupts: enabled")
 
 	// Phase 1: Allocate many objects that immediately become garbage.
@@ -137,7 +151,7 @@ func main() {
 	// Read stats before GC.
 	var before runtime.MemStats
 	runtime.ReadMemStats(&before)
-	vgaWriteLine(5, "Mallocs: "+utoa(before.Mallocs)+"  TotalAlloc: "+utoa(before.TotalAlloc))
+	vgaWriteLine(6, "Mallocs: "+utoa(before.Mallocs)+"  TotalAlloc: "+utoa(before.TotalAlloc))
 	serialPrintln("Mallocs: " + utoa(before.Mallocs) + "  TotalAlloc: " + utoa(before.TotalAlloc))
 
 	// Phase 2: Trigger garbage collection.
@@ -146,7 +160,7 @@ func main() {
 	// Read stats after GC.
 	var after runtime.MemStats
 	runtime.ReadMemStats(&after)
-	vgaWriteLine(6, "GC done. Frees: "+utoa(after.Frees)+"  HeapInuse: "+utoa(after.HeapInuse))
+	vgaWriteLine(7, "GC done. Frees: "+utoa(after.Frees)+"  HeapInuse: "+utoa(after.HeapInuse))
 	serialPrintln("GC done. Frees: " + utoa(after.Frees) + "  HeapInuse: " + utoa(after.HeapInuse))
 
 	// Phase 3: Allocate again to prove memory was reclaimed.
@@ -154,7 +168,7 @@ func main() {
 	for i := 0; i < 100; i++ {
 		_ = allocateGarbage()
 	}
-	vgaWriteLine(7, "Post-GC alloc OK - GC works!")
+	vgaWriteLine(8, "Post-GC alloc OK - GC works!")
 	serialPrintln("Post-GC alloc OK - GC works!")
 
 	// Spin-wait to let the timer accumulate ticks, then display count.
@@ -162,7 +176,7 @@ func main() {
 		hlt()
 	}
 	tickStr := utoa(pitTicks)
-	vgaWriteLine(8, "Timer: "+tickStr+" ticks")
+	vgaWriteLine(9, "Timer: "+tickStr+" ticks")
 	serialPrintln("Timer: " + tickStr + " ticks")
 
 	// Halt loop: keep the kernel alive, waking on each interrupt.

@@ -15,6 +15,10 @@
 - PIC remap: master PIC 0x20/0x21, slave PIC 0xA0/0xA1; ICW1-ICW4 sequence; master offset 32, slave offset 40
 - Always register default IRQ handlers (32-47) that send EOI to prevent PIC hanging on spurious interrupts
 - After sti, add hlt loop at end of main() to keep kernel alive while handling interrupts
+- PIT channel 0: command 0x34 (channel 0, lobyte/hibyte, rate generator mode 2, binary); divisor = 1193182/100 = 11932
+- Register PIT handler AFTER default IRQ handlers, so it overrides the default for vector 32
+- PS/2 keyboard: read scancode from port 0x60 in IRQ1 handler; bit 7 set = key release (ignore); scancode set 1 for make codes
+- VGA echo buffer pattern: maintain a byte array + length, redraw entire line on change, clear trailing chars with vgaClearLine
 
 ---
 
@@ -71,4 +75,33 @@
   - Register default IRQ handlers for all 16 hardware IRQs to prevent PIC from hanging on spurious interrupts
   - hlt loop keeps kernel alive: `for { hlt() }` — CPU sleeps between interrupts, saving power
   - VGA line numbers shift down when adding new status lines; keep track of which row each message uses
+---
+
+## 2026-04-13 - US-005
+- Implemented PIT timer: channel 0 at ~100 Hz using rate generator mode 2
+- Created src/pit.go with pitInit(), handleTimer(), and global pitTicks counter
+- Updated src/main.go: PIT init before sti, timer handler on vector 32, spin-wait displays tick count
+- VGA shows "Timer: 200 ticks" after ~2 seconds, serial logs the same
+- Files changed: src/pit.go (new), src/main.go (PIT init, VGA line shifts, spin-wait loop)
+- **Learnings for future iterations:**
+  - PIT command byte 0x34: channel 0, lobyte/hibyte access mode, rate generator (mode 2), binary counting
+  - PIT oscillator frequency = 1193182 Hz; divisor = freq/target_hz (11932 for 100 Hz)
+  - Register specific IRQ handlers AFTER the default IRQ handler loop so they override the defaults
+  - Spin-wait with hlt() is efficient: `for pitTicks < N { hlt() }` — CPU sleeps between timer ticks
+  - VGA line numbers need to shift when adding new status lines (PIT status on line 3, interrupts moved to line 4, etc.)
+---
+
+## 2026-04-13 - US-006
+- Implemented PS/2 keyboard driver: IRQ1 handler (vector 33), scancode set 1 to ASCII mapping, VGA echo buffer
+- Created src/keyboard.go: handleKeyboard(), scancode-to-ASCII table, echo buffer with backspace/enter support
+- Updated src/main.go: registered keyboard handler on vector 33, added vgaClearLine helper, shifted VGA line numbers
+- VGA shows "Keyboard: ready" on line 4, typed characters echo on line 10
+- Serial logs each keypress
+- Files changed: src/keyboard.go (new), src/main.go (keyboard registration, vgaClearLine, VGA line shifts)
+- **Learnings for future iterations:**
+  - PS/2 keyboard scancodes: read from port 0x60; bit 7 set means key release (break code), clear means key press (make code)
+  - Scancode set 1 mapping: 0x02-0x0B = digits, 0x10-0x19 = qwertyuiop, 0x1E-0x26 = asdfghjkl, 0x2C-0x32 = zxcvbnm, 0x39 = space
+  - Special scancodes: 0x0E = backspace, 0x1C = enter
+  - VGA echo pattern: maintain a fixed-size byte buffer + length counter; redraw full line on every change; use vgaClearLine to erase trailing chars after backspace
+  - VGA line number management is becoming fragile — each new status line shifts all subsequent lines; consider using named constants for line assignments
 ---

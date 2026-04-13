@@ -83,7 +83,7 @@
         "All code comments in English"
       ],
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "notes": "Depends on US-004 (PIC remap + sti). Timer tick is used later for preemptive scheduling."
     },
     {
@@ -100,7 +100,7 @@
         "All code comments in English"
       ],
       "priority": 6,
-      "passes": false,
+      "passes": true,
       "notes": "Depends on US-004 (PIC remap + sti). After this the kernel has interactive I/O."
     },
     {
