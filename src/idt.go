@@ -2,10 +2,10 @@
 //
 // Defines the IDT entry structure (16 bytes per gate descriptor), a
 // 256-entry table, and initialization logic that populates every entry
-// with a default handler and loads the table via lidt.
+// with its corresponding ISR stub (from isr.S) and loads the table via lidt.
 //
-// Interrupts are NOT enabled here (no sti). ISR stubs and PIC remap
-// come in subsequent milestones.
+// Interrupts are NOT enabled here (no sti). PIC remap comes in a
+// subsequent milestone.
 
 package main
 
@@ -55,12 +55,13 @@ func setGate(vector int, handler uintptr) {
 	idtTable[vector].Reserved = 0
 }
 
-// idtInit populates all 256 IDT entries with a default handler and loads
-// the IDT via the lidt instruction.
+// idtInit populates all 256 IDT entries with the ISR stubs from isr.S
+// and loads the IDT via the lidt instruction.
 func idtInit() {
-	handler := defaultHandlerAddr()
+	tableBase := isrTableAddr()
 
 	for i := 0; i < idtEntries; i++ {
+		handler := *(*uintptr)(unsafe.Pointer(tableBase + uintptr(i)*8))
 		setGate(i, handler)
 	}
 
@@ -83,11 +84,11 @@ func idtInit() {
 	lidt(uintptr(unsafe.Pointer(&idtDesc[0])))
 }
 
-// defaultHandlerAddr returns the address of the default interrupt handler
-// stub in assembly. Implemented in stubs.S.
+// isrTableAddr returns the base address of the 256-entry ISR stub
+// address table in assembly. Implemented in isr.S.
 //
-//go:linkname defaultHandlerAddr defaultHandlerAddr
-func defaultHandlerAddr() uintptr
+//go:linkname isrTableAddr isrTableAddr
+func isrTableAddr() uintptr
 
 // lidt loads the IDT register from the descriptor at the given address.
 // Implemented in stubs.S.

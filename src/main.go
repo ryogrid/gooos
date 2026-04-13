@@ -63,6 +63,13 @@ func allocateGarbage() *[256]byte {
 	return p
 }
 
+// handleDivisionError displays an exception message on VGA and serial
+// when vector 0 (#DE - Division Error) fires.
+func handleDivisionError(vector uint64) {
+	vgaWriteLine(7, "Exception: #DE")
+	serialPrintln("Exception: #DE (Division Error)")
+}
+
 func main() {
 	vgaClear()
 
@@ -73,10 +80,15 @@ func main() {
 	vgaWriteLine(0, "Serial: OK")
 	serialPrintln("Serial: OK")
 
-	// Initialize and load the 256-entry IDT.
+	// Initialize and load the 256-entry IDT with ISR stubs.
 	idtInit()
 	vgaWriteLine(1, "IDT: loaded, 256 entries")
 	serialPrintln("IDT: loaded, 256 entries")
+
+	// Register exception handlers.
+	registerHandler(0, handleDivisionError)
+	vgaWriteLine(2, "ISR: 256 stubs installed")
+	serialPrintln("ISR: 256 stubs installed")
 
 	// Phase 1: Allocate many objects that immediately become garbage.
 	const numAllocs = 500
@@ -87,7 +99,7 @@ func main() {
 	// Read stats before GC.
 	var before runtime.MemStats
 	runtime.ReadMemStats(&before)
-	vgaWriteLine(2, "Mallocs: "+utoa(before.Mallocs)+"  TotalAlloc: "+utoa(before.TotalAlloc))
+	vgaWriteLine(3, "Mallocs: "+utoa(before.Mallocs)+"  TotalAlloc: "+utoa(before.TotalAlloc))
 	serialPrintln("Mallocs: " + utoa(before.Mallocs) + "  TotalAlloc: " + utoa(before.TotalAlloc))
 
 	// Phase 2: Trigger garbage collection.
@@ -96,7 +108,7 @@ func main() {
 	// Read stats after GC.
 	var after runtime.MemStats
 	runtime.ReadMemStats(&after)
-	vgaWriteLine(3, "GC done. Frees: "+utoa(after.Frees)+"  HeapInuse: "+utoa(after.HeapInuse))
+	vgaWriteLine(4, "GC done. Frees: "+utoa(after.Frees)+"  HeapInuse: "+utoa(after.HeapInuse))
 	serialPrintln("GC done. Frees: " + utoa(after.Frees) + "  HeapInuse: " + utoa(after.HeapInuse))
 
 	// Phase 3: Allocate again to prove memory was reclaimed.
@@ -104,6 +116,6 @@ func main() {
 	for i := 0; i < 100; i++ {
 		_ = allocateGarbage()
 	}
-	vgaWriteLine(4, "Post-GC alloc OK - GC works!")
+	vgaWriteLine(5, "Post-GC alloc OK - GC works!")
 	serialPrintln("Post-GC alloc OK - GC works!")
 }

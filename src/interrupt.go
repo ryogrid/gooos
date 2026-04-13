@@ -1,0 +1,28 @@
+// src/interrupt.go -- Go-side interrupt dispatcher (table-driven).
+//
+// Assembly ISR stubs (isr.S) save registers and call go_interrupt_handler
+// with the vector number. This file maintains a handler table indexed by
+// vector and dispatches accordingly.
+
+package main
+
+// InterruptHandler is a function that handles a specific interrupt vector.
+type InterruptHandler func(vector uint64)
+
+// handlers is the table of registered interrupt handlers, indexed by vector.
+var handlers [256]InterruptHandler
+
+// registerHandler registers a Go function for a given interrupt vector.
+func registerHandler(vector int, handler InterruptHandler) {
+	handlers[vector] = handler
+}
+
+// go_interrupt_handler is the assembly-to-Go entry point for all interrupts.
+// Called from isr_common (isr.S) with the vector number in %rdi.
+//
+//export go_interrupt_handler
+func go_interrupt_handler(vector uint64) {
+	if vector < 256 && handlers[vector] != nil {
+		handlers[vector](vector)
+	}
+}
