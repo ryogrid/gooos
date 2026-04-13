@@ -114,6 +114,7 @@ func main() {
 
 	// Register exception handlers.
 	registerHandler(0, handleDivisionError)
+	registerHandler(14, handlePageFault)
 	vgaWriteLine(2, "ISR: 256 stubs installed")
 	serialPrintln("ISR: 256 stubs installed")
 
@@ -171,12 +172,36 @@ func main() {
 	vgaWriteLine(8, "Post-GC alloc OK - GC works!")
 	serialPrintln("Post-GC alloc OK - GC works!")
 
+	// Virtual memory demo: map a 4 KiB page, write, read back, unmap.
+	vmInit()
+	testVaddr := uintptr(0x40000000) // 1 GiB — outside the boot-time identity map
+	testPaddr := allocPage()         // allocate a physical page from free memory
+	mapPage(testVaddr, testPaddr, pagePresent|pageWrite)
+
+	// Write a test value to the mapped virtual page.
+	testPtr := (*uint64)(unsafe.Pointer(testVaddr))
+	*testPtr = 0xDEADBEEF
+
+	// Read back and verify.
+	testVal := *testPtr
+
+	// Unmap the page and flush TLB.
+	unmapPage(testVaddr)
+
+	if testVal == 0xDEADBEEF {
+		vgaWriteLine(9, "VM: map/unmap OK")
+		serialPrintln("VM: map/unmap OK")
+	} else {
+		vgaWriteLine(9, "VM: FAIL - read back 0x"+hextoa(testVal))
+		serialPrintln("VM: FAIL - read back 0x" + hextoa(testVal))
+	}
+
 	// Spin-wait to let the timer accumulate ticks, then display count.
 	for pitTicks < 200 {
 		hlt()
 	}
 	tickStr := utoa(pitTicks)
-	vgaWriteLine(9, "Timer: "+tickStr+" ticks")
+	vgaWriteLine(10, "Timer: "+tickStr+" ticks")
 	serialPrintln("Timer: " + tickStr + " ticks")
 
 	// Halt loop: keep the kernel alive, waking on each interrupt.

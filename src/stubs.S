@@ -124,6 +124,38 @@ hlt:
     hlt
     ret
 
+    /* ---- heapEndAddr: return the address of _heap_end linker symbol ---- */
+    /* heapEndAddr() uintptr                                                */
+    /* Used by the page frame allocator to start allocating after the heap. */
+    .global heapEndAddr
+heapEndAddr:
+    movq    $_heap_end, %rax
+    ret
+
+    /* ---- readCR2: return the page-fault linear address ----------------- */
+    /* readCR2() uintptr                                                  */
+    /* Called by the page fault handler to retrieve the faulting address.  */
+    .global readCR2
+readCR2:
+    movq    %cr2, %rax
+    ret
+
+    /* ---- readCR3: return the PML4 physical base address ---------------- */
+    /* readCR3() uintptr                                                   */
+    /* Returns the current value of CR3 (page table root).                 */
+    .global readCR3
+readCR3:
+    movq    %cr3, %rax
+    ret
+
+    /* ---- invlpg: invalidate TLB entry for a virtual address ------------ */
+    /* invlpg(addr uintptr)                                                */
+    /* SysV ABI: rdi = virtual address whose TLB entry to flush.           */
+    .global invlpg
+invlpg:
+    invlpg  (%rdi)
+    ret
+
     /* ---- defaultHandler: catch-all interrupt stub (halts CPU) -------- */
     /* Used by idtInit() to fill all 256 IDT entries before real ISR     */
     /* stubs are installed. If any interrupt fires unexpectedly, halt.   */

@@ -9,7 +9,7 @@ package main
 const kbdDataPort = 0x60
 
 // VGA line used for the keyboard echo buffer.
-const kbdVGALine = 10
+const kbdVGALine = 11
 
 // kbdBuf holds typed characters for VGA echo display.
 var kbdBuf [vgaWidth]byte

@@ -19,6 +19,11 @@
 - Register PIT handler AFTER default IRQ handlers, so it overrides the default for vector 32
 - PS/2 keyboard: read scancode from port 0x60 in IRQ1 handler; bit 7 set = key release (ignore); scancode set 1 for make codes
 - VGA echo buffer pattern: maintain a byte array + length, redraw entire line on change, clear trailing chars with vgaClearLine
+- go_interrupt_handler accepts (vector, errorCode); error code stored in lastErrorCode global for handlers to read
+- CR2/CR3/invlpg stubs in stubs.S; readCR3() &^ 0xFFF gets PML4 base; identity mapping means phys=virt for page tables
+- Page frame allocator: bump allocator starting at _heap_end aligned to 4 KiB; heapEndAddr() stub returns linker symbol value
+- mapPage walks 4-level page table (PML4→PDP→PD→PT); does NOT split existing 2 MiB huge pages
+- For VM demo, use virtual addresses outside the boot-time 1 GiB identity map (e.g., 0x40000000) to avoid huge page conflicts
 
 ---
 
@@ -104,4 +109,24 @@
   - Special scancodes: 0x0E = backspace, 0x1C = enter
   - VGA echo pattern: maintain a fixed-size byte buffer + length counter; redraw full line on every change; use vgaClearLine to erase trailing chars after backspace
   - VGA line number management is becoming fragile — each new status line shifts all subsequent lines; consider using named constants for line assignments
+---
+
+## 2026-04-13 - US-007
+- Implemented virtual memory: page fault handler (vector 14), mapPage/unmapPage with 4 KiB granularity
+- Created src/vm.go: bump page allocator, 4-level page table walk, mapPage(), unmapPage(), handlePageFault(), hextoa()
+- Added assembly stubs to src/stubs.S: heapEndAddr, readCR2, readCR3, invlpg
+- Modified src/isr.S: isr_common now passes error code as second arg (%rsi) to go_interrupt_handler
+- Updated src/interrupt.go: go_interrupt_handler(vector, errorCode) stores errorCode in lastErrorCode global
+- Updated src/main.go: registered page fault handler on vector 14, VM demo maps 0x40000000 writes/reads/unmaps
+- Updated src/keyboard.go: shifted echo buffer from VGA line 10 to line 11
+- VGA shows "VM: map/unmap OK" on line 9; timer ticks shifted to line 10; keyboard echo on line 11
+- Files changed: src/vm.go (new), src/stubs.S, src/isr.S, src/interrupt.go, src/main.go, src/keyboard.go
+- **Learnings for future iterations:**
+  - x86_64 page table walk: PML4[bits 47-39] → PDP[bits 38-30] → PD[bits 29-21] → PT[bits 20-12]; each index = (vaddr >> shift) & 0x1FF
+  - readCR3() &^ 0xFFF gives PML4 base; identity mapping means physical address = virtual address for page tables below 1 GiB
+  - Bump page allocator starting at _heap_end (aligned to 4 KiB) is simple and effective; heapEndAddr() returns linker symbol via `movq $_heap_end, %rax`
+  - mapPage must NOT be used on addresses within the boot 1 GiB identity map — those use 2 MiB huge pages and walkOrCreate would misinterpret PD entries
+  - invlpg flushes TLB for a single page; must be called after clearing a PTE in unmapPage
+  - Passing error code from ISR: add `movq 128(%rsp), %rsi` in isr_common; store in Go global since InterruptHandler type doesn't need to change
+  - VGA line management: new status lines (VM) go at row 9; timer shifted to 10; keyboard echo to 11
 ---

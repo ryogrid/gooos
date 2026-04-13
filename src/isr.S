@@ -104,7 +104,9 @@ isr_common:
     pushq   %r15
 
     /* Vector number is at RSP + 15*8 = RSP + 120 */
-    movq    120(%rsp), %rdi         /* first arg = vector number */
+    /* Error code  is at RSP + 15*8 + 8 = RSP + 128 */
+    movq    120(%rsp), %rdi         /* first arg  = vector number */
+    movq    128(%rsp), %rsi         /* second arg = error code    */
 
     /* Align stack to 16 bytes for SysV AMD64 ABI call convention. */
     /* Save original RSP in callee-saved %rbx (restored from stack later). */

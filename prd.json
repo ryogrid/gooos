@@ -118,7 +118,7 @@
         "All code comments in English"
       ],
       "priority": 7,
-      "passes": false,
+      "passes": true,
       "notes": "Depends on US-002 (IDT for page fault). Existing 2 MiB identity map remains; this adds 4 KiB granularity for new mappings."
     },
     {
