@@ -11,6 +11,11 @@ import (
 	"unsafe"
 )
 
+// sti enables maskable interrupts. Implemented in stubs.S.
+//
+//go:linkname sti sti
+func sti()
+
 const (
 	vgaAddr   = uintptr(0xB8000)
 	vgaWidth  = 80
@@ -70,6 +75,19 @@ func handleDivisionError(vector uint64) {
 	serialPrintln("Exception: #DE (Division Error)")
 }
 
+// handleDefaultIRQ handles any hardware IRQ (vectors 32-47) that does
+// not have a specific handler registered. Sends EOI so the PIC is not
+// left stuck.
+func handleDefaultIRQ(vector uint64) {
+	irq := uint8(vector - 32)
+	picSendEOI(irq)
+}
+
+// hlt executes the HLT instruction. Implemented in stubs.S.
+//
+//go:linkname hlt hlt
+func hlt()
+
 func main() {
 	vgaClear()
 
@@ -90,6 +108,20 @@ func main() {
 	vgaWriteLine(2, "ISR: 256 stubs installed")
 	serialPrintln("ISR: 256 stubs installed")
 
+	// Remap 8259A PIC: IRQ 0-7 -> vectors 32-39, IRQ 8-15 -> vectors 40-47.
+	picRemap()
+
+	// Register default handlers for all hardware IRQs (vectors 32-47)
+	// so that spurious or unhandled IRQs still get EOI and don't hang the PIC.
+	for i := 32; i <= 47; i++ {
+		registerHandler(i, handleDefaultIRQ)
+	}
+
+	// Enable maskable interrupts.
+	sti()
+	vgaWriteLine(3, "Interrupts: enabled")
+	serialPrintln("Interrupts: enabled")
+
 	// Phase 1: Allocate many objects that immediately become garbage.
 	const numAllocs = 500
 	for i := 0; i < numAllocs; i++ {
@@ -99,7 +131,7 @@ func main() {
 	// Read stats before GC.
 	var before runtime.MemStats
 	runtime.ReadMemStats(&before)
-	vgaWriteLine(3, "Mallocs: "+utoa(before.Mallocs)+"  TotalAlloc: "+utoa(before.TotalAlloc))
+	vgaWriteLine(4, "Mallocs: "+utoa(before.Mallocs)+"  TotalAlloc: "+utoa(before.TotalAlloc))
 	serialPrintln("Mallocs: " + utoa(before.Mallocs) + "  TotalAlloc: " + utoa(before.TotalAlloc))
 
 	// Phase 2: Trigger garbage collection.
@@ -108,7 +140,7 @@ func main() {
 	// Read stats after GC.
 	var after runtime.MemStats
 	runtime.ReadMemStats(&after)
-	vgaWriteLine(4, "GC done. Frees: "+utoa(after.Frees)+"  HeapInuse: "+utoa(after.HeapInuse))
+	vgaWriteLine(5, "GC done. Frees: "+utoa(after.Frees)+"  HeapInuse: "+utoa(after.HeapInuse))
 	serialPrintln("GC done. Frees: " + utoa(after.Frees) + "  HeapInuse: " + utoa(after.HeapInuse))
 
 	// Phase 3: Allocate again to prove memory was reclaimed.
@@ -116,6 +148,11 @@ func main() {
 	for i := 0; i < 100; i++ {
 		_ = allocateGarbage()
 	}
-	vgaWriteLine(5, "Post-GC alloc OK - GC works!")
+	vgaWriteLine(6, "Post-GC alloc OK - GC works!")
 	serialPrintln("Post-GC alloc OK - GC works!")
+
+	// Halt loop: keep the kernel alive, waking on each interrupt.
+	for {
+		hlt()
+	}
 }

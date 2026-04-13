@@ -67,7 +67,7 @@
         "All code comments in English"
       ],
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "notes": "Depends on US-002, US-003. After this, hardware IRQs (timer, keyboard) can be handled."
     },
     {

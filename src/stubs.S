@@ -110,6 +110,20 @@ inb:
     movzbl  %al, %eax
     ret
 
+    /* ---- sti: enable maskable interrupts ------------------------------- */
+    /* No args, no return value. Simply executes the x86 STI instruction.  */
+    .global sti
+sti:
+    sti
+    ret
+
+    /* ---- hlt: halt the CPU until next interrupt ------------------------- */
+    /* No args, no return value. Simply executes the x86 HLT instruction.  */
+    .global hlt
+hlt:
+    hlt
+    ret
+
     /* ---- defaultHandler: catch-all interrupt stub (halts CPU) -------- */
     /* Used by idtInit() to fill all 256 IDT entries before real ISR     */
     /* stubs are installed. If any interrupt fires unexpectedly, halt.   */
