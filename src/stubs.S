@@ -90,6 +90,98 @@ memset:
     movq    %r8, %rax               /* return original dest */
     ret
 
+    /* ---- outb: write byte to I/O port -------------------------------- */
+    /* outb(port uint16, val uint8)                                      */
+    /* SysV ABI: di = port, sil = val                                    */
+    .global outb
+outb:
+    movw    %di, %dx
+    movb    %sil, %al
+    outb    %al, %dx
+    ret
+
+    /* ---- inb: read byte from I/O port -------------------------------- */
+    /* inb(port uint16) uint8                                            */
+    /* SysV ABI: di = port; returns al (zero-extended to eax)            */
+    .global inb
+inb:
+    movw    %di, %dx
+    inb     %dx, %al
+    movzbl  %al, %eax
+    ret
+
+    /* ---- sti: enable maskable interrupts ------------------------------- */
+    /* No args, no return value. Simply executes the x86 STI instruction.  */
+    .global sti
+sti:
+    sti
+    ret
+
+    /* ---- hlt: halt the CPU until next interrupt ------------------------- */
+    /* No args, no return value. Simply executes the x86 HLT instruction.  */
+    .global hlt
+hlt:
+    hlt
+    ret
+
+    /* ---- heapEndAddr: return the address of _heap_end linker symbol ---- */
+    /* heapEndAddr() uintptr                                                */
+    /* Used by the page frame allocator to start allocating after the heap. */
+    .global heapEndAddr
+heapEndAddr:
+    movq    $_heap_end, %rax
+    ret
+
+    /* ---- readCR2: return the page-fault linear address ----------------- */
+    /* readCR2() uintptr                                                  */
+    /* Called by the page fault handler to retrieve the faulting address.  */
+    .global readCR2
+readCR2:
+    movq    %cr2, %rax
+    ret
+
+    /* ---- readCR3: return the PML4 physical base address ---------------- */
+    /* readCR3() uintptr                                                   */
+    /* Returns the current value of CR3 (page table root).                 */
+    .global readCR3
+readCR3:
+    movq    %cr3, %rax
+    ret
+
+    /* ---- invlpg: invalidate TLB entry for a virtual address ------------ */
+    /* invlpg(addr uintptr)                                                */
+    /* SysV ABI: rdi = virtual address whose TLB entry to flush.           */
+    .global invlpg
+invlpg:
+    invlpg  (%rdi)
+    ret
+
+    /* ---- defaultHandler: catch-all interrupt stub (halts CPU) -------- */
+    /* Used by idtInit() to fill all 256 IDT entries before real ISR     */
+    /* stubs are installed. If any interrupt fires unexpectedly, halt.   */
+    .global defaultHandler
+defaultHandler:
+    cli
+1:  hlt
+    jmp     1b
+
+    /* ---- defaultHandlerAddr: return address of defaultHandler -------- */
+    /* Returns the linear address of the default handler stub so Go code  */
+    /* can populate IDT gate descriptors with it.                         */
+    /* SysV ABI: no args; returns address in rax.                         */
+    .global defaultHandlerAddr
+defaultHandlerAddr:
+    leaq    defaultHandler(%rip), %rax
+    ret
+
+    /* ---- lidt: load the IDT register --------------------------------- */
+    /* lidt(desc uintptr)                                                 */
+    /* SysV ABI: rdi = pointer to 10-byte packed IDT descriptor.          */
+    .global lidt
+lidt:
+    lidt    (%rdi)
+    ret
+
     /* ---- tinygo_scanCurrentStack: GC register/stack scanner --------- */
     /* Pushes all callee-saved registers onto the stack so the GC can    */
     /* scan them for heap pointers, then calls tinygo_scanstack(rsp).    */
@@ -107,6 +199,63 @@ tinygo_scanCurrentStack:
     callq   tinygo_scanstack        /* Go function in gc_stack_raw.go */
     addq    $56, %rsp               /* clean up: 6 regs (48) + align (8) */
     retq
+
+    /* ---- lgdtReload: load new GDT and reload segment registers --------- */
+    /* lgdtReload(desc uintptr)                                            */
+    /* SysV ABI: rdi = pointer to 10-byte packed GDT descriptor.           */
+    /*                                                                      */
+    /* After lgdt, reload DS/ES/FS/GS/SS with the kernel data selector,    */
+    /* and reload CS via a far return (lretq) to the kernel code selector.  */
+    .global lgdtReload
+lgdtReload:
+    lgdt    (%rdi)
+
+    /* Reload data segments with kernel data selector (0x10). */
+    movw    $0x10, %ax
+    movw    %ax, %ds
+    movw    %ax, %es
+    movw    %ax, %fs
+    movw    %ax, %gs
+    movw    %ax, %ss
+
+    /* Reload CS via far return: push selector + return address, then lretq. */
+    pushq   $0x08
+    leaq    1f(%rip), %rax
+    pushq   %rax
+    lretq
+1:
+    ret
+
+    /* ---- ltr: load the Task Register ------------------------------------ */
+    /* ltr(selector uint16)                                                  */
+    /* SysV ABI: di = TSS selector.                                          */
+    .global ltr
+ltr:
+    movw    %di, %ax
+    ltr     %ax
+    ret
+
+    /* ---- jumpToRing3: transition to Ring 3 via iretq -------------------- */
+    /* jumpToRing3(userRIP uintptr, userRSP uintptr)                         */
+    /* SysV ABI: rdi = user RIP, rsi = user RSP.                             */
+    /*                                                                        */
+    /* Sets data segment registers to user data selector, builds an iretq     */
+    /* stack frame (SS, RSP, RFLAGS, CS, RIP), and executes iretq to switch   */
+    /* to Ring 3. Does not return.                                            */
+    .global jumpToRing3
+jumpToRing3:
+    /* Set data segment registers to user data selector (0x20 | RPL=3). */
+    movw    $0x23, %ax
+    movw    %ax, %ds
+    movw    %ax, %es
+
+    /* Build iretq frame (pushed in reverse order). */
+    pushq   $0x23               /* SS  = user data selector */
+    pushq   %rsi                /* RSP = user stack pointer */
+    pushfq                      /* RFLAGS (IF=1 from current state) */
+    pushq   $0x1B               /* CS  = user code selector (0x18 | RPL=3) */
+    pushq   %rdi                /* RIP = user entry point */
+    iretq
 
     /* ================================================================= */
     /* Synthetic ELF header for findGlobals()                            */

@@ -1,0 +1,199 @@
+{
+  "project": "gooos",
+  "branchName": "ralph/os-milestones",
+  "description": "Implement all 9 planned OS milestones: serial output, IDT, PIT timer, keyboard, virtual memory, scheduler, userspace, filesystem, and SMP",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Serial output (COM1) — port I/O stubs and TX",
+      "description": "As a developer, I want the kernel to output text to COM1 so that I can view logs in the QEMU terminal (-serial stdio) without needing a GUI.",
+      "acceptanceCriteria": [
+        "Add outb(port, val) and inb(port) assembly stubs to src/stubs.S for x86 port I/O",
+        "Create src/serial.go: initialize COM1 (0x3F8) at 115200 baud 8N1, implement serialPutChar and serialPrint",
+        "Update src/main.go: VGA line 0 shows 'Serial: OK' and same message sent to COM1",
+        "make build succeeds with no linker errors",
+        "make run-kernel shows serial output on the terminal via -serial stdio",
+        "All code comments in English"
+      ],
+      "priority": 1,
+      "passes": true,
+      "notes": "First milestone. outb/inb stubs are reused by all subsequent hardware milestones (PIC, PIT, keyboard, APIC)."
+    },
+    {
+      "id": "US-002",
+      "title": "IDT structure and lidt — define 256-entry IDT in Go, load with assembly",
+      "description": "As a developer, I want a 256-entry Interrupt Descriptor Table loaded into the CPU so that exception and IRQ vectors can be dispatched.",
+      "acceptanceCriteria": [
+        "Create src/idt.go: define IDTEntry struct (16 bytes per entry), idtTable [256]IDTEntry array, setGate helper",
+        "Add lidt assembly stub to src/stubs.S that loads the IDT register from a Go-provided pointer",
+        "Call idtInit() from main() to populate all 256 entries with a default handler and load via lidt",
+        "VGA shows 'IDT: loaded, 256 entries'",
+        "make build succeeds",
+        "All code comments in English"
+      ],
+      "priority": 2,
+      "passes": true,
+      "notes": "Does NOT enable interrupts yet. ISR stubs and PIC remap come in the next stories."
+    },
+    {
+      "id": "US-003",
+      "title": "ISR stubs and interrupt dispatcher — assembly entry points + Go handler table",
+      "description": "As a developer, I want assembly ISR entry stubs that save registers and call a Go-side dispatcher so that interrupt handlers can be written in Go.",
+      "acceptanceCriteria": [
+        "Create src/isr.S: 256 ISR stub entry points using macros (push error code / dummy, push vector number, save registers, call go_interrupt_handler, restore, iretq)",
+        "Create or extend src/idt.go: register each ISR stub address in the IDT entries",
+        "Implement go_interrupt_handler(vector uint64) in Go as a table-driven dispatcher",
+        "Handle vector 0 (division by zero) as test: display 'Exception: #DE' on VGA",
+        "Update Makefile to assemble src/isr.S if it is a new file",
+        "make build succeeds",
+        "All code comments in English"
+      ],
+      "priority": 3,
+      "passes": true,
+      "notes": "Depends on US-002. Interrupts still disabled (no sti yet). PIC remap comes next."
+    },
+    {
+      "id": "US-004",
+      "title": "PIC remap and enable interrupts — remap 8259A, unmask IRQs, sti",
+      "description": "As a developer, I want the PIC remapped so hardware IRQs 0-15 map to vectors 32-47 and interrupts are enabled.",
+      "acceptanceCriteria": [
+        "Implement picRemap() in Go using outb: remap master PIC to vectors 32-39, slave to 40-47",
+        "Implement picSendEOI(irq) in Go",
+        "Add sti assembly stub to src/stubs.S",
+        "Call picRemap() then sti from main() after IDT is loaded",
+        "VGA shows 'Interrupts: enabled'",
+        "Kernel runs for several seconds without triple-fault after sti",
+        "make build succeeds",
+        "All code comments in English"
+      ],
+      "priority": 4,
+      "passes": true,
+      "notes": "Depends on US-002, US-003. After this, hardware IRQs (timer, keyboard) can be handled."
+    },
+    {
+      "id": "US-005",
+      "title": "PIT timer — program channel 0 at 100 Hz, count ticks",
+      "description": "As a developer, I want a hardware timer generating periodic interrupts so the kernel has a notion of time.",
+      "acceptanceCriteria": [
+        "Program PIT channel 0 to fire IRQ0 at ~100 Hz (10ms interval) using outb",
+        "Register IRQ0 handler (vector 32) that increments a global tick counter and sends EOI",
+        "VGA shows 'Timer: NNNN ticks' updated after a short spin-wait in main()",
+        "Serial output also logs tick count",
+        "make build succeeds; kernel runs without triple-fault for at least several seconds",
+        "All code comments in English"
+      ],
+      "priority": 5,
+      "passes": true,
+      "notes": "Depends on US-004 (PIC remap + sti). Timer tick is used later for preemptive scheduling."
+    },
+    {
+      "id": "US-006",
+      "title": "PS/2 keyboard driver — IRQ1 handler, scancode-to-ASCII, VGA echo",
+      "description": "As a developer, I want the kernel to read keyboard input so the user can interact with the OS.",
+      "acceptanceCriteria": [
+        "Register IRQ1 handler (vector 33) that reads scancode from port 0x60 and sends EOI",
+        "Implement minimal scancode set 1 to ASCII mapping (letters a-z, digits 0-9, space, enter, backspace)",
+        "Display typed characters on a dedicated VGA line (simple echo buffer)",
+        "VGA shows 'Keyboard: ready' and echoes keystrokes below",
+        "Serial output logs each keypress",
+        "make build succeeds; typing in QEMU produces visible output on VGA",
+        "All code comments in English"
+      ],
+      "priority": 6,
+      "passes": true,
+      "notes": "Depends on US-004 (PIC remap + sti). After this the kernel has interactive I/O."
+    },
+    {
+      "id": "US-007",
+      "title": "Virtual memory — page fault handler, mapPage/unmapPage in Go",
+      "description": "As a developer, I want the kernel to manage virtual memory with 4 KiB page granularity so page faults are handled and pages can be dynamically mapped.",
+      "acceptanceCriteria": [
+        "Register page fault handler (vector 14) that reads CR2 (faulting address) and error code, displays on VGA",
+        "Add assembly stub to read CR2 register",
+        "Implement mapPage(vaddr, paddr, flags uintptr) in Go: walk/create 4-level page table entries for 4 KiB pages",
+        "Implement unmapPage(vaddr uintptr) in Go: clear the PTE and flush TLB (invlpg assembly stub)",
+        "Demo in main(): map a fresh 4 KiB page at a high address, write to it, read back, unmap, show success",
+        "VGA shows 'VM: map/unmap OK'",
+        "make build succeeds; no triple-fault during map/unmap",
+        "All code comments in English"
+      ],
+      "priority": 7,
+      "passes": true,
+      "notes": "Depends on US-002 (IDT for page fault). Existing 2 MiB identity map remains; this adds 4 KiB granularity for new mappings."
+    },
+    {
+      "id": "US-008",
+      "title": "Scheduler — task struct, context switch assembly, round-robin with PIT preemption",
+      "description": "As a developer, I want a preemptive round-robin scheduler so multiple tasks run concurrently.",
+      "acceptanceCriteria": [
+        "Define Task struct in Go: ID, stack pointer, state (running/ready/blocked), entry function pointer",
+        "Implement context switch in assembly: save callee-saved registers + RSP to current task, restore from next task",
+        "Implement schedule() in Go: round-robin picks the next ready task",
+        "Hook PIT IRQ0 handler to call schedule() for preemptive switching",
+        "Create 2-3 demo tasks that each write to different VGA lines in a loop",
+        "VGA shows interleaved output from multiple tasks",
+        "Serial logs task switches",
+        "make build succeeds; tasks switch without triple-fault",
+        "All code comments in English"
+      ],
+      "priority": 8,
+      "passes": true,
+      "notes": "Depends on US-005 (PIT timer). Context switch assembly is the critical piece."
+    },
+    {
+      "id": "US-009",
+      "title": "Userspace — TSS, GDT Ring 3 segments, iretq to user mode, minimal syscall",
+      "description": "As a developer, I want the kernel to run a user-mode function in Ring 3 with a syscall interface back to the kernel.",
+      "acceptanceCriteria": [
+        "Set up a TSS with RSP0 pointing to the kernel stack for privilege transitions",
+        "Add ltr assembly stub to load the Task Register",
+        "Add Ring 3 code and data segments (DPL=3) to the GDT",
+        "Implement jump-to-Ring-3 via iretq (assembly): push SS, RSP, RFLAGS, CS, RIP for user mode",
+        "Implement syscall entry in assembly: save user state, switch to kernel stack, call Go syscall handler, sysret back",
+        "User function calls a 'print' syscall that writes to VGA via the kernel",
+        "VGA shows 'User: Hello from Ring 3!'",
+        "make build succeeds; user program runs without GP fault",
+        "All code comments in English"
+      ],
+      "priority": 9,
+      "passes": true,
+      "notes": "Depends on US-007 (VM for user address space) and US-008 (scheduler for task management). Most assembly-heavy milestone."
+    },
+    {
+      "id": "US-010",
+      "title": "In-memory filesystem — flat directory with create/write/read/list in Go",
+      "description": "As a developer, I want a minimal in-memory filesystem so the kernel can create, read, and write named files.",
+      "acceptanceCriteria": [
+        "Implement src/fs.go: FileSystem struct with flat directory of fixed-size entries",
+        "Support Create(name string), Write(name string, data []byte), Read(name string) []byte, List() []string",
+        "Demo in main(): create 'hello.txt', write 'hello world', read back and verify, list directory",
+        "VGA shows 'FS: create/write/read OK' and lists file names",
+        "Serial logs filesystem operations",
+        "make build succeeds",
+        "All code comments in English"
+      ],
+      "priority": 10,
+      "passes": true,
+      "notes": "Pure Go implementation, no assembly needed. Kernel-only API (no userspace syscall integration in this story)."
+    },
+    {
+      "id": "US-011",
+      "title": "SMP — discover APs, real-mode trampoline, INIT-SIPI-SIPI, multi-core boot",
+      "description": "As a developer, I want the kernel to boot all CPU cores so multi-core execution is demonstrated.",
+      "acceptanceCriteria": [
+        "Detect AP count (hardcode for QEMU or parse ACPI MADT if feasible)",
+        "Write a 16-bit real-mode AP trampoline in assembly placed below 1 MiB (page-aligned)",
+        "Implement INIT-SIPI-SIPI sequence using Local APIC MMIO writes",
+        "Each AP transitions from real mode to long mode and atomically increments a shared counter",
+        "BSP spin-waits for APs, then displays core count on VGA",
+        "VGA shows 'SMP: N cores online'",
+        "Serial logs each AP coming online",
+        "make build succeeds; make run-kernel with -smp 4 shows 4 cores",
+        "All code comments in English"
+      ],
+      "priority": 11,
+      "passes": true,
+      "notes": "Depends on US-004 (IDT/APIC). Most complex milestone. AP trampoline is 16-bit real-mode assembly that must be relocated below 1 MiB."
+    }
+  ]
+}
