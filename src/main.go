@@ -226,6 +226,9 @@ func main() {
 	vgaWriteLine(11, "Timer: "+tickStr+" ticks")
 	serialPrintln("Timer: " + tickStr + " ticks")
 
+	// Boot Application Processors via INIT-SIPI-SIPI.
+	smpInit()
+
 	// Set up new GDT with Ring 3 code/data segments and TSS.
 	// Must happen after vmInit (uses allocPage for the kernel stack).
 	gdtInit()

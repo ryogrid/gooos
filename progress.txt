@@ -36,6 +36,16 @@
 - iretq to Ring 3: push SS(0x23), RSP, RFLAGS, CS(0x1B), RIP; user CS = 0x18|RPL=3, user SS = 0x20|RPL=3
 - User code pages mapped at vaddr > 1 GiB (outside boot identity map) with pagePresent|pageWrite|pageUser flags
 - After jumpToRing3, task 0 runs in Ring 3; timer preempts via TSS RSP0 kernel stack; scheduler context-switches normally
+- In-memory FS: global `fs` FileSystem with flat [16]FileEntry array; each entry has fixed [4096]byte data, name string, size int, used bool
+- VGA line assignments after US-011: serial 0, IDT 1, ISR 2, PIT 3, kbd 4, ints 5, GC 6-8, VM 9, FS 10, timer 11, GDT 12, kbd-echo 12, sched 13-14, tasks 15-17, user 18, SMP 19
+- AP trampoline lives in .rodata, copied to 0x8000 at runtime; uses hardcoded absolute addresses assuming TRAMP_BASE=0x8000
+- LAPIC at 0xFEE00000 must be identity-mapped via mapPage (outside boot 1 GiB range); use pagePCD|pagePWT for MMIO
+- ACPI RSDP found by scanning BIOS ROM area 0xE0000-0xFFFFF (16-byte aligned); RSDT→MADT gives AP count
+- INIT-SIPI-SIPI: INIT IPI (ICR=0xC4500), wait 10ms, SIPI×2 (ICR=0xC4608 for vector 0x08=0x8000/0x1000)
+- APs share BSP's PML4 (same CR3); trampoline GDT has null+code32+data+code64 entries for mode transitions
+- AP entry function must avoid heap allocation (GC not thread-safe); use serialPutChar for output
+- lock xaddl atomically claims AP index from shared counter; each AP loads its stack from a pre-indexed array
+- After LAPIC enable (SVR bit 8), configure LVT LINT0=ExtINT to preserve PIC interrupt delivery to BSP
 
 ---
 
@@ -189,4 +199,45 @@
   - After jumpToRing3, the original boot stack is abandoned; TSS RSP0 becomes task 0's kernel stack for scheduling
   - VGA line assignments: GDT on 11, scheduler 12-13, demo tasks 14-16, user output 17
 ---
+
+## 2026-04-13 - US-010
+- Implemented in-memory filesystem: FileSystem struct with flat directory of 16 fixed-size entries
+- Created src/fs.go: fsCreate(), fsWrite(), fsRead(), fsList() — pure Go, no assembly needed
+- Updated src/main.go: FS demo creates "hello.txt", writes "hello world", reads back and verifies, lists files
+- VGA shows "FS: create/write/read OK | Files: hello.txt" on line 10
+- Serial logs each filesystem operation
+- Shifted VGA line assignments: FS on 10, timer on 11, GDT on 12, kbd echo on 12, sched 13-14, tasks 15-17, user 18
+- Files changed: src/fs.go (new), src/main.go, src/keyboard.go, src/scheduler.go, src/userspace.go, prd.json
+- **Learnings for future iterations:**
+  - Pure Go filesystem needs no assembly — TinyGo handles structs, slices, string comparison, and append natively
+  - FileEntry uses fixed-size [4096]byte array rather than slices to avoid per-file heap allocation
+  - String equality (`==`) works in TinyGo for comparing read-back data against expected values
+  - `[]byte("string literal")` conversion works in bare-metal TinyGo for passing data to fsWrite
+  - VGA line shifts cascade across keyboard.go, scheduler.go, and userspace.go — every status line addition requires updating all files with hardcoded VGA line numbers
+  - New VGA line assignments: FS on 10, timer 11, GDT 12, kbd echo 12, scheduler 13-14, demo tasks 15-17, user 18
+---
+
+## 2026-04-13 - US-011
+- Implemented SMP multi-core boot: ACPI MADT AP detection, real-mode trampoline, INIT-SIPI-SIPI, multi-core boot
+- Created src/trampoline.S: 16-bit real-mode AP entry → 32-bit protected mode → 64-bit long mode, with data area at offset 0xF00 for GDT, PML4, entry point, stack array, and atomic counter
+- Created src/smp.go: LAPIC MMIO mapping and access, ACPI RSDP/RSDT/MADT parsing for AP count, trampoline copy and patching, INIT-SIPI-SIPI IPI sequence, adaptive AP wait with timeout, AP entry function with allocation-free serial output
+- Updated Makefile: added trampoline.S build rule and run-smp target with -smp 4
+- Updated src/main.go: added smpInit() call between timer spin-wait and gdtInit()
+- VGA shows "SMP: 4 cores online" on line 19 with -smp 4
+- Serial logs BSP APIC ID, MADT AP count, and each AP coming online
+- Tested with -smp 1/2/4: correct core counts (1/2/4), no triple-fault, kernel runs 15+ seconds
+- MADT detection works for -smp 2+ (SeaBIOS provides ACPI tables); for -smp 1, falls back to broadcast with timeout
+- Files changed: src/trampoline.S (new), src/smp.go (new), Makefile, src/main.go, prd.json
+- **Learnings for future iterations:**
+  - AP trampoline in .rodata with hardcoded 0x8000-based addresses works: .org pads to fixed offsets, ljmpl with constant expressions for absolute jump targets
+  - .code16/.code32/.code64 directives in .rodata section work fine in GNU as; they only affect instruction encoding, not section type
+  - LAPIC at 0xFEE00000 is outside boot 1 GiB identity map; mapPage creates PDP[3]→PD→PT chain for the mapping
+  - LAPIC SVR enable (bit 8) is required before sending IPIs; must also configure LVT LINT0=ExtINT to preserve PIC interrupt delivery
+  - ACPI RSDP search: scan 0xE0000-0xFFFFF for "RSD PTR " at 16-byte boundaries; RSDT address at RSDP+16; MADT has signature "APIC"
+  - MADT entry type 0 = Processor Local APIC: APIC ID at offset 3, flags at offset 4 (bit 0 = enabled); skip entries where APIC ID = BSP ID
+  - AP concurrent serial output interleaves characters; use serialPutChar (no allocation) to avoid heap corruption from concurrent GC
+  - lock xaddl returns old value in eax; 32-bit operations in 64-bit mode auto zero-extend to rax
+  - lgdt in 16-bit mode with .byte 0x66 prefix reads 6-byte descriptor (4-byte base); address 0x8F20 fits in 16-bit displacement
+  - pagePCD|pagePWT on leaf PTE makes MMIO uncacheable; walkOrCreate only sets Present|Write on intermediate entries
+  - SMP status on VGA line 19 avoids shifting existing line assignments (lines 0-18 unchanged)
 ---
