@@ -110,6 +110,32 @@ inb:
     movzbl  %al, %eax
     ret
 
+    /* ---- defaultHandler: catch-all interrupt stub (halts CPU) -------- */
+    /* Used by idtInit() to fill all 256 IDT entries before real ISR     */
+    /* stubs are installed. If any interrupt fires unexpectedly, halt.   */
+    .global defaultHandler
+defaultHandler:
+    cli
+1:  hlt
+    jmp     1b
+
+    /* ---- defaultHandlerAddr: return address of defaultHandler -------- */
+    /* Returns the linear address of the default handler stub so Go code  */
+    /* can populate IDT gate descriptors with it.                         */
+    /* SysV ABI: no args; returns address in rax.                         */
+    .global defaultHandlerAddr
+defaultHandlerAddr:
+    leaq    defaultHandler(%rip), %rax
+    ret
+
+    /* ---- lidt: load the IDT register --------------------------------- */
+    /* lidt(desc uintptr)                                                 */
+    /* SysV ABI: rdi = pointer to 10-byte packed IDT descriptor.          */
+    .global lidt
+lidt:
+    lidt    (%rdi)
+    ret
+
     /* ---- tinygo_scanCurrentStack: GC register/stack scanner --------- */
     /* Pushes all callee-saved registers onto the stack so the GC can    */
     /* scan them for heap pointers, then calls tinygo_scanstack(rsp).    */

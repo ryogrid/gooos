@@ -73,6 +73,11 @@ func main() {
 	vgaWriteLine(0, "Serial: OK")
 	serialPrintln("Serial: OK")
 
+	// Initialize and load the 256-entry IDT.
+	idtInit()
+	vgaWriteLine(1, "IDT: loaded, 256 entries")
+	serialPrintln("IDT: loaded, 256 entries")
+
 	// Phase 1: Allocate many objects that immediately become garbage.
 	const numAllocs = 500
 	for i := 0; i < numAllocs; i++ {
@@ -82,7 +87,7 @@ func main() {
 	// Read stats before GC.
 	var before runtime.MemStats
 	runtime.ReadMemStats(&before)
-	vgaWriteLine(1, "Mallocs: "+utoa(before.Mallocs)+"  TotalAlloc: "+utoa(before.TotalAlloc))
+	vgaWriteLine(2, "Mallocs: "+utoa(before.Mallocs)+"  TotalAlloc: "+utoa(before.TotalAlloc))
 	serialPrintln("Mallocs: " + utoa(before.Mallocs) + "  TotalAlloc: " + utoa(before.TotalAlloc))
 
 	// Phase 2: Trigger garbage collection.
@@ -91,7 +96,7 @@ func main() {
 	// Read stats after GC.
 	var after runtime.MemStats
 	runtime.ReadMemStats(&after)
-	vgaWriteLine(2, "GC done. Frees: "+utoa(after.Frees)+"  HeapInuse: "+utoa(after.HeapInuse))
+	vgaWriteLine(3, "GC done. Frees: "+utoa(after.Frees)+"  HeapInuse: "+utoa(after.HeapInuse))
 	serialPrintln("GC done. Frees: " + utoa(after.Frees) + "  HeapInuse: " + utoa(after.HeapInuse))
 
 	// Phase 3: Allocate again to prove memory was reclaimed.
@@ -99,6 +104,6 @@ func main() {
 	for i := 0; i < 100; i++ {
 		_ = allocateGarbage()
 	}
-	vgaWriteLine(3, "Post-GC alloc OK - GC works!")
+	vgaWriteLine(4, "Post-GC alloc OK - GC works!")
 	serialPrintln("Post-GC alloc OK - GC works!")
 }
