@@ -200,6 +200,63 @@ tinygo_scanCurrentStack:
     addq    $56, %rsp               /* clean up: 6 regs (48) + align (8) */
     retq
 
+    /* ---- lgdtReload: load new GDT and reload segment registers --------- */
+    /* lgdtReload(desc uintptr)                                            */
+    /* SysV ABI: rdi = pointer to 10-byte packed GDT descriptor.           */
+    /*                                                                      */
+    /* After lgdt, reload DS/ES/FS/GS/SS with the kernel data selector,    */
+    /* and reload CS via a far return (lretq) to the kernel code selector.  */
+    .global lgdtReload
+lgdtReload:
+    lgdt    (%rdi)
+
+    /* Reload data segments with kernel data selector (0x10). */
+    movw    $0x10, %ax
+    movw    %ax, %ds
+    movw    %ax, %es
+    movw    %ax, %fs
+    movw    %ax, %gs
+    movw    %ax, %ss
+
+    /* Reload CS via far return: push selector + return address, then lretq. */
+    pushq   $0x08
+    leaq    1f(%rip), %rax
+    pushq   %rax
+    lretq
+1:
+    ret
+
+    /* ---- ltr: load the Task Register ------------------------------------ */
+    /* ltr(selector uint16)                                                  */
+    /* SysV ABI: di = TSS selector.                                          */
+    .global ltr
+ltr:
+    movw    %di, %ax
+    ltr     %ax
+    ret
+
+    /* ---- jumpToRing3: transition to Ring 3 via iretq -------------------- */
+    /* jumpToRing3(userRIP uintptr, userRSP uintptr)                         */
+    /* SysV ABI: rdi = user RIP, rsi = user RSP.                             */
+    /*                                                                        */
+    /* Sets data segment registers to user data selector, builds an iretq     */
+    /* stack frame (SS, RSP, RFLAGS, CS, RIP), and executes iretq to switch   */
+    /* to Ring 3. Does not return.                                            */
+    .global jumpToRing3
+jumpToRing3:
+    /* Set data segment registers to user data selector (0x20 | RPL=3). */
+    movw    $0x23, %ax
+    movw    %ax, %ds
+    movw    %ax, %es
+
+    /* Build iretq frame (pushed in reverse order). */
+    pushq   $0x23               /* SS  = user data selector */
+    pushq   %rsi                /* RSP = user stack pointer */
+    pushfq                      /* RFLAGS (IF=1 from current state) */
+    pushq   $0x1B               /* CS  = user code selector (0x18 | RPL=3) */
+    pushq   %rdi                /* RIP = user entry point */
+    iretq
+
     /* ================================================================= */
     /* Synthetic ELF header for findGlobals()                            */
     /*                                                                   */

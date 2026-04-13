@@ -16,6 +16,7 @@ const (
 	pageSize    = 4096
 	pagePresent = 1 << 0
 	pageWrite   = 1 << 1
+	pageUser    = 1 << 2 // U/S bit: page accessible from Ring 3
 )
 
 // heapEndAddr returns the linker-defined _heap_end address.
@@ -78,9 +79,9 @@ func mapPage(vaddr, paddr, flags uintptr) {
 	pdIdx := (vaddr >> 21) & 0x1FF
 	ptIdx := (vaddr >> 12) & 0x1FF
 
-	pdp := walkOrCreate(pml4, pml4Idx)
-	pd := walkOrCreate(pdp, pdpIdx)
-	pt := walkOrCreate(pd, pdIdx)
+	pdp := walkOrCreate(pml4, pml4Idx, flags)
+	pd := walkOrCreate(pdp, pdpIdx, flags)
+	pt := walkOrCreate(pd, pdIdx, flags)
 
 	// Set the leaf page table entry.
 	entry := (*uint64)(unsafe.Pointer(pt + ptIdx*8))
@@ -121,16 +122,26 @@ func unmapPage(vaddr uintptr) {
 
 // walkOrCreate returns the physical address of the next-level page table.
 // If the entry at table[index] is not present, a new zeroed page table
-// is allocated and linked.
-func walkOrCreate(table uintptr, index uintptr) uintptr {
+// is allocated and linked. The flags parameter controls permission bits
+// on intermediate entries: if pageUser is set, the User/Supervisor bit
+// is propagated to all intermediate page table levels (required for
+// Ring 3 accessible pages, since the CPU ANDs permissions across levels).
+func walkOrCreate(table uintptr, index uintptr, flags uintptr) uintptr {
 	entry := (*uint64)(unsafe.Pointer(table + index*8))
 	if *entry&uint64(pagePresent) != 0 {
-		// Entry exists: extract the physical address (bits 12-51).
+		// Propagate User bit to existing entries when needed.
+		if flags&pageUser != 0 {
+			*entry |= uint64(pageUser)
+		}
 		return uintptr(*entry) &^ 0xFFF
 	}
 	// Allocate a new page table and link it.
 	newTable := allocPage()
-	*entry = uint64(newTable) | uint64(pagePresent|pageWrite)
+	intermediateFlags := uintptr(pagePresent | pageWrite)
+	if flags&pageUser != 0 {
+		intermediateFlags |= pageUser
+	}
+	*entry = uint64(newTable) | uint64(intermediateFlags)
 	return newTable
 }
 

@@ -34,9 +34,10 @@ type IDTEntry struct {
 }
 
 const (
-	idtEntries    = 256
-	kernelCS      = 0x08 // GDT64_CODE selector (second GDT entry)
-	gateInterrupt = 0x8E // Present=1 | DPL=0 | Type=0xE (64-bit interrupt gate)
+	idtEntries        = 256
+	kernelCS          = 0x08 // GDT64_CODE selector (second GDT entry)
+	gateInterrupt     = 0x8E // Present=1 | DPL=0 | Type=0xE (64-bit interrupt gate)
+	gateInterruptUser = 0xEE // Present=1 | DPL=3 | Type=0xE (Ring 3 callable)
 )
 
 var (
@@ -82,6 +83,12 @@ func idtInit() {
 	idtDesc[9] = byte(base >> 56)
 
 	lidt(uintptr(unsafe.Pointer(&idtDesc[0])))
+}
+
+// setGateDPL3 changes the DPL of an IDT entry to Ring 3, allowing
+// user-mode software to trigger the interrupt via the int instruction.
+func setGateDPL3(vector int) {
+	idtTable[vector].TypeAttr = gateInterruptUser
 }
 
 // isrTableAddr returns the base address of the 256-entry ISR stub

@@ -29,6 +29,13 @@
 - Assembly address helpers (leaq symbol(%rip), %rax; ret) get //export Go function addresses for task entry points
 - Schedule from timer handler: EOI first, then switchContext; interrupt gates keep IF=0 during the switch
 - isr_common's %rbx (pre-alignment RSP) is preserved across context switches because switchContext saves/restores callee-saved regs
+- GDT can be rebuilt in Go at runtime: define [N]uint64 array, pack TSS descriptor as two entries, lgdt + far return to reload CS, ltr loads TSS
+- TSS RSP0 must point to kernel stack for Ring 3→Ring 0 transitions; CPU loads RSP from TSS.RSP0 on privilege change
+- User-accessible pages need pageUser (bit 2) set at ALL page table levels (PML4E, PDPE, PDE, PTE); walkOrCreate propagates User flag
+- IDT gate DPL=3 (TypeAttr=0xEE) required for int 0x80 from Ring 3; DPL=0 gates cause #GP from user mode
+- iretq to Ring 3: push SS(0x23), RSP, RFLAGS, CS(0x1B), RIP; user CS = 0x18|RPL=3, user SS = 0x20|RPL=3
+- User code pages mapped at vaddr > 1 GiB (outside boot identity map) with pagePresent|pageWrite|pageUser flags
+- After jumpToRing3, task 0 runs in Ring 3; timer preempts via TSS RSP0 kernel stack; scheduler context-switches normally
 
 ---
 
@@ -156,4 +163,30 @@
   - allocPage() from vm.go works well for per-task stack allocation (4 KiB pages)
   - //export Go functions + assembly leaq helpers is the clean pattern for getting function addresses into Go
   - VGA line assignments: scheduler status on lines 11-12, demo task output on lines 14-16
+---
+
+## 2026-04-13 - US-009
+- Implemented Ring 3 userspace: TSS, GDT with Ring 3 segments, iretq to user mode, int 0x80 syscall
+- Created src/gdt.go: runtime GDT with 7 entries (null, kernel CS/DS, user CS/DS, TSS low/high), TSS with RSP0, lgdt + ltr
+- Created src/userspace.go: user code/stack page allocation with User bit, 6-byte user program (xor eax/int 0x80/jmp $), syscall handler
+- Added assembly stubs to src/stubs.S: lgdtReload (lgdt + reload CS via lretq + DS/ES/FS/GS/SS), ltr, jumpToRing3 (iretq frame)
+- Modified src/vm.go: added pageUser flag, walkOrCreate now propagates User bit to intermediate page table entries
+- Modified src/idt.go: added setGateDPL3() for user-callable interrupt gates (TypeAttr=0xEE)
+- Modified src/main.go: gdtInit() after VM demo, setupUserspace() replaces hlt loop, VGA lines shifted (GDT:11, sched:12-13, user:17)
+- VGA shows "User: Hello from Ring 3!" — user program in Ring 3 invokes syscall via int 0x80, kernel handler prints message
+- Scheduler continues to run: task 0 (user mode) preempted by timer via TSS RSP0, switches to demo tasks and back
+- Kernel runs 15+ seconds without triple-fault or GP fault
+- Files changed: src/gdt.go (new), src/userspace.go (new), src/stubs.S, src/vm.go, src/idt.go, src/main.go, prd.json
+- **Learnings for future iterations:**
+  - GDT rebuilt at runtime in Go: [7]uint64 array, TSS descriptor spans 2 entries (16 bytes for 64-bit system segment)
+  - TSS RSP0 (offset 4) is the kernel stack loaded by CPU on Ring 3 → Ring 0 transitions; must be pre-allocated
+  - Page table User bit must be set at ALL levels (PML4E through PTE); CPU ANDs permissions across levels
+  - IDT gates with DPL=0 cause #GP when int instruction is executed from Ring 3; set DPL=3 (TypeAttr=0xEE) for syscall vectors
+  - lgdt reload: after lgdt, must reload CS via lretq (far return) and DS/ES/FS/GS/SS via mov
+  - iretq frame for Ring 3: push SS(0x23), RSP(user stack), RFLAGS(with IF=1), CS(0x1B), RIP(user entry); RPL=3 in selectors
+  - User code virtual addresses must be outside boot 1 GiB identity map (used 0x40010000, 0x40020000)
+  - Existing ISR infrastructure (isr_common + go_interrupt_handler) works for syscalls without modification — int 0x80 is just another vector
+  - After jumpToRing3, the original boot stack is abandoned; TSS RSP0 becomes task 0's kernel stack for scheduling
+  - VGA line assignments: GDT on 11, scheduler 12-13, demo tasks 14-16, user output 17
+---
 ---

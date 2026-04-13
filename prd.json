@@ -156,7 +156,7 @@
         "All code comments in English"
       ],
       "priority": 9,
-      "passes": false,
+      "passes": true,
       "notes": "Depends on US-007 (VM for user address space) and US-008 (scheduler for task management). Most assembly-heavy milestone."
     },
     {

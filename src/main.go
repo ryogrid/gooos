@@ -204,6 +204,12 @@ func main() {
 	vgaWriteLine(10, "Timer: "+tickStr+" ticks")
 	serialPrintln("Timer: " + tickStr + " ticks")
 
+	// Set up new GDT with Ring 3 code/data segments and TSS.
+	// Must happen after vmInit (uses allocPage for the kernel stack).
+	gdtInit()
+	vgaWriteLine(11, "GDT: Ring 3 + TSS loaded")
+	serialPrintln("GDT: Ring 3 + TSS loaded")
+
 	// Initialize the scheduler: task 0 = this main/boot task.
 	initScheduler()
 
@@ -212,17 +218,17 @@ func main() {
 	createTask(demoTaskBAddr()) // Task 2 -> VGA line 15
 	createTask(demoTaskCAddr()) // Task 3 -> VGA line 16
 
-	vgaWriteLine(11, "Scheduler: 3 tasks created")
+	vgaWriteLine(12, "Scheduler: 3 tasks created")
 	serialPrintln("Scheduler: 3 tasks created")
 
 	// Enable preemptive scheduling — the next timer tick will start switching.
 	schedReady = true
-	vgaWriteLine(12, "Scheduler: running")
+	vgaWriteLine(13, "Scheduler: running")
 	serialPrintln("Scheduler: running (round-robin, PIT preemption)")
 
-	// Halt loop: task 0 (main) idles, waking on each interrupt.
-	// The scheduler will preempt this and switch to demo tasks.
-	for {
-		hlt()
-	}
+	// Set up userspace and jump to Ring 3. Task 0 (main) becomes the
+	// user-mode program. The scheduler preempts it via the timer and
+	// switches between user code and the demo kernel tasks.
+	setupUserspace()
+	// Does not return — user code runs in Ring 3.
 }
