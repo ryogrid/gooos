@@ -63,6 +63,6 @@ func setupUserspace() {
 // Syscall 0 prints a greeting to VGA and serial, demonstrating a
 // successful Ring 3 -> Ring 0 transition via the interrupt mechanism.
 func syscallHandler(vector uint64) {
-	vgaWriteLine(17, "User: Hello from Ring 3!")
+	vgaWriteLine(18, "User: Hello from Ring 3!")
 	serialPrintln("User: Hello from Ring 3!")
 }

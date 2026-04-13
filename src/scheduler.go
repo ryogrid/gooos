@@ -167,7 +167,7 @@ func demoTaskA() {
 	var counter uint64
 	for {
 		counter++
-		vgaWriteLine(14, "Task A: count="+utoa(counter))
+		vgaWriteLine(15, "Task A: count="+utoa(counter))
 		// Spin-wait ~500ms using PIT ticks.
 		target := pitTicks + 50
 		for pitTicks < target {
@@ -184,7 +184,7 @@ func demoTaskB() {
 	var counter uint64
 	for {
 		counter++
-		vgaWriteLine(15, "Task B: count="+utoa(counter))
+		vgaWriteLine(16, "Task B: count="+utoa(counter))
 		target := pitTicks + 75
 		for pitTicks < target {
 			hlt()
@@ -200,7 +200,7 @@ func demoTaskC() {
 	var counter uint64
 	for {
 		counter++
-		vgaWriteLine(16, "Task C: count="+utoa(counter))
+		vgaWriteLine(17, "Task C: count="+utoa(counter))
 		target := pitTicks + 100
 		for pitTicks < target {
 			hlt()

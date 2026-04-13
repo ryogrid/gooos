@@ -196,34 +196,56 @@ func main() {
 		serialPrintln("VM: FAIL - read back 0x" + hextoa(testVal))
 	}
 
+	// In-memory filesystem demo: create, write, read, list.
+	serialPrintln("FS: starting demo")
+	fsCreate("hello.txt")
+	serialPrintln("FS: created hello.txt")
+	fsWrite("hello.txt", []byte("hello world"))
+	serialPrintln("FS: wrote 'hello world' to hello.txt")
+	readBack := fsRead("hello.txt")
+	serialPrintln("FS: read back from hello.txt")
+
+	if string(readBack) == "hello world" {
+		fileNames := fsList()
+		listing := "FS: create/write/read OK | Files:"
+		for _, name := range fileNames {
+			listing += " " + name
+		}
+		vgaWriteLine(10, listing)
+		serialPrintln(listing)
+	} else {
+		vgaWriteLine(10, "FS: FAIL - read mismatch")
+		serialPrintln("FS: FAIL - read mismatch")
+	}
+
 	// Spin-wait to let the timer accumulate ticks, then display count.
 	for pitTicks < 200 {
 		hlt()
 	}
 	tickStr := utoa(pitTicks)
-	vgaWriteLine(10, "Timer: "+tickStr+" ticks")
+	vgaWriteLine(11, "Timer: "+tickStr+" ticks")
 	serialPrintln("Timer: " + tickStr + " ticks")
 
 	// Set up new GDT with Ring 3 code/data segments and TSS.
 	// Must happen after vmInit (uses allocPage for the kernel stack).
 	gdtInit()
-	vgaWriteLine(11, "GDT: Ring 3 + TSS loaded")
+	vgaWriteLine(12, "GDT: Ring 3 + TSS loaded")
 	serialPrintln("GDT: Ring 3 + TSS loaded")
 
 	// Initialize the scheduler: task 0 = this main/boot task.
 	initScheduler()
 
 	// Create 3 demo tasks that write to different VGA lines.
-	createTask(demoTaskAAddr()) // Task 1 -> VGA line 14
-	createTask(demoTaskBAddr()) // Task 2 -> VGA line 15
-	createTask(demoTaskCAddr()) // Task 3 -> VGA line 16
+	createTask(demoTaskAAddr()) // Task 1 -> VGA line 15
+	createTask(demoTaskBAddr()) // Task 2 -> VGA line 16
+	createTask(demoTaskCAddr()) // Task 3 -> VGA line 17
 
-	vgaWriteLine(12, "Scheduler: 3 tasks created")
+	vgaWriteLine(13, "Scheduler: 3 tasks created")
 	serialPrintln("Scheduler: 3 tasks created")
 
 	// Enable preemptive scheduling — the next timer tick will start switching.
 	schedReady = true
-	vgaWriteLine(13, "Scheduler: running")
+	vgaWriteLine(14, "Scheduler: running")
 	serialPrintln("Scheduler: running (round-robin, PIT preemption)")
 
 	// Set up userspace and jump to Ring 3. Task 0 (main) becomes the

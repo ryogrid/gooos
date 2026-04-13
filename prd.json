@@ -173,7 +173,7 @@
         "All code comments in English"
       ],
       "priority": 10,
-      "passes": false,
+      "passes": true,
       "notes": "Pure Go implementation, no assembly needed. Kernel-only API (no userspace syscall integration in this story)."
     },
     {
