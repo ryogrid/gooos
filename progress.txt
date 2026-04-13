@@ -24,6 +24,11 @@
 - Page frame allocator: bump allocator starting at _heap_end aligned to 4 KiB; heapEndAddr() stub returns linker symbol value
 - mapPage walks 4-level page table (PML4→PDP→PD→PT); does NOT split existing 2 MiB huge pages
 - For VM demo, use virtual addresses outside the boot-time 1 GiB identity map (e.g., 0x40000000) to avoid huge page conflicts
+- Context switch: save/restore callee-saved regs (rbx, rbp, r12-r15) + RSP; new task stacks need zeroed regs + entry address + halt safety net
+- New tasks start from inside a timer ISR (IF=0); must call sti() first to re-enable interrupts
+- Assembly address helpers (leaq symbol(%rip), %rax; ret) get //export Go function addresses for task entry points
+- Schedule from timer handler: EOI first, then switchContext; interrupt gates keep IF=0 during the switch
+- isr_common's %rbx (pre-alignment RSP) is preserved across context switches because switchContext saves/restores callee-saved regs
 
 ---
 
@@ -129,4 +134,26 @@
   - invlpg flushes TLB for a single page; must be called after clearing a PTE in unmapPage
   - Passing error code from ISR: add `movq 128(%rsp), %rsi` in isr_common; store in Go global since InterruptHandler type doesn't need to change
   - VGA line management: new status lines (VM) go at row 9; timer shifted to 10; keyboard echo to 11
+---
+
+## 2026-04-13 - US-008
+- Implemented preemptive round-robin scheduler with context switch assembly
+- Created src/scheduler.go: Task struct (SP, State, ID), initScheduler(), createTask(), schedule(), 3 demo tasks (A/B/C)
+- Created src/switch.S: switchContext (save/restore callee-saved regs + RSP), taskReturnHalt safety net, address helpers for Go entry functions
+- Updated src/pit.go: handleTimer now calls schedule() after EOI for preemptive switching
+- Updated src/main.go: init scheduler, create 3 demo tasks, set schedReady, scheduler status on VGA lines 11-12
+- Updated Makefile: added switch.S -> switch.o assembly and linking
+- Demo tasks write incrementing counters to VGA lines 14-16 at different rates (50/75/100 tick intervals)
+- Serial logs every task switch: "Switch: N -> M" showing clean round-robin 0→1→2→3→0→...
+- Kernel runs 15+ seconds without triple-fault; scheduling is stable
+- Files changed: src/scheduler.go (new), src/switch.S (new), src/pit.go, src/main.go, Makefile, prd.json
+- **Learnings for future iterations:**
+  - Context switch only needs to save callee-saved registers (rbx, rbp, r12-r15) since the C ABI guarantees the caller saved the rest
+  - New task initial stack layout: [halt addr][entry addr][rbx=0][rbp=0][r12=0][r13=0][r14=0][r15=0] with SP at bottom
+  - Tasks first scheduled from inside a timer ISR run with IF=0; must call sti() at the start of the entry function
+  - isr_common uses %rbx to save pre-alignment RSP; switchContext preserves this correctly as a callee-saved register
+  - Schedule must send EOI before switchContext — otherwise the PIC stays masked for IRQ0 on the new task
+  - allocPage() from vm.go works well for per-task stack allocation (4 KiB pages)
+  - //export Go functions + assembly leaq helpers is the clean pattern for getting function addresses into Go
+  - VGA line assignments: scheduler status on lines 11-12, demo task output on lines 14-16
 ---

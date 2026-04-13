@@ -33,8 +33,10 @@ func pitInit() {
 }
 
 // handleTimer is the IRQ0 handler (vector 32). Increments the global
-// tick counter and sends EOI to the PIC.
+// tick counter, sends EOI to the PIC, and triggers the scheduler for
+// preemptive task switching.
 func handleTimer(vector uint64) {
 	pitTicks++
 	picSendEOI(0)
+	schedule()
 }

@@ -204,7 +204,24 @@ func main() {
 	vgaWriteLine(10, "Timer: "+tickStr+" ticks")
 	serialPrintln("Timer: " + tickStr + " ticks")
 
-	// Halt loop: keep the kernel alive, waking on each interrupt.
+	// Initialize the scheduler: task 0 = this main/boot task.
+	initScheduler()
+
+	// Create 3 demo tasks that write to different VGA lines.
+	createTask(demoTaskAAddr()) // Task 1 -> VGA line 14
+	createTask(demoTaskBAddr()) // Task 2 -> VGA line 15
+	createTask(demoTaskCAddr()) // Task 3 -> VGA line 16
+
+	vgaWriteLine(11, "Scheduler: 3 tasks created")
+	serialPrintln("Scheduler: 3 tasks created")
+
+	// Enable preemptive scheduling — the next timer tick will start switching.
+	schedReady = true
+	vgaWriteLine(12, "Scheduler: running")
+	serialPrintln("Scheduler: running (round-robin, PIT preemption)")
+
+	// Halt loop: task 0 (main) idles, waking on each interrupt.
+	// The scheduler will preempt this and switch to demo tasks.
 	for {
 		hlt()
 	}
