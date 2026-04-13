@@ -117,9 +117,15 @@ func main() {
 		registerHandler(i, handleDefaultIRQ)
 	}
 
+	// Initialize PIT channel 0 at ~100 Hz and register the timer IRQ handler.
+	pitInit()
+	registerHandler(32, handleTimer)
+	vgaWriteLine(3, "PIT: 100 Hz timer started")
+	serialPrintln("PIT: 100 Hz timer started")
+
 	// Enable maskable interrupts.
 	sti()
-	vgaWriteLine(3, "Interrupts: enabled")
+	vgaWriteLine(4, "Interrupts: enabled")
 	serialPrintln("Interrupts: enabled")
 
 	// Phase 1: Allocate many objects that immediately become garbage.
@@ -131,7 +137,7 @@ func main() {
 	// Read stats before GC.
 	var before runtime.MemStats
 	runtime.ReadMemStats(&before)
-	vgaWriteLine(4, "Mallocs: "+utoa(before.Mallocs)+"  TotalAlloc: "+utoa(before.TotalAlloc))
+	vgaWriteLine(5, "Mallocs: "+utoa(before.Mallocs)+"  TotalAlloc: "+utoa(before.TotalAlloc))
 	serialPrintln("Mallocs: " + utoa(before.Mallocs) + "  TotalAlloc: " + utoa(before.TotalAlloc))
 
 	// Phase 2: Trigger garbage collection.
@@ -140,7 +146,7 @@ func main() {
 	// Read stats after GC.
 	var after runtime.MemStats
 	runtime.ReadMemStats(&after)
-	vgaWriteLine(5, "GC done. Frees: "+utoa(after.Frees)+"  HeapInuse: "+utoa(after.HeapInuse))
+	vgaWriteLine(6, "GC done. Frees: "+utoa(after.Frees)+"  HeapInuse: "+utoa(after.HeapInuse))
 	serialPrintln("GC done. Frees: " + utoa(after.Frees) + "  HeapInuse: " + utoa(after.HeapInuse))
 
 	// Phase 3: Allocate again to prove memory was reclaimed.
@@ -148,8 +154,16 @@ func main() {
 	for i := 0; i < 100; i++ {
 		_ = allocateGarbage()
 	}
-	vgaWriteLine(6, "Post-GC alloc OK - GC works!")
+	vgaWriteLine(7, "Post-GC alloc OK - GC works!")
 	serialPrintln("Post-GC alloc OK - GC works!")
+
+	// Spin-wait to let the timer accumulate ticks, then display count.
+	for pitTicks < 200 {
+		hlt()
+	}
+	tickStr := utoa(pitTicks)
+	vgaWriteLine(8, "Timer: "+tickStr+" ticks")
+	serialPrintln("Timer: " + tickStr + " ticks")
 
 	// Halt loop: keep the kernel alive, waking on each interrupt.
 	for {
