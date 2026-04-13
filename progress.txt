@@ -4,6 +4,14 @@
 - QEMU direct `-kernel` boot fails for ELF64; use ISO boot via `make iso` + `make run` instead
 - Serial output uses COM1 (0x3F8) at 115200 baud 8N1, verified with `-serial stdio`
 - TinyGo builds the entire `./src` package, so new `.go` files are automatically included
+- IDT descriptor for lidt must be packed (2-byte limit + 8-byte base = 10 bytes); use [10]byte array in Go since structs get alignment padding
+- To get an assembly function's address in Go, create a helper that returns it via `leaq symbol(%rip), %rax`
+- GDT64_CODE selector = 0x08 (second GDT entry at offset 8)
+- ISR stubs use ISR_NOERR/ISR_ERR macros; vectors with CPU error code: 8, 10-14, 17, 21
+- .altmacro + .rept + %COUNTER pattern generates bulk assembly stubs (used for vectors 32-255 and the ISR address table)
+- ISR address table in .rodata: array of 256 .quad pointers, accessed from Go via isrTableAddr()
+- go_interrupt_handler is exported with //export for C-ABI calling from assembly
+- Stack alignment before Go call: save RSP in callee-saved register, andq $-16 to align, restore after call
 
 ---
 
@@ -15,4 +23,32 @@
   - COM1 initialization sequence: disable interrupts, DLAB on, set divisor, DLAB off (8N1), enable FIFO, set modem control
   - Must wait for transmit holding register empty (LSR bit 5) before writing data to COM1
   - `make run-kernel` with `-kernel` flag doesn't work for ELF64 kernels; use `make run` (ISO with GRUB) for testing
+---
+
+## 2026-04-13 - US-002
+- Implemented 256-entry IDT: IDTEntry struct (16 bytes), setGate helper, idtInit with lidt
+- Assembly stubs added: defaultHandler (cli+hlt), defaultHandlerAddr (leaq), lidt
+- Files changed: src/idt.go (new), src/stubs.S (3 new stubs), src/main.go (call idtInit, display status)
+- **Learnings for future iterations:**
+  - IDT descriptor for lidt is packed (10 bytes); Go structs add alignment padding on uint64, so use [10]byte and pack manually
+  - To pass an assembly symbol address to Go, use a helper function with `leaq symbol(%rip), %rax; ret` rather than trying to take the address directly
+  - IDTEntry struct fields naturally pack to 16 bytes without padding: uint16+uint16+uint8+uint8+uint16+uint32+uint32
+  - VGA line numbers need to be shifted when adding new status lines (bumped GC output from lines 1-3 to 2-4)
+  - Interrupt gate type attr = 0x8E: Present(1) | DPL(00) | 0 | Type(1110 = interrupt gate)
+---
+
+## 2026-04-13 - US-003
+- Implemented 256 ISR entry stubs in src/isr.S with macros (ISR_NOERR/ISR_ERR)
+- Created table-driven Go interrupt dispatcher in src/interrupt.go (//export go_interrupt_handler)
+- Updated src/idt.go to populate IDT from ISR address table instead of default handler
+- Registered #DE (division error) handler on vector 0 in main.go
+- Updated Makefile to assemble isr.S and link isr.o
+- Files changed: src/isr.S (new), src/interrupt.go (new), src/idt.go, src/main.go, Makefile
+- **Learnings for future iterations:**
+  - GNU as .altmacro mode with .rept and %COUNTER is effective for generating bulk stubs; define macros in normal mode, switch to altmacro for invocation
+  - Vectors that push CPU error codes: 8, 10, 11, 12, 13, 14, 17, 21; all others need dummy push $0
+  - ISR common handler must align stack to 16 bytes before calling Go (SysV ABI); save RSP in a callee-saved register (%rbx), andq $-16, %rsp, restore after call
+  - 15 GPR pushes (120 bytes) from an interrupt frame; vector number offset = RSP + 120
+  - //export directive in TinyGo creates C-ABI-compatible function callable from assembly
+  - ISR address table in .rodata + Go helper with leaq/ret is the clean pattern for passing assembly symbol arrays to Go
 ---

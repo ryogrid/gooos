@@ -32,7 +32,7 @@
         "All code comments in English"
       ],
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "notes": "Does NOT enable interrupts yet. ISR stubs and PIC remap come in the next stories."
     },
     {
@@ -49,7 +49,7 @@
         "All code comments in English"
       ],
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "notes": "Depends on US-002. Interrupts still disabled (no sti yet). PIC remap comes next."
     },
     {
