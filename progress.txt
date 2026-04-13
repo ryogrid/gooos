@@ -1,0 +1,18 @@
+## Codebase Patterns
+- Use `//go:linkname` with bodyless Go function declarations to call assembly stubs from Go code
+- outb/inb stubs in stubs.S follow SysV AMD64 ABI (rdi=first arg, rsi=second arg, rax=return)
+- QEMU direct `-kernel` boot fails for ELF64; use ISO boot via `make iso` + `make run` instead
+- Serial output uses COM1 (0x3F8) at 115200 baud 8N1, verified with `-serial stdio`
+- TinyGo builds the entire `./src` package, so new `.go` files are automatically included
+
+---
+
+## 2026-04-13 - US-001
+- Implemented COM1 serial output: outb/inb assembly stubs, serial.go with init/putchar/print/println
+- Files changed: src/stubs.S (added outb/inb), src/serial.go (new), src/main.go (serial init + logging)
+- **Learnings for future iterations:**
+  - TinyGo supports `//go:linkname` with bodyless function declarations to link against external assembly symbols (same pattern used by TinyGo runtime for `tinygo_scanCurrentStack`)
+  - COM1 initialization sequence: disable interrupts, DLAB on, set divisor, DLAB off (8N1), enable FIFO, set modem control
+  - Must wait for transmit holding register empty (LSR bit 5) before writing data to COM1
+  - `make run-kernel` with `-kernel` flag doesn't work for ELF64 kernels; use `make run` (ISO with GRUB) for testing
+---

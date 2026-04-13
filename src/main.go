@@ -65,7 +65,13 @@ func allocateGarbage() *[256]byte {
 
 func main() {
 	vgaClear()
-	vgaWriteLine(0, "Conservative GC Demo")
+
+	// Initialize serial output on COM1.
+	serialInit()
+
+	// Display and log serial status.
+	vgaWriteLine(0, "Serial: OK")
+	serialPrintln("Serial: OK")
 
 	// Phase 1: Allocate many objects that immediately become garbage.
 	const numAllocs = 500
@@ -77,6 +83,7 @@ func main() {
 	var before runtime.MemStats
 	runtime.ReadMemStats(&before)
 	vgaWriteLine(1, "Mallocs: "+utoa(before.Mallocs)+"  TotalAlloc: "+utoa(before.TotalAlloc))
+	serialPrintln("Mallocs: " + utoa(before.Mallocs) + "  TotalAlloc: " + utoa(before.TotalAlloc))
 
 	// Phase 2: Trigger garbage collection.
 	runtime.GC()
@@ -85,6 +92,7 @@ func main() {
 	var after runtime.MemStats
 	runtime.ReadMemStats(&after)
 	vgaWriteLine(2, "GC done. Frees: "+utoa(after.Frees)+"  HeapInuse: "+utoa(after.HeapInuse))
+	serialPrintln("GC done. Frees: " + utoa(after.Frees) + "  HeapInuse: " + utoa(after.HeapInuse))
 
 	// Phase 3: Allocate again to prove memory was reclaimed.
 	// If GC did not free anything, the heap would eventually fill up.
@@ -92,4 +100,5 @@ func main() {
 		_ = allocateGarbage()
 	}
 	vgaWriteLine(3, "Post-GC alloc OK - GC works!")
+	serialPrintln("Post-GC alloc OK - GC works!")
 }

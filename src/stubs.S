@@ -90,6 +90,26 @@ memset:
     movq    %r8, %rax               /* return original dest */
     ret
 
+    /* ---- outb: write byte to I/O port -------------------------------- */
+    /* outb(port uint16, val uint8)                                      */
+    /* SysV ABI: di = port, sil = val                                    */
+    .global outb
+outb:
+    movw    %di, %dx
+    movb    %sil, %al
+    outb    %al, %dx
+    ret
+
+    /* ---- inb: read byte from I/O port -------------------------------- */
+    /* inb(port uint16) uint8                                            */
+    /* SysV ABI: di = port; returns al (zero-extended to eax)            */
+    .global inb
+inb:
+    movw    %di, %dx
+    inb     %dx, %al
+    movzbl  %al, %eax
+    ret
+
     /* ---- tinygo_scanCurrentStack: GC register/stack scanner --------- */
     /* Pushes all callee-saved registers onto the stack so the GC can    */
     /* scan them for heap pointers, then calls tinygo_scanstack(rsp).    */
