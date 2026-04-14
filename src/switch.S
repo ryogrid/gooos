@@ -92,5 +92,22 @@ chanRendezvousBAddr:
     leaq    chanRendezvousB(%rip), %rax
     ret
 
+    /* ---- Select test task address helpers ---------------------------------- */
+
+    .global selectTestTaskAddr
+selectTestTaskAddr:
+    leaq    selectTestTask(%rip), %rax
+    ret
+
+    .global selectProducerAAddr
+selectProducerAAddr:
+    leaq    selectProducerA(%rip), %rax
+    ret
+
+    .global selectProducerBAddr
+selectProducerBAddr:
+    leaq    selectProducerB(%rip), %rax
+    ret
+
     /* Mark the stack as non-executable. */
     .section .note.GNU-stack,"",@progbits

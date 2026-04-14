@@ -263,8 +263,15 @@ func main() {
 	createTask(chanRendezvousBAddr())    // Task 6 — receiver (spawned first to block)
 	createTask(chanRendezvousAAddr())    // Task 7 — sender
 
-	vgaWriteLine(13, "Scheduler: 7 tasks created")
-	serialPrintln("Scheduler: 7 tasks created (3 demo + 4 channel test)")
+	// Select test: selector task blocks on two channels, producers send at different times.
+	selectCh1 = chanCreate(4)
+	selectCh2 = chanCreate(4)
+	createTask(selectTestTaskAddr())    // Task 8 — selects on ch1 and ch2
+	createTask(selectProducerAAddr())   // Task 9 — sends to ch1 after 50 ticks
+	createTask(selectProducerBAddr())   // Task 10 — sends to ch2 after 100 ticks
+
+	vgaWriteLine(13, "Scheduler: 10 tasks created")
+	serialPrintln("Scheduler: 10 tasks created (3 demo + 4 channel + 3 select)")
 
 	// Enable preemptive scheduling — the next timer tick will start switching.
 	schedReady = true

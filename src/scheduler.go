@@ -295,6 +295,30 @@ func waitQueueWakeOne(wq *WaitQueue) {
 	tasks[tid].State = taskReady
 }
 
+// waitQueueAppend adds a task ID to the wait queue without changing task state
+// or calling schedule(). Used by selectWait to register on multiple queues.
+func waitQueueAppend(wq *WaitQueue, tid uint32) {
+	if wq.count >= wqMax {
+		return
+	}
+	wq.ids[wq.count] = tid
+	wq.count++
+}
+
+// waitQueueRemove removes a specific task ID from the wait queue.
+// Used by selectWait to deregister from non-ready queues after wakeup.
+func waitQueueRemove(wq *WaitQueue, tid uint32) {
+	for i := 0; i < wq.count; i++ {
+		if wq.ids[i] == tid {
+			wq.count--
+			for j := i; j < wq.count; j++ {
+				wq.ids[j] = wq.ids[j+1]
+			}
+			return
+		}
+	}
+}
+
 // waitQueueWakeAll sets all queued tasks to taskReady and resets the queue.
 // Safe to call from interrupt context (no blocking, no allocation).
 func waitQueueWakeAll(wq *WaitQueue) {

@@ -154,6 +154,117 @@ func chanTrySend(ch *Channel, val uintptr) bool {
 	return true
 }
 
+// ---------- Select multiplexer ----------
+
+// Direction constants for SelectCase.
+const (
+	selectSend = 0
+	selectRecv = 1
+)
+
+// Maximum number of cases in a selectWait call.
+const selectMaxCases = 8
+
+// SelectCase describes one case in a selectWait call.
+type SelectCase struct {
+	ch  *Channel
+	dir int     // selectSend or selectRecv
+	val uintptr // value to send (only for selectSend cases)
+}
+
+// chanRecvReady returns true if a receive on ch would succeed without blocking.
+func chanRecvReady(ch *Channel) bool {
+	return ch.count > 0
+}
+
+// chanSendReady returns true if a send on ch would succeed without blocking.
+func chanSendReady(ch *Channel) bool {
+	if ch.capacity == 0 {
+		return ch.receiverWQ.count > 0
+	}
+	return ch.count < ch.capacity
+}
+
+// chanRecvDirect performs a non-blocking receive, assuming the channel is ready.
+// Returns the received value. Wakes one blocked sender if any.
+func chanRecvDirect(ch *Channel) uintptr {
+	if ch.capacity == 0 {
+		val := ch.buf[0]
+		ch.count = 0
+		if ch.senderWQ.count > 0 {
+			waitQueueWakeOne(&ch.senderWQ)
+		}
+		return val
+	}
+	val := ch.buf[ch.readIdx]
+	ch.readIdx = (ch.readIdx + 1) % ch.capacity
+	ch.count--
+	waitQueueWakeOne(&ch.senderWQ)
+	return val
+}
+
+// chanSendDirect performs a non-blocking send, assuming the channel is ready.
+// Wakes one blocked receiver if any.
+func chanSendDirect(ch *Channel, val uintptr) {
+	if ch.capacity == 0 {
+		ch.buf[0] = val
+		ch.count = 1
+		if ch.receiverWQ.count > 0 {
+			waitQueueWakeOne(&ch.receiverWQ)
+		}
+		return
+	}
+	ch.buf[ch.writeIdx] = val
+	ch.writeIdx = (ch.writeIdx + 1) % ch.capacity
+	ch.count++
+	waitQueueWakeOne(&ch.receiverWQ)
+}
+
+// selectWait blocks until one of the given cases is ready, executes it,
+// and returns the case index and received value (for recv cases; 0 for send).
+// If multiple cases are ready, the first in array order is chosen.
+// The task is removed from all wait queues upon wakeup to prevent double-wake.
+func selectWait(cases *[selectMaxCases]SelectCase, n int) (int, uintptr) {
+	for {
+		// Phase 1: Check for immediate readiness (first-ready wins).
+		for i := 0; i < n; i++ {
+			if cases[i].dir == selectRecv {
+				if chanRecvReady(cases[i].ch) {
+					return i, chanRecvDirect(cases[i].ch)
+				}
+			} else {
+				if chanSendReady(cases[i].ch) {
+					chanSendDirect(cases[i].ch, cases[i].val)
+					return i, 0
+				}
+			}
+		}
+
+		// Phase 2: No case ready — register on all relevant wait queues.
+		tid := currentTask
+		for i := 0; i < n; i++ {
+			if cases[i].dir == selectRecv {
+				waitQueueAppend(&cases[i].ch.receiverWQ, tid)
+			} else {
+				waitQueueAppend(&cases[i].ch.senderWQ, tid)
+			}
+		}
+		tasks[tid].State = taskBlocked
+		schedule()
+
+		// Phase 3: Woke up — remove from ALL wait queues atomically.
+		for i := 0; i < n; i++ {
+			if cases[i].dir == selectRecv {
+				waitQueueRemove(&cases[i].ch.receiverWQ, tid)
+			} else {
+				waitQueueRemove(&cases[i].ch.senderWQ, tid)
+			}
+		}
+		// Loop back to Phase 1 to find and execute the ready case.
+		// This also handles spurious wakeups gracefully.
+	}
+}
+
 // ---------- Channel test tasks ----------
 
 // Global channels for test tasks, initialized in main before spawning.
@@ -256,6 +367,94 @@ func chanRendezvousB() {
 		serialPrintln("Chan: rendezvous FAIL — got " + utoa(uint64(val)))
 		vgaWriteLine(23, "Chan: rendezvous FAIL")
 	}
+	for {
+		taskSleep(10000)
+	}
+}
+
+// ---------- Select test tasks ----------
+
+// Global channels for the select test, initialized in main before spawning.
+var (
+	selectCh1 *Channel // buffered channel for select case 0
+	selectCh2 *Channel // buffered channel for select case 1
+)
+
+// selectTestTaskAddr returns the address of selectTestTask. Implemented in switch.S.
+//
+//go:linkname selectTestTaskAddr selectTestTaskAddr
+func selectTestTaskAddr() uintptr
+
+// selectProducerAAddr returns the address of selectProducerA. Implemented in switch.S.
+//
+//go:linkname selectProducerAAddr selectProducerAAddr
+func selectProducerAAddr() uintptr
+
+// selectProducerBAddr returns the address of selectProducerB. Implemented in switch.S.
+//
+//go:linkname selectProducerBAddr selectProducerBAddr
+func selectProducerBAddr() uintptr
+
+// selectTestTask selects on two channels and verifies correct dispatch.
+//
+//export selectTestTask
+func selectTestTask() {
+	sti()
+	serialPrintln("Select: test task started")
+
+	var cases [selectMaxCases]SelectCase
+	cases[0] = SelectCase{ch: selectCh1, dir: selectRecv}
+	cases[1] = SelectCase{ch: selectCh2, dir: selectRecv}
+
+	ok := true
+
+	// First select: producer A sends to ch1 after 50 ticks — expect case 0.
+	idx, val := selectWait(&cases, 2)
+	serialPrintln("Select: case " + utoa(uint64(idx)) + " val=" + utoa(uint64(val)))
+	if idx != 0 || val != 0xAAAA {
+		ok = false
+	}
+
+	// Second select: producer B sends to ch2 after 100 ticks — expect case 1.
+	idx, val = selectWait(&cases, 2)
+	serialPrintln("Select: case " + utoa(uint64(idx)) + " val=" + utoa(uint64(val)))
+	if idx != 1 || val != 0xBBBB {
+		ok = false
+	}
+
+	if ok {
+		serialPrintln("Select: PASS — correct dispatch to right case index")
+		vgaWriteLine(24, "Select: PASS")
+	} else {
+		serialPrintln("Select: FAIL — wrong dispatch")
+		vgaWriteLine(24, "Select: FAIL")
+	}
+	for {
+		taskSleep(10000)
+	}
+}
+
+// selectProducerA sends 0xAAAA to selectCh1 after a delay.
+//
+//export selectProducerA
+func selectProducerA() {
+	sti()
+	taskSleep(50)
+	chanSend(selectCh1, 0xAAAA)
+	serialPrintln("Select: producer A sent 0xAAAA to ch1")
+	for {
+		taskSleep(10000)
+	}
+}
+
+// selectProducerB sends 0xBBBB to selectCh2 after a longer delay.
+//
+//export selectProducerB
+func selectProducerB() {
+	sti()
+	taskSleep(100)
+	chanSend(selectCh2, 0xBBBB)
+	serialPrintln("Select: producer B sent 0xBBBB to ch2")
 	for {
 		taskSleep(10000)
 	}
