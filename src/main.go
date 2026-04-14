@@ -196,6 +196,18 @@ func main() {
 		serialPrintln("VM: FAIL - read back 0x" + hextoa(testVal))
 	}
 
+	// Free-list allocator test: allocate, free, allocate again — same address expected.
+	flTestPage := allocPage()
+	serialPrintln("FreeList: alloc1=0x" + hextoa(uint64(flTestPage)))
+	freePage(flTestPage)
+	flTestPage2 := allocPage()
+	serialPrintln("FreeList: alloc2=0x" + hextoa(uint64(flTestPage2)))
+	if flTestPage == flTestPage2 {
+		serialPrintln("FreeList: OK — same address returned after free")
+	} else {
+		serialPrintln("FreeList: FAIL — expected same address")
+	}
+
 	// In-memory filesystem demo: create, write, read, list.
 	serialPrintln("FS: starting demo")
 	fsCreate("hello.txt")

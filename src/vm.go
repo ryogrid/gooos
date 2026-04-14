@@ -46,6 +46,10 @@ func invlpg(addr uintptr)
 // nextFreePage is the bump allocator's next available physical address.
 var nextFreePage uintptr
 
+// freeListHead is the head of the singly-linked free page list.
+// Each free page stores the pointer to the next free page in its first 8 bytes.
+var freeListHead uintptr
+
 // vmInit initializes the page frame allocator.
 // Must be called before mapPage or allocPage.
 func vmInit() {
@@ -55,14 +59,28 @@ func vmInit() {
 }
 
 // allocPage returns the physical address of a zeroed 4 KiB page.
+// It pops from the free list first; only bumps nextFreePage if the list is empty.
 func allocPage() uintptr {
-	page := nextFreePage
-	nextFreePage += pageSize
+	var page uintptr
+	if freeListHead != 0 {
+		page = freeListHead
+		freeListHead = *(*uintptr)(unsafe.Pointer(freeListHead))
+	} else {
+		page = nextFreePage
+		nextFreePage += pageSize
+	}
 	// Zero the page (required for new page table entries).
 	for i := uintptr(0); i < pageSize; i += 8 {
 		*(*uint64)(unsafe.Pointer(page + i)) = 0
 	}
 	return page
+}
+
+// freePage returns a 4 KiB page to the free list.
+// The first 8 bytes of the freed page store the next-pointer.
+func freePage(paddr uintptr) {
+	*(*uintptr)(unsafe.Pointer(paddr)) = freeListHead
+	freeListHead = paddr
 }
 
 // mapPage maps a 4 KiB virtual page to a physical page.
