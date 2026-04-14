@@ -163,9 +163,6 @@ func elfParse(data []byte) (entry uintptr, phdrs []Elf64Phdr, ok bool) {
 	return entry, elfPTLoadBuf[:elfPTLoadCount], true
 }
 
-// elfUserStackBase is the virtual address for the ELF user stack (8 KiB, 2 pages).
-const elfUserStackBase = uintptr(0x7FFF0000)
-
 // elfLoad reads an ELF64 binary from the filesystem via the FS task channel,
 // validates it, maps PT_LOAD segments into userspace memory, allocates a user
 // stack, and jumps to Ring 3 at the entry point. Does not return on success.
@@ -188,6 +185,7 @@ func elfLoad(name string) bool {
 	serialPrintln("ELF: loading " + name + ", entry=0x" + hextoa(uint64(entry)) +
 		", " + utoa(uint64(len(phdrs))) + " PT_LOAD segment(s)")
 
+	proc := &processes[currentTask]
 	userFlags := uintptr(pagePresent | pageWrite | pageUser)
 
 	// Map and load each PT_LOAD segment.
@@ -196,11 +194,10 @@ func elfLoad(name string) bool {
 		startPage := ph.Vaddr &^ (pageSize - 1)
 		endAddr := ph.Vaddr + uintptr(ph.Memsz)
 
-		// Allocate and map pages. allocPage returns zeroed pages,
-		// so BSS (p_memsz - p_filesz) is implicitly zeroed.
 		for addr := startPage; addr < endAddr; addr += pageSize {
 			paddr := allocPage()
 			mapPage(addr, paddr, userFlags)
+			processRecordPage(proc, addr, paddr)
 		}
 
 		// Copy p_filesz bytes from file data to the mapped virtual address.
@@ -209,12 +206,19 @@ func elfLoad(name string) bool {
 		}
 	}
 
-	// Allocate user stack: 2 pages (8 KiB) at elfUserStackBase.
+	// Allocate user stack: 2 pages (8 KiB) at userStackBase.
 	for i := uintptr(0); i < 2; i++ {
 		paddr := allocPage()
-		mapPage(elfUserStackBase+i*pageSize, paddr, userFlags)
+		mapPage(userStackBase+i*pageSize, paddr, userFlags)
+		processRecordPage(proc, userStackBase+i*pageSize, paddr)
 	}
-	stackTop := elfUserStackBase + 2*pageSize
+	stackTop := userStackBase + 2*pageSize
+
+	// Set heap break to end of last PT_LOAD (page-aligned up).
+	if len(phdrs) > 0 {
+		lastPh := &phdrs[len(phdrs)-1]
+		proc.HeapBreak = (lastPh.Vaddr + uintptr(lastPh.Memsz) + pageSize - 1) &^ (pageSize - 1)
+	}
 
 	// Allow Ring 3 to trigger int 0x80 (DPL=3 in IDT gate).
 	setGateDPL3(0x80)

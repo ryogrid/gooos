@@ -15,16 +15,16 @@
 - [x] Add `elfExecTrampolineAddr` assembly stub to switch.S
 
 ## Phase 2: Syscall ABI
-- [ ] Redesign syscall dispatch in userspace.go — 12 syscalls (exit, write, read, exec, fs_read, fs_write, fs_list, yield, sleep, getargs, sbrk, vga_clear)
-- [ ] Implement `sys_write` (fd=0 VGA+serial, fd=1 serial only) using VGA console
-- [ ] Implement `sys_read` — kernel-side line-buffered keyboard input with echo
-- [ ] Implement `sys_exec` — calls elfExec, blocks parent
-- [ ] Implement `sys_exit` — calls processExit
-- [ ] Implement `sys_fs_read`, `sys_fs_write`, `sys_fs_list`
-- [ ] Implement `sys_getargs`
-- [ ] Implement `sys_sbrk` — per-process heap growth
-- [ ] Implement `sys_vga_clear`
-- [ ] Remove old syscall handlers and hand-crafted user ELF binary
+- [x] Redesign syscall dispatch in userspace.go — 12 syscalls (exit, write, read, exec, fs_read, fs_write, fs_list, yield, sleep, getargs, sbrk, vga_clear)
+- [x] Implement `sys_write` (fd=0 VGA+serial, fd=1 serial only) using VGA console
+- [x] Implement `sys_read` — kernel-side line-buffered keyboard input with echo
+- [x] Implement `sys_exec` — calls elfExec, blocks parent
+- [x] Implement `sys_exit` — calls processExit
+- [x] Implement `sys_fs_read`, `sys_fs_write`, `sys_fs_list`
+- [x] Implement `sys_getargs`
+- [x] Implement `sys_sbrk` — per-process heap growth
+- [x] Implement `sys_vga_clear`
+- [x] Remove old syscall handlers and hand-crafted user ELF binary
 
 ## Phase 3: Userland SDK
 - [ ] Create `user/target.json` — TinyGo target for gooos userspace

@@ -291,12 +291,9 @@ func main() {
 		serialPrintln("FS: FAIL - read mismatch")
 	}
 
-	// Build and store the user ELF binary in the filesystem (direct calls).
-	// elfLoad will later read it via fsSendRead from the FS task.
-	buildUserElf()
-	fsCreate("user.elf")
-	fsWrite("user.elf", userElfBinary[:])
-	serialPrintln("ELF: stored user.elf (" + utoa(uint64(userElfSize)) + " bytes)")
+	// User ELF binaries will be stored by the shell integration (Phase 5).
+	// For now, keep a placeholder so the kernel compiles.
+	serialPrintln("ELF: user binary storage deferred to shell integration")
 
 	// Spin-wait to let the timer accumulate ticks, then display count.
 	for pitTicks < 200 {
