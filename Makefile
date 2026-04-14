@@ -21,7 +21,7 @@ STUBS_S     := $(SRC_DIR)/stubs.S
 ISR_S       := $(SRC_DIR)/isr.S
 SWITCH_S    := $(SRC_DIR)/switch.S
 TRAMP_S     := $(SRC_DIR)/trampoline.S
-MAIN_GO     := $(SRC_DIR)/main.go
+GO_SRCS     := $(wildcard $(SRC_DIR)/*.go)
 
 BOOT_O      := $(TMP_DIR)/boot.o
 STUBS_O     := $(TMP_DIR)/stubs.o
@@ -56,7 +56,7 @@ $(SWITCH_O): $(SWITCH_S) | $(TMP_DIR)
 $(TRAMP_O): $(TRAMP_S) | $(TMP_DIR)
 	$(AS) --64 $(TRAMP_S) -o $(TRAMP_O)
 
-$(KERNEL_GO_O): $(MAIN_GO) $(TARGET_JSON) | $(TMP_DIR)
+$(KERNEL_GO_O): $(GO_SRCS) $(TARGET_JSON) | $(TMP_DIR)
 	$(TINYGO) build -target=$(TARGET_JSON) -o $(KERNEL_GO_O) ./$(SRC_DIR)
 
 $(KERNEL_BIN): $(BOOT_O) $(STUBS_O) $(ISR_O) $(SWITCH_O) $(TRAMP_O) $(KERNEL_GO_O) $(LINKER_LD)
