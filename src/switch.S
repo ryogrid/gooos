@@ -142,5 +142,12 @@ userPrintTaskAddr:
     leaq    userPrintTask(%rip), %rax
     ret
 
+    /* ---- elfExec trampoline address helper ------------------------------------- */
+
+    .global elfExecTrampolineAddr
+elfExecTrampolineAddr:
+    leaq    elfExecTrampoline(%rip), %rax
+    ret
+
     /* Mark the stack as non-executable. */
     .section .note.GNU-stack,"",@progbits

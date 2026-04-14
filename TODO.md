@@ -10,9 +10,9 @@
 - [x] Task recycling: `maxTasks=32`, `taskFree` state, `StackBase` field, `taskReclaim()`, slot reuse in `createTask()`
 - [x] Add `chanFree()` to channel.go for channel pool reclamation
 - [x] Add `walkAndGetPaddr()` to vm.go for page cleanup
-- [ ] Create `src/vga.go` — VGA console with cursor, scrolling, `vgaConsolePutChar/Print/Clear`
-- [ ] Create `src/process.go` — Process struct, SavedMapping, elfExec, elfExecTrampoline, processExit
-- [ ] Add `elfExecTrampolineAddr` assembly stub to switch.S
+- [x] Create `src/vga.go` — VGA console with cursor, scrolling, `vgaConsolePutChar/Print/Clear`
+- [x] Create `src/process.go` — Process struct, SavedMapping, elfExec, elfExecTrampoline, processExit
+- [x] Add `elfExecTrampolineAddr` assembly stub to switch.S
 
 ## Phase 2: Syscall ABI
 - [ ] Redesign syscall dispatch in userspace.go — 12 syscalls (exit, write, read, exec, fs_read, fs_write, fs_list, yield, sleep, getargs, sbrk, vga_clear)
