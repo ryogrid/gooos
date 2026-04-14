@@ -14,6 +14,7 @@ const (
 	taskRunning = 0
 	taskReady   = 1
 	taskBlocked = 2
+	taskExited  = 3
 )
 
 // Maximum number of tasks and per-task stack size.
