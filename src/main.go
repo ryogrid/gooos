@@ -133,7 +133,8 @@ func main() {
 	vgaWriteLine(3, "PIT: 100 Hz timer started")
 	serialPrintln("PIT: 100 Hz timer started")
 
-	// Register keyboard IRQ1 handler (vector 33).
+	// Initialize keyboard channel and register IRQ1 handler (vector 33).
+	keyboardInit()
 	registerHandler(33, handleKeyboard)
 	vgaWriteLine(4, "Keyboard: ready")
 	serialPrintln("Keyboard: ready")
@@ -270,8 +271,11 @@ func main() {
 	createTask(selectProducerAAddr())   // Task 9 — sends to ch1 after 50 ticks
 	createTask(selectProducerBAddr())   // Task 10 — sends to ch2 after 100 ticks
 
-	vgaWriteLine(13, "Scheduler: 10 tasks created")
-	serialPrintln("Scheduler: 10 tasks created (3 demo + 4 channel + 3 select)")
+	// Keyboard consumer task: receives KeyEvents from keyboardChannel.
+	createTask(keyboardConsumerTaskAddr()) // Task 11 — keyboard consumer
+
+	vgaWriteLine(13, "Scheduler: 11 tasks created")
+	serialPrintln("Scheduler: 11 tasks created (3 demo + 4 channel + 3 select + 1 keyboard)")
 
 	// Enable preemptive scheduling — the next timer tick will start switching.
 	schedReady = true

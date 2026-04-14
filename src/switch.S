@@ -109,5 +109,12 @@ selectProducerBAddr:
     leaq    selectProducerB(%rip), %rax
     ret
 
+    /* ---- Keyboard consumer task address helper ------------------------------ */
+
+    .global keyboardConsumerTaskAddr
+keyboardConsumerTaskAddr:
+    leaq    keyboardConsumerTask(%rip), %rax
+    ret
+
     /* Mark the stack as non-executable. */
     .section .note.GNU-stack,"",@progbits

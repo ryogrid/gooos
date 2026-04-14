@@ -1,9 +1,21 @@
 // src/keyboard.go -- PS/2 keyboard driver (IRQ1, scancode set 1).
 //
-// Reads scancodes from port 0x60, translates to ASCII, and echoes
-// typed characters on a dedicated VGA line. Logs keypresses to serial.
+// The IRQ1 handler reads scancodes from port 0x60, packs them into
+// KeyEvent messages, and publishes to keyboardChannel via chanTrySend.
+// A dedicated keyboardConsumerTask receives events and handles VGA
+// echo and serial logging — no VGA/serial work in interrupt context.
 
 package main
+
+// KeyEvent represents a keyboard event with raw scancode and ASCII translation.
+type KeyEvent struct {
+	scancode uint8
+	ascii    byte
+}
+
+// keyboardChannel receives KeyEvent messages from the IRQ1 handler.
+// Created by keyboardInit() before the IRQ handler is registered.
+var keyboardChannel *Channel
 
 // PS/2 keyboard I/O port.
 const kbdDataPort = 0x60
@@ -36,8 +48,15 @@ const (
 	scEnter     = 0x1C
 )
 
+// keyboardInit creates the keyboard event channel. Must be called
+// before registering the IRQ1 handler.
+func keyboardInit() {
+	keyboardChannel = chanCreate(16)
+}
+
 // handleKeyboard is the IRQ1 handler (vector 33). Reads the scancode
-// from port 0x60, translates it to ASCII, and echoes to VGA and serial.
+// from port 0x60, packs a KeyEvent, and publishes via chanTrySend.
+// Never blocks — drops events if the channel is full.
 func handleKeyboard(vector uint64) {
 	scancode := inb(kbdDataPort)
 	picSendEOI(1)
@@ -47,35 +66,62 @@ func handleKeyboard(vector uint64) {
 		return
 	}
 
-	// Handle backspace.
-	if scancode == scBackspace {
-		if kbdBufLen > 0 {
-			kbdBufLen--
-			kbdRedraw()
-			serialPrintln("Key: <backspace>")
-		}
-		return
-	}
-
-	// Handle enter: log and clear the buffer.
-	if scancode == scEnter {
-		serialPrint("Key: <enter> line='")
-		serialPrint(string(kbdBuf[:kbdBufLen]))
-		serialPrintln("'")
-		kbdBufLen = 0
-		kbdRedraw()
-		return
-	}
-
 	// Translate scancode to ASCII.
+	var ascii byte
 	if scancode < 128 {
-		ch := scancodeToASCII[scancode]
-		if ch != 0 && kbdBufLen < vgaWidth {
-			kbdBuf[kbdBufLen] = ch
+		ascii = scancodeToASCII[scancode]
+	}
+
+	// Pack KeyEvent into uintptr: low byte = scancode, next byte = ascii.
+	event := uintptr(scancode) | (uintptr(ascii) << 8)
+	chanTrySend(keyboardChannel, event)
+}
+
+// keyboardConsumerTaskAddr returns the address of keyboardConsumerTask.
+// Implemented in switch.S.
+//
+//go:linkname keyboardConsumerTaskAddr keyboardConsumerTaskAddr
+func keyboardConsumerTaskAddr() uintptr
+
+// keyboardConsumerTask receives KeyEvent messages from keyboardChannel
+// and handles VGA echo buffer logic and serial logging.
+//
+//export keyboardConsumerTask
+func keyboardConsumerTask() {
+	sti()
+	serialPrintln("Keyboard: consumer task started")
+	for {
+		event := chanRecv(keyboardChannel)
+		scancode := uint8(event & 0xFF)
+		ascii := byte((event >> 8) & 0xFF)
+
+		// Handle backspace.
+		if scancode == scBackspace {
+			if kbdBufLen > 0 {
+				kbdBufLen--
+				kbdRedraw()
+				serialPrintln("Key: <backspace>")
+			}
+			continue
+		}
+
+		// Handle enter: log and clear the buffer.
+		if scancode == scEnter {
+			serialPrint("Key: <enter> line='")
+			serialPrint(string(kbdBuf[:kbdBufLen]))
+			serialPrintln("'")
+			kbdBufLen = 0
+			kbdRedraw()
+			continue
+		}
+
+		// Normal key: echo to VGA and serial.
+		if ascii != 0 && kbdBufLen < vgaWidth {
+			kbdBuf[kbdBufLen] = ascii
 			kbdBufLen++
 			kbdRedraw()
 			serialPrint("Key: ")
-			serialPutChar(ch)
+			serialPutChar(ascii)
 			serialPutChar('\r')
 			serialPutChar('\n')
 		}
