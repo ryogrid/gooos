@@ -195,6 +195,14 @@ func demoTaskB() {
 	}
 }
 
+// yield voluntarily relinquishes the CPU to the next ready task.
+// The current task is set to taskReady and schedule() picks the next one.
+// Callable from any kernel task context.
+func yield() {
+	tasks[currentTask].State = taskReady
+	schedule()
+}
+
 // ---------- WaitQueue ----------
 
 // Maximum number of tasks that can be waiting in a single WaitQueue.
@@ -244,6 +252,7 @@ func waitQueueWakeAll(wq *WaitQueue) {
 }
 
 // demoTaskC writes an incrementing counter to VGA line 16.
+// Uses yield() instead of spin-waiting to voluntarily relinquish the CPU.
 //
 //export demoTaskC
 func demoTaskC() {
@@ -254,7 +263,7 @@ func demoTaskC() {
 		vgaWriteLine(17, "Task C: count="+utoa(counter))
 		target := pitTicks + 100
 		for pitTicks < target {
-			hlt()
+			yield()
 		}
 	}
 }
