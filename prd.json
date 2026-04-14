@@ -118,7 +118,7 @@
         "make build succeeds"
       ],
       "priority": 7,
-      "passes": false,
+      "passes": true,
       "notes": "Depends on US-006. Most complex concurrency primitive. Lock ordering: acquire in channel-address order to prevent deadlock."
     },
     {
@@ -137,7 +137,7 @@
         "make build succeeds"
       ],
       "priority": 8,
-      "passes": false,
+      "passes": true,
       "notes": "Depends on US-006. First microkernel service decomposition."
     },
     {

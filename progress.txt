@@ -57,6 +57,12 @@
 - chanSend/chanRecv block via waitQueueSleep when buffer full/empty; chanTrySend is non-blocking (interrupt-safe)
 - Unbuffered channels (capacity=0) use buf[0] + count as a single-slot handoff; sender/receiver coordinate via WaitQueues
 - Spawn receiver task before sender for unbuffered channels so receiver blocks first, ensuring clean rendezvous
+- selectWait: register on all WQs before blocking, remove from all WQs after wakeup, loop back to re-check readiness (handles spurious wakeups)
+- waitQueueAppend/waitQueueRemove are non-blocking WQ helpers for select; append adds without changing task state, remove deregisters by task ID
+- chanRecvReady/chanSendReady check readiness without side effects; chanRecvDirect/chanSendDirect execute without blocking (assume ready)
+- Microkernel service pattern: IRQ handler uses chanTrySend (non-blocking) to publish events to a channel; dedicated consumer task calls chanRecv in a loop to process them
+- Pack small structs into uintptr for channel transport: e.g., KeyEvent = scancode | (ascii << 8)
+- keyboardChannel capacity=16; IRQ1 handler drops events if full (chanTrySend returns false)
 ---
 
 ## 2026-04-14 - US-001
@@ -134,4 +140,41 @@
   - chanTrySend and waitQueueWakeOne are interrupt-safe (no blocking, no allocation) — safe for IRQ handlers
   - With 8 tasks (0=userspace, 1-3=demo, 4-7=channel test), scheduler round-robin continues to work correctly
   - Task entry functions need //export annotation + matching assembly leaq stub in switch.S
+---
+
+## 2026-04-14 - US-007
+- Implemented selectWait: multiplexed channel wait that blocks until any of multiple channels is ready
+- Added SelectCase struct (ch, dir, val) and constants selectSend/selectRecv in src/channel.go
+- Added chanRecvReady/chanSendReady (readiness checks) and chanRecvDirect/chanSendDirect (non-blocking execute)
+- Added waitQueueAppend (add to WQ without blocking) and waitQueueRemove (remove specific task) to src/scheduler.go
+- selectWait algorithm: check immediate readiness → if none, register on all WQs, block, deregister all on wakeup → loop
+- Test: selector task selects on 2 buffered channels; producer A sends 0xAAAA to ch1 after 50 ticks, producer B sends 0xBBBB to ch2 after 100 ticks
+- Serial confirms: case 0 dispatched for ch1, case 1 dispatched for ch2 — PASS
+- Added 3 assembly address stubs in switch.S (selectTestTask, selectProducerA, selectProducerB)
+- Files changed: src/channel.go, src/scheduler.go, src/switch.S, src/main.go
+- **Learnings for future iterations:**
+  - selectWait loops back to readiness check after wakeup to handle spurious wakeups (e.g., preemption between wakeOne and execution)
+  - Remove from ALL wait queues after wakeup — even the one that woke us, since wakeOne already removed us, waitQueueRemove is a no-op if not found
+  - chanRecvReady for both buffered and unbuffered is simply ch.count > 0 (for unbuffered, sender deposits value before blocking)
+  - chanSendReady for unbuffered checks receiverWQ.count > 0 (needs a waiting receiver); for buffered, checks count < capacity
+  - With 11 tasks (0=userspace, 1-3=demo, 4-7=channel, 8-10=select), maxTasks=16 still has headroom
+  - VGA line 24 (last row) used for select test result
+---
+
+## 2026-04-14 - US-008
+- Decomposed keyboard driver into IRQ handler + consumer task (first microkernel service)
+- Defined KeyEvent struct (scancode uint8, ascii byte) packed into uintptr for channel transport
+- Created keyboardChannel (capacity 16) via keyboardInit(), called before registering IRQ1 handler
+- Simplified handleKeyboard: reads scancode, sends EOI, packs KeyEvent, calls chanTrySend (never blocks)
+- Created keyboardConsumerTask: chanRecv loop handles backspace, enter, normal key VGA echo + serial logging
+- Removed all VGA echo and serial logging logic from the IRQ handler — now lives only in consumer task
+- Added assembly address stub in switch.S for keyboardConsumerTaskAddr
+- Spawned keyboardConsumerTask as Task 11 in main.go
+- Files changed: src/keyboard.go, src/switch.S, src/main.go
+- **Learnings for future iterations:**
+  - chanTrySend is the key primitive for interrupt→task communication: non-blocking, safe from IRQ context, drops if full
+  - Packing small structs into uintptr avoids needing pointer-based channels: scancode|ascii<<8 fits in 2 bytes
+  - keyboardInit() must be called before registerHandler(33, handleKeyboard) to avoid nil channel dereference in IRQ
+  - With 12 tasks (0=userspace, 1-3=demo, 4-7=channel, 8-10=select, 11=keyboard), maxTasks=16 has 4 slots remaining
+  - Consumer task follows same pattern as other tasks: sti(), log start, infinite loop with blocking recv
 ---
