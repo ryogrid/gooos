@@ -291,10 +291,6 @@ func main() {
 		serialPrintln("FS: FAIL - read mismatch")
 	}
 
-	// User ELF binaries will be stored by the shell integration (Phase 5).
-	// For now, keep a placeholder so the kernel compiles.
-	serialPrintln("ELF: user binary storage deferred to shell integration")
-
 	// Spin-wait to let the timer accumulate ticks, then display count.
 	for pitTicks < 200 {
 		hlt()
@@ -307,7 +303,6 @@ func main() {
 	smpInit()
 
 	// Set up new GDT with Ring 3 code/data segments and TSS.
-	// Must happen after vmInit (uses allocPage for the kernel stack).
 	gdtInit()
 	vgaWriteLine(12, "GDT: Ring 3 + TSS loaded")
 	serialPrintln("GDT: Ring 3 + TSS loaded")
@@ -315,55 +310,53 @@ func main() {
 	// Initialize the scheduler: task 0 = this main/boot task.
 	initScheduler()
 
-	// Create 3 demo tasks that write to different VGA lines.
-	createTask(demoTaskAAddr()) // Task 1 -> VGA line 15
-	createTask(demoTaskBAddr()) // Task 2 -> VGA line 16
-	createTask(demoTaskCAddr()) // Task 3 -> VGA line 17
-
-	// Channel tests: buffered producer/consumer and unbuffered rendezvous.
-	testBufCh = chanCreate(4)
-	testRendCh = chanCreate(0)
-	createTask(chanProducerTaskAddr())   // Task 4 — sends 10 values
-	createTask(chanConsumerTaskAddr())   // Task 5 — receives 10 values
-	createTask(chanRendezvousBAddr())    // Task 6 — receiver (spawned first to block)
-	createTask(chanRendezvousAAddr())    // Task 7 — sender
-
-	// Select test: selector task blocks on two channels, producers send at different times.
-	selectCh1 = chanCreate(4)
-	selectCh2 = chanCreate(4)
-	createTask(selectTestTaskAddr())    // Task 8 — selects on ch1 and ch2
-	createTask(selectProducerAAddr())   // Task 9 — sends to ch1 after 50 ticks
-	createTask(selectProducerBAddr())   // Task 10 — sends to ch2 after 100 ticks
-
-	// Keyboard consumer task: receives KeyEvents from keyboardChannel.
-	createTask(keyboardConsumerTaskAddr()) // Task 11 — keyboard consumer
-
+	// Spawn essential kernel service tasks only (no demo tasks).
 	// Serial output task: serializes multi-task serial writes via channel.
 	serialChannel = chanCreate(16)
-	createTask(serialTaskEntryAddr()) // Task 12 — serial output
+	createTask(serialTaskEntryAddr()) // Task 1 — serial output
 
 	// Filesystem task: handles FS requests via channel.
 	fsRequestChannel = chanCreate(8)
-	createTask(fsTaskEntryAddr()) // Task 13 — filesystem
-	createTask(fsDemoTaskAddr())  // Task 14 — FS channel demo
+	createTask(fsTaskEntryAddr()) // Task 2 — filesystem
 
-	// User-facing channels for syscall-based IPC from Ring 3.
-	userPrintChannel = chanCreate(8)
+	// Register keyboard channel for userspace access.
 	chanRegister(userKeyboardChannel) // ID 0 = keyboard input
-	chanRegister(userPrintChannel)    // ID 1 = print output
-	createTask(userPrintTaskAddr())   // Task 15 — user print consumer
 
-	vgaWriteLine(13, "Scheduler: 16 tasks created")
-	serialPrintln("Scheduler: 16 tasks created (3 demo + 4 channel + 3 select + 1 keyboard + 1 serial + 1 fs + 1 fs-demo + 1 user-print)")
+	vgaWriteLine(13, "Scheduler: service tasks created")
+	serialPrintln("Scheduler: 2 service tasks (serial + fs)")
 
-	// Enable preemptive scheduling — the next timer tick will start switching.
+	// Store user ELF binaries in the filesystem (direct calls, before
+	// scheduler starts so FS task is not needed yet).
+	serialPrintln("Storing user ELF binaries in filesystem...")
+	fsCreate("sh.elf")
+	fsWrite("sh.elf", userElf_sh[:])
+	serialPrintln("  sh.elf: " + utoa(uint64(len(userElf_sh))) + " bytes")
+
+	fsCreate("hello.elf")
+	fsWrite("hello.elf", userElf_hello[:])
+	serialPrintln("  hello.elf: " + utoa(uint64(len(userElf_hello))) + " bytes")
+
+	fsCreate("ls.elf")
+	fsWrite("ls.elf", userElf_ls[:])
+	serialPrintln("  ls.elf: " + utoa(uint64(len(userElf_ls))) + " bytes")
+
+	fsCreate("cat.elf")
+	fsWrite("cat.elf", userElf_cat[:])
+	serialPrintln("  cat.elf: " + utoa(uint64(len(userElf_cat))) + " bytes")
+
+	fsCreate("wc.elf")
+	fsWrite("wc.elf", userElf_wc[:])
+	serialPrintln("  wc.elf: " + utoa(uint64(len(userElf_wc))) + " bytes")
+
+	// Store a test file for cat/wc demos.
+	fsCreate("hello.txt")
+	fsWrite("hello.txt", []byte("Hello from the gooos filesystem!\nThis is a test file.\n"))
+
+	// Enable preemptive scheduling.
 	schedReady = true
 	vgaWriteLine(14, "Scheduler: running")
 	serialPrintln("Scheduler: running (round-robin, PIT preemption)")
 
-	// Set up userspace and jump to Ring 3. Task 0 (main) becomes the
-	// user-mode program. The scheduler preempts it via the timer and
-	// switches between user code and the demo kernel tasks.
+	// Load shell and jump to Ring 3. Does not return.
 	setupUserspace()
-	// Does not return — user code runs in Ring 3.
 }

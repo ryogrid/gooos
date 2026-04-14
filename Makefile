@@ -32,11 +32,18 @@ KERNEL_GO_O := $(TMP_DIR)/kernel_go.o
 KERNEL_BIN  := $(TMP_DIR)/kernel.bin
 KERNEL_ISO  := $(TMP_DIR)/kernel.iso
 
-.PHONY: all build iso run run-kernel clean check-multiboot
+.PHONY: all build user embed-user iso run run-kernel clean check-multiboot
 
 all: build
 
-build: $(KERNEL_BIN)
+# Build user programs, embed them as Go byte arrays, then build the kernel.
+user:
+	$(MAKE) -C user all
+
+embed-user: user
+	bash scripts/embed_elfs.sh
+
+build: embed-user $(KERNEL_BIN)
 
 $(TMP_DIR):
 	mkdir -p $(TMP_DIR)
@@ -85,3 +92,4 @@ run-smp: $(KERNEL_ISO) check-multiboot
 
 clean:
 	rm -rf $(TMP_DIR)
+	$(MAKE) -C user clean

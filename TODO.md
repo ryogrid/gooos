@@ -46,11 +46,11 @@
 - [x] Create `user/cmd/wc/main.go` — word/line/byte count (35 KiB)
 
 ## Phase 5: Integration
-- [ ] Create `scripts/embed_elfs.sh` — convert user ELF binaries to Go byte arrays
-- [ ] Update root Makefile — add `user`, `embed-user` targets, integrate into `build`
-- [ ] Update `src/main.go` — revised boot sequence: store ELFs in FS, spawn service tasks, exec shell
-- [ ] Remove demo/channel/select tasks from boot sequence
-- [ ] Build and verify `make clean && make build` succeeds
+- [x] Create `scripts/embed_elfs.sh` — convert user ELF binaries to Go byte arrays
+- [x] Update root Makefile — add `user`, `embed-user` targets, integrate into `build`
+- [x] Update `src/main.go` — revised boot sequence: store ELFs in FS, spawn service tasks, exec shell
+- [x] Remove demo/channel/select tasks from boot sequence
+- [x] Build and verify `make clean && make build` succeeds
 - [ ] Test in QEMU — shell boots, `help`, `echo hello`, `ls` work
 
 ## Phase 6: Review and Verification
