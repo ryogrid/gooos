@@ -30,6 +30,11 @@ stack_bottom:
     .global stack_top
 stack_top:
 
+    /* Page tables are placed in a dedicated section (.pagetables) that the
+     * linker script positions AFTER _globals_end. This keeps them outside
+     * the conservative GC's root scan range, preventing the GC mark phase
+     * from corrupting page table entries. */
+    .section .pagetables, "aw", @nobits
     .align 4096
 pml4:
     .skip 4096                       /* 1 x PML4 table */

@@ -25,6 +25,14 @@ const (
 //go:linkname heapEndAddr heapEndAddr
 func heapEndAddr() uintptr
 
+// allocStartAddr returns the linker-defined _alloc_start address.
+// This is the first address after the .pagetables section, available
+// for dynamic page allocation by allocPage.
+// Implemented in stubs.S.
+//
+//go:linkname allocStartAddr allocStartAddr
+func allocStartAddr() uintptr
+
 // readCR2 returns the faulting virtual address from CR2.
 // Implemented in stubs.S.
 //
@@ -53,7 +61,7 @@ var freeListHead uintptr
 // vmInit initializes the page frame allocator.
 // Must be called before mapPage or allocPage.
 func vmInit() {
-	end := heapEndAddr()
+	end := allocStartAddr()
 	// Align up to the next 4 KiB boundary.
 	nextFreePage = (end + pageSize - 1) &^ (pageSize - 1)
 }
@@ -209,8 +217,11 @@ func walkAndGetPaddr(vaddr uintptr) uintptr {
 func handlePageFault(vector uint64) {
 	faultAddr := readCR2()
 	errCode := lastErrorCode
+	// Read RIP from the saved frame (offset 17*8 = 136 bytes from frame base)
+	frame := (*SyscallFrame)(unsafe.Pointer(lastFramePtr))
+	faultRIP := frame.RIP
 
-	msg := "PF: addr=0x" + hextoa(uint64(faultAddr)) + " err=0x" + hextoa(errCode)
+	msg := "PF: addr=0x" + hextoa(uint64(faultAddr)) + " err=0x" + hextoa(errCode) + " rip=0x" + hextoa(uint64(faultRIP))
 	vgaWriteLine(12, msg)
 	serialPrintln(msg)
 

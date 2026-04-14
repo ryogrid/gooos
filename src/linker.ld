@@ -65,6 +65,22 @@ SECTIONS
         _heap_end = .;
     }
 
+    /* Page tables: placed AFTER the heap and _heap_end.
+     *
+     * The conservative GC's metadata memset covers metadataStart to
+     * _heap_end. By placing page tables AFTER _heap_end, they are
+     * outside both the GC scan range and the metadata memset range.
+     *
+     * allocPage() must start AFTER page tables. _alloc_start marks
+     * the first address available for dynamic page allocation. */
+    .pagetables : ALIGN(4096)
+    {
+        *(.pagetables)
+    }
+
+    . = ALIGN(4096);
+    _alloc_start = .;
+
     /* _stack_top is defined in boot.S as a label; re-export it here
      * for the GC's stack scanning (markRoots scans sp to stackTop). */
     _stack_top = stack_top;

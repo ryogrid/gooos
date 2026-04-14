@@ -126,10 +126,18 @@ hlt:
 
     /* ---- heapEndAddr: return the address of _heap_end linker symbol ---- */
     /* heapEndAddr() uintptr                                                */
-    /* Used by the page frame allocator to start allocating after the heap. */
+    /* Used by the TinyGo mmap stub to determine available heap size.       */
     .global heapEndAddr
 heapEndAddr:
     movq    $_heap_end, %rax
+    ret
+
+    /* ---- allocStartAddr: return the address of _alloc_start symbol ------ */
+    /* allocStartAddr() uintptr                                              */
+    /* First address after .pagetables section — page allocator starts here. */
+    .global allocStartAddr
+allocStartAddr:
+    movq    $_alloc_start, %rax
     ret
 
     /* ---- readCR2: return the page-fault linear address ----------------- */

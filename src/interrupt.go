@@ -19,6 +19,9 @@ var handlers [256]InterruptHandler
 // Safe to read from a handler because interrupt gates disable IF.
 var lastErrorCode uint64
 
+// lastFramePtr holds the register frame pointer from the most recent interrupt.
+var lastFramePtr uintptr
+
 // registerHandler registers a Go function for a given interrupt vector.
 func registerHandler(vector int, handler InterruptHandler) {
 	handlers[vector] = handler
@@ -31,6 +34,7 @@ func registerHandler(vector int, handler InterruptHandler) {
 //export go_interrupt_handler
 func go_interrupt_handler(vector uint64, errorCode uint64, framePtr uintptr) {
 	lastErrorCode = errorCode
+	lastFramePtr = framePtr
 	if vector == 0x80 {
 		syscallDispatch((*SyscallFrame)(unsafe.Pointer(framePtr)))
 		return
