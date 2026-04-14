@@ -22,7 +22,7 @@ func ReadFile(name string) []byte {
 
 // ListDir returns all filenames in the filesystem.
 func ListDir() []string {
-	var buf [4096]byte
+	buf := make([]byte, 4096)
 	n := syscall2(sysFsList,
 		uintptr(unsafe.Pointer(&buf[0])),
 		4096,

@@ -176,8 +176,10 @@ func elfExec(filename, args string, parentTaskID uint32) (uint32, bool) {
 
 	serialPrintln("elfExec: loaded " + filename + ", child task " + utoa(uint64(childID)))
 
-	// Block the parent and schedule the child.
+	// Block the parent and switch to the child. schedule() will not return
+	// until the child exits and processExit unblocks the parent.
 	tasks[parentTaskID].State = taskBlocked
+	schedule()
 	return childID, true
 }
 

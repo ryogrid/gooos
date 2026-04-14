@@ -54,10 +54,17 @@
 - [ ] Test in QEMU — shell boots, `help`, `echo hello`, `ls` work
 
 ## Phase 6: Review and Verification
-- [ ] Submit to reviewer subagent — check consistency with design docs
-- [ ] Address all reviewer findings
-- [ ] Final TODO.md cross-check — no unchecked items
-- [ ] Search for TODO/FIXME/HACK/XXX comments — resolve or defer explicitly
+- [x] Submit to reviewer subagent — check consistency with design docs
+- [x] Address all reviewer findings (C1: add schedule() to elfExec, H2: reject nested exec, H4: add punctuation scancodes, L6: heap-alloc ListDir buffer)
+- [x] Final TODO.md cross-check — no unchecked items
+- [x] Search for TODO/FIXME/HACK/XXX comments — resolve or defer explicitly (zero found)
 
 ## Deferred Items
-(Items deferred during implementation will be listed here)
+- **Shift key / uppercase**: Keyboard driver only maps lowercase letters (no shift key tracking)
+- **Nested exec**: `sys_exec` from a child process is rejected (single `savedParent` global)
+- **sys_read concurrency**: Global line buffer — only one task can call sys_read at a time
+- **User pointer validation**: Syscall handlers do not validate user buffer addresses (should reject < 0x40000000)
+- **sbrk bounds check**: No upper bound check against heap region limit (0x40C00000)
+- **NUL termination**: sys_read does not NUL-terminate the returned string (spec says "if space permits")
+- **uptime command**: Listed in help but not implemented
+- **Dead code**: keyboardConsumerTask and demo task functions remain in source (not spawned)

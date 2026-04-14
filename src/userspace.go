@@ -186,6 +186,13 @@ func sysReadHandler(frame *SyscallFrame) {
 // RDI = path_ptr, RSI = path_len, RDX = arg_ptr, R10 = arg_len
 
 func sysExecHandler(frame *SyscallFrame) {
+	// Reject nested exec: only one level of exec nesting is supported
+	// because savedParent is a single global.
+	if processes[currentTask].ParentTaskID != noParent {
+		frame.RAX = 0xFFFFFFFFFFFFFFFF
+		return
+	}
+
 	// Copy filename from user memory.
 	pathLen := frame.RSI
 	if pathLen > 256 {
