@@ -1,12 +1,18 @@
-// src/elf.go -- ELF64 parser: read and validate ELF file headers.
+// src/elf.go -- ELF64 parser and loader.
 //
 // Parses ELF64 binaries from byte slices, validating the magic number,
 // class (64-bit), machine (x86_64), and type (executable). Returns the
 // entry point address and a slice of PT_LOAD program headers for loading.
 //
+// elfLoad reads an ELF binary from the in-memory filesystem, maps its
+// PT_LOAD segments into userspace, allocates a user stack, and jumps
+// to Ring 3 at the entry point.
+//
 // Uses manual little-endian byte reading — no encoding/binary dependency.
 
 package main
+
+import "unsafe"
 
 // ELF identification constants.
 const (
@@ -155,4 +161,67 @@ func elfParse(data []byte) (entry uintptr, phdrs []Elf64Phdr, ok bool) {
 	}
 
 	return entry, elfPTLoadBuf[:elfPTLoadCount], true
+}
+
+// elfUserStackBase is the virtual address for the ELF user stack (8 KiB, 2 pages).
+const elfUserStackBase = uintptr(0x7FFF0000)
+
+// elfLoad reads an ELF64 binary from the filesystem via the FS task channel,
+// validates it, maps PT_LOAD segments into userspace memory, allocates a user
+// stack, and jumps to Ring 3 at the entry point. Does not return on success.
+// Returns false if the file is not found or the ELF is invalid.
+func elfLoad(name string) bool {
+	// Read the ELF binary from the filesystem via the FS task.
+	data := fsSendRead(name)
+	if data == nil {
+		serialPrintln("ELF: file not found: " + name)
+		return false
+	}
+
+	// Parse and validate ELF headers.
+	entry, phdrs, ok := elfParse(data)
+	if !ok {
+		serialPrintln("ELF: invalid ELF: " + name)
+		return false
+	}
+
+	serialPrintln("ELF: loading " + name + ", entry=0x" + hextoa(uint64(entry)) +
+		", " + utoa(uint64(len(phdrs))) + " PT_LOAD segment(s)")
+
+	userFlags := uintptr(pagePresent | pageWrite | pageUser)
+
+	// Map and load each PT_LOAD segment.
+	for i := 0; i < len(phdrs); i++ {
+		ph := &phdrs[i]
+		startPage := ph.Vaddr &^ (pageSize - 1)
+		endAddr := ph.Vaddr + uintptr(ph.Memsz)
+
+		// Allocate and map pages. allocPage returns zeroed pages,
+		// so BSS (p_memsz - p_filesz) is implicitly zeroed.
+		for addr := startPage; addr < endAddr; addr += pageSize {
+			paddr := allocPage()
+			mapPage(addr, paddr, userFlags)
+		}
+
+		// Copy p_filesz bytes from file data to the mapped virtual address.
+		for j := uint64(0); j < ph.Filesz; j++ {
+			*(*byte)(unsafe.Pointer(ph.Vaddr + uintptr(j))) = data[ph.Offset+j]
+		}
+	}
+
+	// Allocate user stack: 2 pages (8 KiB) at elfUserStackBase.
+	for i := uintptr(0); i < 2; i++ {
+		paddr := allocPage()
+		mapPage(elfUserStackBase+i*pageSize, paddr, userFlags)
+	}
+	stackTop := elfUserStackBase + 2*pageSize
+
+	// Allow Ring 3 to trigger int 0x80 (DPL=3 in IDT gate).
+	setGateDPL3(0x80)
+
+	serialPrintln("ELF: jumping to Ring 3 at 0x" + hextoa(uint64(entry)))
+
+	// Jump to user mode — does not return.
+	jumpToRing3(entry, stackTop)
+	return true // unreachable
 }

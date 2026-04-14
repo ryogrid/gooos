@@ -76,6 +76,9 @@
 - ELF64 header: 64 bytes; program header: 56 bytes; fields at fixed offsets read with readU16LE/readU32LE/readU64LE helpers
 - Avoid append() for large struct slices — TinyGo's sliceAppend needs memmove (not provided in stubs.S); use static fixed-size arrays instead
 - elfParse returns a slice backed by a static [16]Elf64Phdr buffer — caller must consume before next call
+- elfLoad uses fsSendRead (channel-based) not direct fsRead — requires schedReady=true and FS task spawned; ELF binary must be pre-stored via direct fsCreate/fsWrite
+- Writing to newly mapped virtual addresses works without invlpg — new mappings cause TLB miss, CPU walks page table; only need invlpg for CHANGED mappings
+- ELF user stack at 0x7FFF0000 (8 KiB, 2 pages); code vaddr from ELF headers (e.g., 0x40010000); both outside 1 GiB identity map
 ---
 
 ## 2026-04-14 - US-001
@@ -267,4 +270,23 @@
   - Program header p_type at +0, p_flags at +4, p_offset at +8, p_vaddr at +16, p_paddr at +24, p_filesz at +32, p_memsz at +40, p_align at +48
   - elfParse returns a slice backed by a global buffer — caller must use data before calling elfParse again (for US-013 elfLoad)
   - All 15 tasks + userspace Ring 3 continue to work after adding ELF parser test to early boot sequence
+---
+
+## 2026-04-14 - US-013
+- Implemented elfLoad(name string) bool in src/elf.go: reads ELF from FS via fsSendRead, maps PT_LOAD segments, allocates user stack, jumps to Ring 3
+- Hand-crafted 162-byte ELF64 binary in buildUserElf(): ELF header + 1 PT_LOAD phdr + user code (sys_print + "Hello from Ring 3!")
+- ELF binary stored in filesystem via direct fsCreate/fsWrite during early boot; loaded via fsSendRead at setupUserspace time
+- elfLoad maps segment pages with pagePresent|pageWrite|pageUser, copies p_filesz bytes to vaddr, BSS zeroed by allocPage
+- User stack: 2 pages (8 KiB) at 0x7FFF0000, mapped with user flags; stack top at 0x7FFF2000
+- Replaced setupUserspace(): removed hardcoded 42-byte user program, now calls elfLoad("user.elf")
+- Removed userCodeVaddr/userStackVaddr constants (addresses now come from ELF headers)
+- Serial confirms: "ELF: loading user.elf, entry=0x40010078, 1 PT_LOAD segment(s)" → "Hello from Ring 3!"
+- Files changed: src/elf.go, src/userspace.go, src/main.go
+- **Learnings for future iterations:**
+  - fsSendRead works from task 0 after schedReady=true: chanSend buffers the request, chanRecv blocks, scheduler picks up FS task (Task 13) which processes the request
+  - Writing to newly mapped virtual addresses works without TLB invalidation — new mappings cause TLB miss, not stale entry; CPU walks page table on first access
+  - ELF binary layout: headers mapped as part of PT_LOAD (p_offset=0), code starts at e_entry = p_vaddr + header_size (120 bytes); string address is relative to entry point
+  - allocPage returns zeroed pages, so BSS (p_memsz - p_filesz) is implicitly handled — no explicit zeroing loop needed
+  - Direct FS calls (fsCreate/fsWrite) work before scheduler for storing the ELF binary; channel-based fsSendRead works after scheduler for loading it
+  - User stack at 0x7FFF0000 is well outside the 1 GiB identity map — no huge page conflicts
 ---

@@ -291,6 +291,13 @@ func main() {
 		serialPrintln("FS: FAIL - read mismatch")
 	}
 
+	// Build and store the user ELF binary in the filesystem (direct calls).
+	// elfLoad will later read it via fsSendRead from the FS task.
+	buildUserElf()
+	fsCreate("user.elf")
+	fsWrite("user.elf", userElfBinary[:])
+	serialPrintln("ELF: stored user.elf (" + utoa(uint64(userElfSize)) + " bytes)")
+
 	// Spin-wait to let the timer accumulate ticks, then display count.
 	for pitTicks < 200 {
 		hlt()

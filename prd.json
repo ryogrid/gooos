@@ -226,7 +226,7 @@
         "make build succeeds"
       ],
       "priority": 13,
-      "passes": false,
+      "passes": true,
       "notes": "Depends on US-012 (ELF parser), US-011 (syscall ABI for sys_print). Final milestone for userspace ELF execution."
     },
     {
