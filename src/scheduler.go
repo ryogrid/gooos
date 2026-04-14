@@ -14,19 +14,24 @@ const (
 	taskRunning = 0
 	taskReady   = 1
 	taskBlocked = 2
+	taskExited  = 3
+	taskFree    = 4
 )
 
 // Maximum number of tasks and per-task stack size.
 const (
-	maxTasks      = 16
+	maxTasks      = 32
 	taskStackSize = 4096 // 4 KiB per task stack
 )
 
 // Task holds the state for a schedulable unit of execution.
 type Task struct {
-	SP    uintptr // saved stack pointer (set by switchContext)
-	State uint8   // taskRunning, taskReady, or taskBlocked
-	ID    uint32  // task identifier
+	SP             uintptr // saved stack pointer (set by switchContext)
+	State          uint8   // taskRunning, taskReady, taskBlocked, taskExited, or taskFree
+	ID             uint32  // task identifier
+	StackBase      uintptr // base address of allocated task stack page (for reclamation)
+	KernelStackTop uintptr // top of per-task kernel stack for Ring 3→Ring 0 (TSS RSP0)
+	WakeupTick     uint64  // PIT tick at which a sleeping task should be woken
 }
 
 var (
@@ -50,10 +55,19 @@ func switchContext(oldSP *uintptr, newSP uintptr)
 func taskReturnHaltAddr() uintptr
 
 // initScheduler sets up task 0 as the currently running (main/boot) task.
+// Allocates a per-task kernel stack for task 0 (the shell).
 func initScheduler() {
-	tasks[0] = Task{State: taskRunning, ID: 0}
+	// Allocate kernel stack for task 0 (2 pages = 8 KiB).
+	kernelStackBase := allocPage()
+	allocPage() // second contiguous page
+	kernelStackTop := kernelStackBase + 2*pageSize
+
+	tasks[0] = Task{State: taskRunning, ID: 0, KernelStackTop: kernelStackTop}
 	taskCount = 1
 	currentTask = 0
+
+	// Set TSS RSP0 to task 0's kernel stack.
+	tssSetRSP0(kernelStackTop)
 }
 
 // createTask allocates a stack and initializes a new task that will
@@ -71,12 +85,39 @@ func initScheduler() {
 //	stackTop - 64: 0               (r15)
 //	<-- SP saved here
 func createTask(entryAddr uintptr) uint32 {
-	id := taskCount
-	taskCount++
+	// Try to reuse a free or exited slot first.
+	var id uint32
+	reuse := false
+	for i := uint32(1); i < taskCount; i++ {
+		if tasks[i].State == taskFree || tasks[i].State == taskExited {
+			// Free the old stack if present (exited tasks keep their
+			// stack until slot reuse because processExit cannot free
+			// the stack of the currently running task).
+			if tasks[i].StackBase != 0 {
+				freePage(tasks[i].StackBase)
+				tasks[i].StackBase = 0
+			}
+			id = i
+			reuse = true
+			break
+		}
+	}
+	if !reuse {
+		id = taskCount
+		taskCount++
+	}
 
-	// Allocate a 4 KiB page for the task's stack.
+	// Allocate a 4 KiB page for the task's context-switch stack.
 	stackBase := allocPage()
 	stackTop := stackBase + taskStackSize
+
+	// Allocate a per-task kernel stack (8 KiB = 2 pages) for Ring 3→Ring 0
+	// transitions via TSS RSP0. Each task gets its own kernel stack so
+	// ISR frames from different tasks do not overwrite each other.
+	const kernelStackPages = 2
+	kernelStackBase := allocPage()
+	allocPage() // second contiguous page (bump allocator)
+	kernelStackTop := kernelStackBase + kernelStackPages*pageSize
 
 	sp := stackTop
 
@@ -102,8 +143,21 @@ func createTask(entryAddr uintptr) uint32 {
 	sp -= 8
 	*(*uintptr)(unsafe.Pointer(sp)) = 0 // r15
 
-	tasks[id] = Task{SP: sp, State: taskReady, ID: id}
+	tasks[id] = Task{SP: sp, State: taskReady, ID: id, StackBase: stackBase, KernelStackTop: kernelStackTop}
 	return id
+}
+
+// taskReclaim frees the resources of an exited task and marks its slot
+// as available for reuse. taskCount is a high-water mark and is never
+// decremented.
+func taskReclaim(id uint32) {
+	if tasks[id].State != taskExited {
+		return
+	}
+	if tasks[id].StackBase != 0 {
+		freePage(tasks[id].StackBase)
+	}
+	tasks[id] = Task{State: taskFree}
 }
 
 // schedule performs a round-robin context switch to the next ready task.
@@ -127,18 +181,36 @@ func schedule() {
 	}
 
 	if next == currentTask {
-		return // No other ready task found.
+		// No other ready task found. Just return — do NOT call
+		// sti()+hlt() here. handleTimer also calls schedule(), and
+		// if we sti()+hlt() here, a timer interrupt during hlt causes
+		// nested handleTimer → schedule() → sti()+hlt() → infinite
+		// stack recursion overflowing the kernel stack.
+		//
+		// Instead, the waitQueueSleep loop enables interrupts briefly
+		// between iterations via the sti+hlt idiom.
+		return
 	}
 
 	// Update task states.
-	tasks[old].State = taskReady
+	// Only move old task to ready if it was running (not if it blocked itself).
+	if tasks[old].State == taskRunning {
+		tasks[old].State = taskReady
+	}
 	tasks[next].State = taskRunning
 	currentTask = next
 
-	serialPrint("Switch: ")
-	serialPrint(utoa(uint64(old)))
-	serialPrint(" -> ")
-	serialPrintln(utoa(uint64(next)))
+	// Switch logging disabled to avoid kernel heap allocation in ISR context.
+	// serialPrint("Switch: ")
+	// serialPrint(utoa(uint64(old)))
+	// serialPrint(" -> ")
+	// serialPrintln(utoa(uint64(next)))
+
+	// Update TSS RSP0 to the next task's kernel stack so Ring 3 → Ring 0
+	// transitions use the correct per-task kernel stack.
+	if tasks[next].KernelStackTop != 0 {
+		tssSetRSP0(tasks[next].KernelStackTop)
+	}
 
 	// Perform the context switch.
 	switchContext(&tasks[old].SP, tasks[next].SP)
@@ -159,7 +231,7 @@ func demoTaskBAddr() uintptr
 //go:linkname demoTaskCAddr demoTaskCAddr
 func demoTaskCAddr() uintptr
 
-// demoTaskA writes an incrementing counter to VGA line 14.
+// demoTaskA writes an incrementing counter to VGA line 15.
 //
 //export demoTaskA
 func demoTaskA() {
@@ -168,15 +240,11 @@ func demoTaskA() {
 	for {
 		counter++
 		vgaWriteLine(15, "Task A: count="+utoa(counter))
-		// Spin-wait ~500ms using PIT ticks.
-		target := pitTicks + 50
-		for pitTicks < target {
-			hlt()
-		}
+		taskSleep(50) // ~500ms at 100 Hz
 	}
 }
 
-// demoTaskB writes an incrementing counter to VGA line 15.
+// demoTaskB writes an incrementing counter to VGA line 16.
 //
 //export demoTaskB
 func demoTaskB() {
@@ -185,14 +253,166 @@ func demoTaskB() {
 	for {
 		counter++
 		vgaWriteLine(16, "Task B: count="+utoa(counter))
-		target := pitTicks + 75
-		for pitTicks < target {
+		taskSleep(75) // ~750ms at 100 Hz
+	}
+}
+
+// yield voluntarily relinquishes the CPU to the next ready task.
+// The current task is set to taskReady and schedule() picks the next one.
+// Callable from any kernel task context.
+func yield() {
+	tasks[currentTask].State = taskReady
+	schedule()
+}
+
+// ---------- Sleep Queue ----------
+
+// Maximum number of tasks that can be in the sleep queue simultaneously.
+const sleepQueueMax = 16
+
+// sleepQueue holds task IDs sorted by ascending WakeupTick.
+var (
+	sleepQueue      [sleepQueueMax]uint32
+	sleepQueueCount int
+)
+
+// taskSleep blocks the current task for the given number of PIT ticks.
+// Sets WakeupTick, inserts into the sorted sleep queue, and calls schedule().
+func taskSleep(ticks uint64) {
+	tid := currentTask
+	tasks[tid].WakeupTick = pitTicks + ticks
+	tasks[tid].State = taskBlocked
+
+	// Insert into sleep queue in sorted order (ascending by WakeupTick).
+	wt := tasks[tid].WakeupTick
+	pos := sleepQueueCount
+	for i := 0; i < sleepQueueCount; i++ {
+		if tasks[sleepQueue[i]].WakeupTick > wt {
+			pos = i
+			break
+		}
+	}
+	// Shift elements right to make room.
+	for i := sleepQueueCount; i > pos; i-- {
+		sleepQueue[i] = sleepQueue[i-1]
+	}
+	sleepQueue[pos] = tid
+	sleepQueueCount++
+
+	schedule()
+}
+
+// sleepQueueWakeExpired wakes all tasks whose WakeupTick <= now.
+// Called from the timer IRQ handler. Safe from interrupt context.
+func sleepQueueWakeExpired(now uint64) {
+	woken := 0
+	for woken < sleepQueueCount {
+		tid := sleepQueue[woken]
+		if tasks[tid].WakeupTick > now {
+			break
+		}
+		tasks[tid].State = taskReady
+		woken++
+	}
+	if woken > 0 {
+		// Shift remaining entries forward.
+		remaining := sleepQueueCount - woken
+		for i := 0; i < remaining; i++ {
+			sleepQueue[i] = sleepQueue[i+woken]
+		}
+		sleepQueueCount = remaining
+	}
+}
+
+// ---------- WaitQueue ----------
+
+// Maximum number of tasks that can be waiting in a single WaitQueue.
+const wqMax = 16
+
+// WaitQueue holds a FIFO list of task IDs waiting on a condition.
+type WaitQueue struct {
+	ids   [wqMax]uint32
+	count int
+}
+
+// waitQueueSleep blocks the current task on wq and calls schedule().
+// If no other task is ready (schedule returns immediately), enables
+// interrupts briefly via sti+hlt so IRQs can wake blocked tasks.
+// This is safe because waitQueueSleep is called from task context
+// (syscall handlers), never from handleTimer directly.
+func waitQueueSleep(wq *WaitQueue) {
+	if wq.count >= wqMax {
+		return
+	}
+	tid := currentTask
+	wq.ids[wq.count] = tid
+	wq.count++
+	tasks[tid].State = taskBlocked
+
+	// Loop until we are actually switched out by schedule().
+	// If schedule() returns without switching (no ready task),
+	// enable interrupts briefly so IRQs can fire and potentially
+	// wake a task (e.g., keyboard IRQ → chanTrySend → wakeOne).
+	for tasks[tid].State == taskBlocked {
+		schedule()
+		if tasks[tid].State == taskBlocked {
+			// Still blocked — no ready task to switch to.
+			// Enable interrupts and halt for one IRQ cycle.
+			sti()
 			hlt()
 		}
 	}
 }
 
-// demoTaskC writes an incrementing counter to VGA line 16.
+// waitQueueWakeOne dequeues the first waiting task and sets it to taskReady.
+// Safe to call from interrupt context (no blocking, no allocation).
+func waitQueueWakeOne(wq *WaitQueue) {
+	if wq.count == 0 {
+		return
+	}
+	tid := wq.ids[0]
+	// Shift remaining entries forward.
+	wq.count--
+	for i := 0; i < wq.count; i++ {
+		wq.ids[i] = wq.ids[i+1]
+	}
+	tasks[tid].State = taskReady
+}
+
+// waitQueueAppend adds a task ID to the wait queue without changing task state
+// or calling schedule(). Used by selectWait to register on multiple queues.
+func waitQueueAppend(wq *WaitQueue, tid uint32) {
+	if wq.count >= wqMax {
+		return
+	}
+	wq.ids[wq.count] = tid
+	wq.count++
+}
+
+// waitQueueRemove removes a specific task ID from the wait queue.
+// Used by selectWait to deregister from non-ready queues after wakeup.
+func waitQueueRemove(wq *WaitQueue, tid uint32) {
+	for i := 0; i < wq.count; i++ {
+		if wq.ids[i] == tid {
+			wq.count--
+			for j := i; j < wq.count; j++ {
+				wq.ids[j] = wq.ids[j+1]
+			}
+			return
+		}
+	}
+}
+
+// waitQueueWakeAll sets all queued tasks to taskReady and resets the queue.
+// Safe to call from interrupt context (no blocking, no allocation).
+func waitQueueWakeAll(wq *WaitQueue) {
+	for i := 0; i < wq.count; i++ {
+		tasks[wq.ids[i]].State = taskReady
+	}
+	wq.count = 0
+}
+
+// demoTaskC writes an incrementing counter to VGA line 17.
 //
 //export demoTaskC
 func demoTaskC() {
@@ -201,9 +421,6 @@ func demoTaskC() {
 	for {
 		counter++
 		vgaWriteLine(17, "Task C: count="+utoa(counter))
-		target := pitTicks + 100
-		for pitTicks < target {
-			hlt()
-		}
+		taskSleep(100) // ~1000ms at 100 Hz
 	}
 }

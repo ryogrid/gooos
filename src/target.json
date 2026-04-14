@@ -5,7 +5,7 @@
     "build-tags": ["gooos"],
     "goos": "linux",
     "goarch": "amd64",
-    "gc": "conservative",
+    "gc": "leaking",
     "scheduler": "none",
     "panic-strategy": "trap",
     "linker": "ld.lld",

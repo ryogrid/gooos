@@ -65,6 +65,22 @@ SECTIONS
         _heap_end = .;
     }
 
+    /* Guard gap: 1 page between _heap_end and page tables.
+     * Ensures GC metadata memset (which covers up to _heap_end) cannot
+     * touch page table memory even with off-by-one or inclusive bounds. */
+    . += 4096;
+
+    /* Page tables: placed well AFTER _heap_end with a guard gap.
+     * The conservative GC's metadata memset covers metadataStart to
+     * _heap_end. Page tables must be completely outside this range. */
+    .pagetables : ALIGN(4096)
+    {
+        *(.pagetables)
+    }
+
+    . = ALIGN(4096);
+    _alloc_start = .;
+
     /* _stack_top is defined in boot.S as a label; re-export it here
      * for the GC's stack scanning (markRoots scans sp to stackTop). */
     _stack_top = stack_top;

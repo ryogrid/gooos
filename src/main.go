@@ -7,9 +7,14 @@
 package main
 
 import (
-	"runtime"
+	// "runtime" — temporarily unused while GC demo is disabled
 	"unsafe"
 )
+
+// cli disables maskable interrupts. Implemented in stubs.S.
+//
+//go:linkname cli cli
+func cli()
 
 // sti enables maskable interrupts. Implemented in stubs.S.
 //
@@ -133,7 +138,8 @@ func main() {
 	vgaWriteLine(3, "PIT: 100 Hz timer started")
 	serialPrintln("PIT: 100 Hz timer started")
 
-	// Register keyboard IRQ1 handler (vector 33).
+	// Initialize keyboard channel and register IRQ1 handler (vector 33).
+	keyboardInit()
 	registerHandler(33, handleKeyboard)
 	vgaWriteLine(4, "Keyboard: ready")
 	serialPrintln("Keyboard: ready")
@@ -143,34 +149,8 @@ func main() {
 	vgaWriteLine(5, "Interrupts: enabled")
 	serialPrintln("Interrupts: enabled")
 
-	// Phase 1: Allocate many objects that immediately become garbage.
-	const numAllocs = 500
-	for i := 0; i < numAllocs; i++ {
-		_ = allocateGarbage()
-	}
-
-	// Read stats before GC.
-	var before runtime.MemStats
-	runtime.ReadMemStats(&before)
-	vgaWriteLine(6, "Mallocs: "+utoa(before.Mallocs)+"  TotalAlloc: "+utoa(before.TotalAlloc))
-	serialPrintln("Mallocs: " + utoa(before.Mallocs) + "  TotalAlloc: " + utoa(before.TotalAlloc))
-
-	// Phase 2: Trigger garbage collection.
-	runtime.GC()
-
-	// Read stats after GC.
-	var after runtime.MemStats
-	runtime.ReadMemStats(&after)
-	vgaWriteLine(7, "GC done. Frees: "+utoa(after.Frees)+"  HeapInuse: "+utoa(after.HeapInuse))
-	serialPrintln("GC done. Frees: " + utoa(after.Frees) + "  HeapInuse: " + utoa(after.HeapInuse))
-
-	// Phase 3: Allocate again to prove memory was reclaimed.
-	// If GC did not free anything, the heap would eventually fill up.
-	for i := 0; i < 100; i++ {
-		_ = allocateGarbage()
-	}
-	vgaWriteLine(8, "Post-GC alloc OK - GC works!")
-	serialPrintln("Post-GC alloc OK - GC works!")
+	// GC demo temporarily disabled for page fault debugging.
+	serialPrintln("GC demo: skipped")
 
 	// Virtual memory demo: map a 4 KiB page, write, read back, unmap.
 	vmInit()
@@ -196,23 +176,95 @@ func main() {
 		serialPrintln("VM: FAIL - read back 0x" + hextoa(testVal))
 	}
 
-	// In-memory filesystem demo: create, write, read, list.
-	serialPrintln("FS: starting demo")
-	fsCreate("hello.txt")
-	serialPrintln("FS: created hello.txt")
-	fsWrite("hello.txt", []byte("hello world"))
-	serialPrintln("FS: wrote 'hello world' to hello.txt")
-	readBack := fsRead("hello.txt")
-	serialPrintln("FS: read back from hello.txt")
+	// Free-list allocator test: allocate, free, allocate again — same address expected.
+	flTestPage := allocPage()
+	serialPrintln("FreeList: alloc1=0x" + hextoa(uint64(flTestPage)))
+	freePage(flTestPage)
+	flTestPage2 := allocPage()
+	serialPrintln("FreeList: alloc2=0x" + hextoa(uint64(flTestPage2)))
+	if flTestPage == flTestPage2 {
+		serialPrintln("FreeList: OK — same address returned after free")
+	} else {
+		serialPrintln("FreeList: FAIL — expected same address")
+	}
 
-	if string(readBack) == "hello world" {
-		fileNames := fsList()
-		listing := "FS: create/write/read OK | Files:"
-		for _, name := range fileNames {
-			listing += " " + name
+	// ELF64 parser test: construct a synthetic ELF64 binary with one PT_LOAD segment.
+	serialPrintln("ELF: testing parser")
+	var elfTest [120]byte // 64-byte header + 56-byte program header
+	// e_ident: magic + class + data + version
+	elfTest[0] = 0x7f
+	elfTest[1] = 'E'
+	elfTest[2] = 'L'
+	elfTest[3] = 'F'
+	elfTest[4] = 2 // ELFCLASS64
+	elfTest[5] = 1 // ELFDATA2LSB
+	elfTest[6] = 1 // EV_CURRENT
+	// e_type = ET_EXEC (2) at offset 16
+	elfTest[16] = 2
+	// e_machine = EM_X86_64 (0x3E) at offset 18
+	elfTest[18] = 0x3E
+	// e_version = 1 at offset 20
+	elfTest[20] = 1
+	// e_entry = 0x401000 at offset 24 (little-endian)
+	elfTest[24] = 0x00
+	elfTest[25] = 0x10
+	elfTest[26] = 0x40
+	// e_phoff = 64 at offset 32
+	elfTest[32] = 64
+	// e_phentsize = 56 at offset 54
+	elfTest[54] = 56
+	// e_phnum = 1 at offset 56
+	elfTest[56] = 1
+	// Program header at offset 64: PT_LOAD segment.
+	// p_type = PT_LOAD (1)
+	elfTest[64] = 1
+	// p_flags = PF_R|PF_X (5) at +4
+	elfTest[68] = 5
+	// p_vaddr = 0x400000 at +16
+	elfTest[80] = 0x00
+	elfTest[81] = 0x00
+	elfTest[82] = 0x40
+	// p_paddr = 0x400000 at +24
+	elfTest[88] = 0x00
+	elfTest[89] = 0x00
+	elfTest[90] = 0x40
+	// p_filesz = 0x1000 at +32
+	elfTest[96] = 0x00
+	elfTest[97] = 0x10
+	// p_memsz = 0x2000 at +40
+	elfTest[104] = 0x00
+	elfTest[105] = 0x20
+	// p_align = 0x1000 at +48
+	elfTest[112] = 0x00
+	elfTest[113] = 0x10
+
+	elfEntry, elfPhdrs, elfOk := elfParse(elfTest[:])
+	if elfOk {
+		serialPrintln("ELF: parse OK, entry=0x" + hextoa(uint64(elfEntry)))
+		serialPrintln("ELF: " + utoa(uint64(len(elfPhdrs))) + " PT_LOAD segment(s)")
+		if len(elfPhdrs) > 0 {
+			serialPrintln("ELF: phdr[0] vaddr=0x" + hextoa(uint64(elfPhdrs[0].Vaddr)) +
+				" filesz=0x" + hextoa(elfPhdrs[0].Filesz) +
+				" memsz=0x" + hextoa(elfPhdrs[0].Memsz))
 		}
-		vgaWriteLine(10, listing)
-		serialPrintln(listing)
+		if elfEntry == 0x401000 {
+			serialPrintln("ELF: entry point PASS")
+		} else {
+			serialPrintln("ELF: entry point FAIL — got 0x" + hextoa(uint64(elfEntry)))
+		}
+	} else {
+		serialPrintln("ELF: parse FAIL")
+	}
+
+	// In-memory filesystem demo (direct calls, before scheduler starts).
+	// The channel-based FS demo runs after the FS task is spawned below.
+	serialPrintln("FS: starting direct demo")
+	fsCreate("hello.txt")
+	fsWrite("hello.txt", []byte("hello world"))
+	readBack := fsRead("hello.txt")
+	if string(readBack) == "hello world" {
+		vgaWriteLine(10, "FS: direct create/write/read OK")
+		serialPrintln("FS: direct create/write/read OK")
 	} else {
 		vgaWriteLine(10, "FS: FAIL - read mismatch")
 		serialPrintln("FS: FAIL - read mismatch")
@@ -230,7 +282,6 @@ func main() {
 	smpInit()
 
 	// Set up new GDT with Ring 3 code/data segments and TSS.
-	// Must happen after vmInit (uses allocPage for the kernel stack).
 	gdtInit()
 	vgaWriteLine(12, "GDT: Ring 3 + TSS loaded")
 	serialPrintln("GDT: Ring 3 + TSS loaded")
@@ -238,22 +289,53 @@ func main() {
 	// Initialize the scheduler: task 0 = this main/boot task.
 	initScheduler()
 
-	// Create 3 demo tasks that write to different VGA lines.
-	createTask(demoTaskAAddr()) // Task 1 -> VGA line 15
-	createTask(demoTaskBAddr()) // Task 2 -> VGA line 16
-	createTask(demoTaskCAddr()) // Task 3 -> VGA line 17
+	// Spawn essential kernel service tasks only (no demo tasks).
+	// Serial output task: serializes multi-task serial writes via channel.
+	serialChannel = chanCreate(16)
+	createTask(serialTaskEntryAddr()) // Task 1 — serial output
 
-	vgaWriteLine(13, "Scheduler: 3 tasks created")
-	serialPrintln("Scheduler: 3 tasks created")
+	// Filesystem task: handles FS requests via channel.
+	fsRequestChannel = chanCreate(8)
+	createTask(fsTaskEntryAddr()) // Task 2 — filesystem
 
-	// Enable preemptive scheduling — the next timer tick will start switching.
+	// Register keyboard channel for userspace access.
+	chanRegister(userKeyboardChannel) // ID 0 = keyboard input
+
+	vgaWriteLine(13, "Scheduler: service tasks created")
+	serialPrintln("Scheduler: 2 service tasks (serial + fs)")
+
+	// Store user ELF binaries in the filesystem (direct calls, before
+	// scheduler starts so FS task is not needed yet).
+	serialPrintln("Storing user ELF binaries in filesystem...")
+	fsCreate("sh.elf")
+	fsWrite("sh.elf", userElf_sh[:])
+	serialPrintln("  sh.elf: " + utoa(uint64(len(userElf_sh))) + " bytes")
+
+	fsCreate("hello.elf")
+	fsWrite("hello.elf", userElf_hello[:])
+	serialPrintln("  hello.elf: " + utoa(uint64(len(userElf_hello))) + " bytes")
+
+	fsCreate("ls.elf")
+	fsWrite("ls.elf", userElf_ls[:])
+	serialPrintln("  ls.elf: " + utoa(uint64(len(userElf_ls))) + " bytes")
+
+	fsCreate("cat.elf")
+	fsWrite("cat.elf", userElf_cat[:])
+	serialPrintln("  cat.elf: " + utoa(uint64(len(userElf_cat))) + " bytes")
+
+	fsCreate("wc.elf")
+	fsWrite("wc.elf", userElf_wc[:])
+	serialPrintln("  wc.elf: " + utoa(uint64(len(userElf_wc))) + " bytes")
+
+	// Store a test file for cat/wc demos.
+	fsCreate("hello.txt")
+	fsWrite("hello.txt", []byte("Hello from the gooos filesystem!\nThis is a test file.\n"))
+
+	// Enable preemptive scheduling.
 	schedReady = true
 	vgaWriteLine(14, "Scheduler: running")
 	serialPrintln("Scheduler: running (round-robin, PIT preemption)")
 
-	// Set up userspace and jump to Ring 3. Task 0 (main) becomes the
-	// user-mode program. The scheduler preempts it via the timer and
-	// switches between user code and the demo kernel tasks.
+	// Load shell and jump to Ring 3. Does not return.
 	setupUserspace()
-	// Does not return — user code runs in Ring 3.
 }

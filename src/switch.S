@@ -70,5 +70,84 @@ taskReturnHaltAddr:
     leaq    taskReturnHalt(%rip), %rax
     ret
 
+    /* ---- Channel test task address helpers ------------------------------- */
+
+    .global chanProducerTaskAddr
+chanProducerTaskAddr:
+    leaq    chanProducerTask(%rip), %rax
+    ret
+
+    .global chanConsumerTaskAddr
+chanConsumerTaskAddr:
+    leaq    chanConsumerTask(%rip), %rax
+    ret
+
+    .global chanRendezvousAAddr
+chanRendezvousAAddr:
+    leaq    chanRendezvousA(%rip), %rax
+    ret
+
+    .global chanRendezvousBAddr
+chanRendezvousBAddr:
+    leaq    chanRendezvousB(%rip), %rax
+    ret
+
+    /* ---- Select test task address helpers ---------------------------------- */
+
+    .global selectTestTaskAddr
+selectTestTaskAddr:
+    leaq    selectTestTask(%rip), %rax
+    ret
+
+    .global selectProducerAAddr
+selectProducerAAddr:
+    leaq    selectProducerA(%rip), %rax
+    ret
+
+    .global selectProducerBAddr
+selectProducerBAddr:
+    leaq    selectProducerB(%rip), %rax
+    ret
+
+    /* ---- Keyboard consumer task address helper ------------------------------ */
+
+    .global keyboardConsumerTaskAddr
+keyboardConsumerTaskAddr:
+    leaq    keyboardConsumerTask(%rip), %rax
+    ret
+
+    /* ---- Serial task address helper ----------------------------------------- */
+
+    .global serialTaskEntryAddr
+serialTaskEntryAddr:
+    leaq    serialTaskEntry(%rip), %rax
+    ret
+
+    /* ---- FS task address helpers ------------------------------------------- */
+
+    .global fsTaskEntryAddr
+fsTaskEntryAddr:
+    leaq    fsTaskEntry(%rip), %rax
+    ret
+
+    .global fsDemoTaskAddr
+fsDemoTaskAddr:
+    leaq    fsDemoTask(%rip), %rax
+    ret
+
+    /* ---- User print task address helper ---------------------------------------- */
+
+    .global userPrintTaskAddr
+userPrintTaskAddr:
+    leaq    userPrintTask(%rip), %rax
+    ret
+
+    /* ---- elfExec trampoline address helper ------------------------------------- */
+
+    .global elfExecTrampolineAddr
+elfExecTrampolineAddr:
+    leaq    elfExecTrampoline(%rip), %rax
+    ret
+
     /* Mark the stack as non-executable. */
     .section .note.GNU-stack,"",@progbits

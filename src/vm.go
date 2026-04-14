@@ -25,6 +25,14 @@ const (
 //go:linkname heapEndAddr heapEndAddr
 func heapEndAddr() uintptr
 
+// allocStartAddr returns the linker-defined _alloc_start address.
+// This is the first address after the .pagetables section, available
+// for dynamic page allocation by allocPage.
+// Implemented in stubs.S.
+//
+//go:linkname allocStartAddr allocStartAddr
+func allocStartAddr() uintptr
+
 // readCR2 returns the faulting virtual address from CR2.
 // Implemented in stubs.S.
 //
@@ -37,6 +45,16 @@ func readCR2() uintptr
 //go:linkname readCR3 readCR3
 func readCR3() uintptr
 
+// readFlags returns the current RFLAGS register. Implemented in stubs.S.
+//
+//go:linkname readFlags readFlags
+func readFlags() uintptr
+
+// restoreFlags loads the given value into RFLAGS. Implemented in stubs.S.
+//
+//go:linkname restoreFlags restoreFlags
+func restoreFlags(flags uintptr)
+
 // invlpg invalidates the TLB entry for a virtual address.
 // Implemented in stubs.S.
 //
@@ -46,15 +64,20 @@ func invlpg(addr uintptr)
 // nextFreePage is the bump allocator's next available physical address.
 var nextFreePage uintptr
 
+// freeListHead was used for the singly-linked free page list.
+// Disabled: bump-only allocator for correctness (no free list corruption).
+// var freeListHead uintptr
+
 // vmInit initializes the page frame allocator.
 // Must be called before mapPage or allocPage.
 func vmInit() {
-	end := heapEndAddr()
+	end := allocStartAddr()
 	// Align up to the next 4 KiB boundary.
 	nextFreePage = (end + pageSize - 1) &^ (pageSize - 1)
 }
 
 // allocPage returns the physical address of a zeroed 4 KiB page.
+// Uses a bump allocator (nextFreePage++). Free list is disabled.
 func allocPage() uintptr {
 	page := nextFreePage
 	nextFreePage += pageSize
@@ -63,6 +86,18 @@ func allocPage() uintptr {
 		*(*uint64)(unsafe.Pointer(page + i)) = 0
 	}
 	return page
+}
+
+// freePage is a no-op: pages are not recycled to avoid free list
+// corruption issues. The bump allocator has sufficient address space
+// within the 1 GiB identity map for short-lived shell sessions.
+func freePage(paddr uintptr) {
+	// Intentionally empty — pages are leaked.
+	// This trades memory for correctness: the bump allocator
+	// (nextFreePage) never revisits freed pages, eliminating
+	// the class of bugs where free list links are corrupted
+	// by stale TLB entries or double-free.
+	_ = paddr
 }
 
 // mapPage maps a 4 KiB virtual page to a physical page.
@@ -155,13 +190,47 @@ func walkExisting(table uintptr, index uintptr) uintptr {
 	return uintptr(*entry) &^ 0xFFF
 }
 
+// walkAndGetPaddr returns the physical page frame address for a virtual
+// address by walking the 4-level page table. Returns 0 if the address
+// is not mapped at 4 KiB granularity.
+func walkAndGetPaddr(vaddr uintptr) uintptr {
+	pml4 := readCR3() &^ 0xFFF
+
+	pml4Idx := (vaddr >> 39) & 0x1FF
+	pdpIdx := (vaddr >> 30) & 0x1FF
+	pdIdx := (vaddr >> 21) & 0x1FF
+	ptIdx := (vaddr >> 12) & 0x1FF
+
+	pdp := walkExisting(pml4, pml4Idx)
+	if pdp == 0 {
+		return 0
+	}
+	pd := walkExisting(pdp, pdpIdx)
+	if pd == 0 {
+		return 0
+	}
+	pt := walkExisting(pd, pdIdx)
+	if pt == 0 {
+		return 0
+	}
+
+	entry := (*uint64)(unsafe.Pointer(pt + ptIdx*8))
+	if *entry&uint64(pagePresent) == 0 {
+		return 0
+	}
+	return uintptr(*entry) &^ 0xFFF
+}
+
 // handlePageFault displays the faulting address and error code on VGA
 // and serial, then halts. Page faults are fatal in this kernel.
 func handlePageFault(vector uint64) {
 	faultAddr := readCR2()
 	errCode := lastErrorCode
+	// Read RIP from the saved frame (offset 17*8 = 136 bytes from frame base)
+	frame := (*SyscallFrame)(unsafe.Pointer(lastFramePtr))
+	faultRIP := frame.RIP
 
-	msg := "PF: addr=0x" + hextoa(uint64(faultAddr)) + " err=0x" + hextoa(errCode)
+	msg := "PF: addr=0x" + hextoa(uint64(faultAddr)) + " err=0x" + hextoa(errCode) + " rip=0x" + hextoa(uint64(faultRIP))
 	vgaWriteLine(12, msg)
 	serialPrintln(msg)
 

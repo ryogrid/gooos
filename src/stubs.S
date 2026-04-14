@@ -110,6 +110,30 @@ inb:
     movzbl  %al, %eax
     ret
 
+    /* ---- readFlags: return RFLAGS register ------------------------------ */
+    /* readFlags() uintptr                                                  */
+    .global readFlags
+readFlags:
+    pushfq
+    popq    %rax
+    ret
+
+    /* ---- restoreFlags: restore RFLAGS register ------------------------- */
+    /* restoreFlags(flags uintptr)                                          */
+    /* SysV ABI: rdi = flags value to restore.                              */
+    .global restoreFlags
+restoreFlags:
+    pushq   %rdi
+    popfq
+    ret
+
+    /* ---- cli: disable maskable interrupts ------------------------------- */
+    /* No args, no return value. Simply executes the x86 CLI instruction.  */
+    .global cli
+cli:
+    cli
+    ret
+
     /* ---- sti: enable maskable interrupts ------------------------------- */
     /* No args, no return value. Simply executes the x86 STI instruction.  */
     .global sti
@@ -126,10 +150,18 @@ hlt:
 
     /* ---- heapEndAddr: return the address of _heap_end linker symbol ---- */
     /* heapEndAddr() uintptr                                                */
-    /* Used by the page frame allocator to start allocating after the heap. */
+    /* Used by the TinyGo mmap stub to determine available heap size.       */
     .global heapEndAddr
 heapEndAddr:
     movq    $_heap_end, %rax
+    ret
+
+    /* ---- allocStartAddr: return the address of _alloc_start symbol ------ */
+    /* allocStartAddr() uintptr                                              */
+    /* First address after .pagetables section — page allocator starts here. */
+    .global allocStartAddr
+allocStartAddr:
+    movq    $_alloc_start, %rax
     ret
 
     /* ---- readCR2: return the page-fault linear address ----------------- */
@@ -198,6 +230,11 @@ tinygo_scanCurrentStack:
     movq    %rsp, %rdi              /* pass RSP as first arg */
     callq   tinygo_scanstack        /* Go function in gc_stack_raw.go */
     addq    $56, %rsp               /* clean up: 6 regs (48) + align (8) */
+    retq
+
+    /* Dummy tinygo_scanstack for gc=leaking (never called, satisfies linker). */
+    .weak   tinygo_scanstack
+tinygo_scanstack:
     retq
 
     /* ---- lgdtReload: load new GDT and reload segment registers --------- */

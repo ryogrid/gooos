@@ -6,7 +6,7 @@
 
 package main
 
-import _ "unsafe" // required for go:linkname
+import "unsafe" // required for go:linkname and unsafe.Pointer
 
 // COM1 port addresses.
 const (
@@ -60,4 +60,48 @@ func serialPrintln(s string) {
 	serialPrint(s)
 	serialPutChar('\r')
 	serialPutChar('\n')
+}
+
+// ---------- Serial output task (microkernel service) ----------
+
+// Pool size for serialSend messages, matches channel capacity.
+const serialMsgPoolSize = 16
+
+var (
+	serialChannel *Channel                  // channel for task-context serial output
+	serialMsgs    [serialMsgPoolSize]string  // static pool of message slots
+	serialMsgNext int                        // next pool slot index (ring)
+)
+
+// serialTaskEntryAddr returns the address of serialTaskEntry. Implemented in switch.S.
+//
+//go:linkname serialTaskEntryAddr serialTaskEntryAddr
+func serialTaskEntryAddr() uintptr
+
+// serialTaskEntry loops receiving string pointers from serialChannel and
+// writing each string's bytes to COM1. Runs as a dedicated kernel task.
+//
+//export serialTaskEntry
+func serialTaskEntry() {
+	sti()
+	serialPrintln("Serial task: started")
+	for {
+		val := chanRecv(serialChannel)
+		sp := (*string)(unsafe.Pointer(val))
+		s := *sp
+		for i := 0; i < len(s); i++ {
+			serialPutChar(s[i])
+		}
+	}
+}
+
+// serialSend sends a string message to the serial output task via channel.
+// Blocking call — only use from task context (not from interrupts or early boot).
+// The string is stored in a static pool slot so the pointer remains valid
+// until the consumer task processes it.
+func serialSend(msg string) {
+	idx := serialMsgNext
+	serialMsgNext = (serialMsgNext + 1) % serialMsgPoolSize
+	serialMsgs[idx] = msg
+	chanSend(serialChannel, uintptr(unsafe.Pointer(&serialMsgs[idx])))
 }

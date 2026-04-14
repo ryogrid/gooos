@@ -111,6 +111,7 @@ isr_common:
     /* Align stack to 16 bytes for SysV AMD64 ABI call convention. */
     /* Save original RSP in callee-saved %rbx (restored from stack later). */
     movq    %rsp, %rbx
+    movq    %rbx, %rdx              /* third arg = register frame pointer */
     andq    $-16, %rsp
 
     call    go_interrupt_handler

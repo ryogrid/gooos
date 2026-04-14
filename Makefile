@@ -21,7 +21,7 @@ STUBS_S     := $(SRC_DIR)/stubs.S
 ISR_S       := $(SRC_DIR)/isr.S
 SWITCH_S    := $(SRC_DIR)/switch.S
 TRAMP_S     := $(SRC_DIR)/trampoline.S
-MAIN_GO     := $(SRC_DIR)/main.go
+GO_SRCS     := $(wildcard $(SRC_DIR)/*.go)
 
 BOOT_O      := $(TMP_DIR)/boot.o
 STUBS_O     := $(TMP_DIR)/stubs.o
@@ -32,11 +32,18 @@ KERNEL_GO_O := $(TMP_DIR)/kernel_go.o
 KERNEL_BIN  := $(TMP_DIR)/kernel.bin
 KERNEL_ISO  := $(TMP_DIR)/kernel.iso
 
-.PHONY: all build iso run run-kernel clean check-multiboot
+.PHONY: all build user embed-user iso run run-kernel clean check-multiboot
 
 all: build
 
-build: $(KERNEL_BIN)
+# Build user programs, embed them as Go byte arrays, then build the kernel.
+user:
+	$(MAKE) -C user all
+
+embed-user: user
+	bash scripts/embed_elfs.sh
+
+build: embed-user $(KERNEL_BIN)
 
 $(TMP_DIR):
 	mkdir -p $(TMP_DIR)
@@ -56,7 +63,7 @@ $(SWITCH_O): $(SWITCH_S) | $(TMP_DIR)
 $(TRAMP_O): $(TRAMP_S) | $(TMP_DIR)
 	$(AS) --64 $(TRAMP_S) -o $(TRAMP_O)
 
-$(KERNEL_GO_O): $(MAIN_GO) $(TARGET_JSON) | $(TMP_DIR)
+$(KERNEL_GO_O): $(GO_SRCS) $(TARGET_JSON) | $(TMP_DIR)
 	$(TINYGO) build -target=$(TARGET_JSON) -o $(KERNEL_GO_O) ./$(SRC_DIR)
 
 $(KERNEL_BIN): $(BOOT_O) $(STUBS_O) $(ISR_O) $(SWITCH_O) $(TRAMP_O) $(KERNEL_GO_O) $(LINKER_LD)
@@ -85,3 +92,4 @@ run-smp: $(KERNEL_ISO) check-multiboot
 
 clean:
 	rm -rf $(TMP_DIR)
+	$(MAKE) -C user clean
