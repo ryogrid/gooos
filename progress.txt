@@ -79,6 +79,11 @@
 - elfLoad uses fsSendRead (channel-based) not direct fsRead — requires schedReady=true and FS task spawned; ELF binary must be pre-stored via direct fsCreate/fsWrite
 - Writing to newly mapped virtual addresses works without invlpg — new mappings cause TLB miss, CPU walks page table; only need invlpg for CHANGED mappings
 - ELF user stack at 0x7FFF0000 (8 KiB, 2 pages); code vaddr from ELF headers (e.g., 0x40010000); both outside 1 GiB identity map
+- Channel ID table: chanRegister(ch) returns uint64 ID, chanLookup(id) returns *Channel; IDs are sequential starting from 0
+- Blocking syscalls (chanSend/chanRecv) work from int 0x80 context: task blocks via waitQueueSleep → schedule() → switchContext; resumes in isr_common frame → iretq back to Ring 3
+- sys_send/sys_recv pack/unpack up to 8 bytes between user buffer and uintptr channel value (little-endian byte order)
+- userKeyboardChannel duplicates events from IRQ handler to avoid competition with keyboardConsumerTask for chanRecv
+- With 16 tasks (0=userspace, 1-3=demo, 4-7=channel, 8-10=select, 11=keyboard, 12=serial, 13=fs, 14=fs-demo, 15=user-print), maxTasks=16 is fully used
 ---
 
 ## 2026-04-14 - US-001
@@ -289,4 +294,26 @@
   - allocPage returns zeroed pages, so BSS (p_memsz - p_filesz) is implicitly handled — no explicit zeroing loop needed
   - Direct FS calls (fsCreate/fsWrite) work before scheduler for storing the ELF binary; channel-based fsSendRead works after scheduler for loading it
   - User stack at 0x7FFF0000 is well outside the 1 GiB identity map — no huge page conflicts
+---
+
+## 2026-04-14 - US-014
+- Implemented channel syscalls: sys_send (2), sys_recv (3), sys_spawn (4) for userspace IPC
+- Added channel ID table (chanRegister/chanLookup) in src/channel.go for userspace channel access
+- Added userKeyboardChannel in src/keyboard.go; IRQ1 handler publishes to both keyboardChannel and userKeyboardChannel
+- Added userPrintChannel and userPrintTask in src/channel.go; kernel task receives via chanRecv and prints to serial
+- Registered userKeyboardChannel as ID 0, userPrintChannel as ID 1 in main.go
+- sys_send: reads up to 8 bytes from user buffer, packs into uintptr, calls chanSend (blocking)
+- sys_recv: calls chanRecv (blocking), unpacks uintptr into user buffer, returns bytes written in RAX
+- sys_spawn: creates new kernel task via createTask, returns task ID (or -1 if table full)
+- Updated user ELF binary (277 bytes): sys_print prompt → sys_recv keyboard → sys_send print channel → sys_print confirmation → halt
+- Added userPrintTaskAddr assembly stub in src/switch.S
+- Kernel boots with 16 tasks, user program prints "Waiting for key..." and blocks on sys_recv
+- Files changed: src/channel.go, src/keyboard.go, src/userspace.go, src/switch.S, src/main.go
+- **Learnings for future iterations:**
+  - Blocking syscalls (chanSend/chanRecv) work from int 0x80 handler: task blocks via schedule() → switchContext; resumes in isr_common frame → iretq back to Ring 3
+  - Separate userKeyboardChannel avoids competition with keyboardConsumerTask for keyboard events; IRQ handler publishes to both channels via chanTrySend
+  - sys_send/sys_recv use byte-packing: up to 8 bytes from user buffer packed into/from a single uintptr (LE byte order), matching the kernel's channel uintptr transport
+  - Channel ID table is sequential (chanRegister increments chanIDCount); IDs must be registered before schedReady=true
+  - maxTasks=16 is now fully used (16 tasks); sys_spawn will return -1 unless tasks exit first
+  - User ELF binary data section (recv_buf) must be in a writable page — PT_LOAD flags PF_R|PF_W|PF_X (7) and elfLoad maps with pageWrite|pageUser
 ---

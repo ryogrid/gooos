@@ -350,8 +350,14 @@ func main() {
 	createTask(fsTaskEntryAddr()) // Task 13 — filesystem
 	createTask(fsDemoTaskAddr())  // Task 14 — FS channel demo
 
-	vgaWriteLine(13, "Scheduler: 15 tasks created")
-	serialPrintln("Scheduler: 15 tasks created (3 demo + 4 channel + 3 select + 1 keyboard + 1 serial + 1 fs + 1 fs-demo)")
+	// User-facing channels for syscall-based IPC from Ring 3.
+	userPrintChannel = chanCreate(8)
+	chanRegister(userKeyboardChannel) // ID 0 = keyboard input
+	chanRegister(userPrintChannel)    // ID 1 = print output
+	createTask(userPrintTaskAddr())   // Task 15 — user print consumer
+
+	vgaWriteLine(13, "Scheduler: 16 tasks created")
+	serialPrintln("Scheduler: 16 tasks created (3 demo + 4 channel + 3 select + 1 keyboard + 1 serial + 1 fs + 1 fs-demo + 1 user-print)")
 
 	// Enable preemptive scheduling — the next timer tick will start switching.
 	schedReady = true

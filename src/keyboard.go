@@ -17,6 +17,10 @@ type KeyEvent struct {
 // Created by keyboardInit() before the IRQ handler is registered.
 var keyboardChannel *Channel
 
+// userKeyboardChannel receives KeyEvent messages for userspace consumption.
+// Published to in parallel with keyboardChannel from the IRQ handler.
+var userKeyboardChannel *Channel
+
 // PS/2 keyboard I/O port.
 const kbdDataPort = 0x60
 
@@ -52,6 +56,7 @@ const (
 // before registering the IRQ1 handler.
 func keyboardInit() {
 	keyboardChannel = chanCreate(16)
+	userKeyboardChannel = chanCreate(16)
 }
 
 // handleKeyboard is the IRQ1 handler (vector 33). Reads the scancode
@@ -75,6 +80,7 @@ func handleKeyboard(vector uint64) {
 	// Pack KeyEvent into uintptr: low byte = scancode, next byte = ascii.
 	event := uintptr(scancode) | (uintptr(ascii) << 8)
 	chanTrySend(keyboardChannel, event)
+	chanTrySend(userKeyboardChannel, event)
 }
 
 // keyboardConsumerTaskAddr returns the address of keyboardConsumerTask.

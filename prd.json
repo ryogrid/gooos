@@ -244,7 +244,7 @@
         "make build succeeds"
       ],
       "priority": 14,
-      "passes": false,
+      "passes": true,
       "notes": "Depends on US-013 (ELF loader), US-006 (channels). Completes the userspace channel-based IPC story."
     }
   ]

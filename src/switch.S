@@ -135,5 +135,12 @@ fsDemoTaskAddr:
     leaq    fsDemoTask(%rip), %rax
     ret
 
+    /* ---- User print task address helper ---------------------------------------- */
+
+    .global userPrintTaskAddr
+userPrintTaskAddr:
+    leaq    userPrintTask(%rip), %rax
+    ret
+
     /* Mark the stack as non-executable. */
     .section .note.GNU-stack,"",@progbits

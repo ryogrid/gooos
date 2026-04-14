@@ -31,6 +31,35 @@ var (
 	chanPoolCount int
 )
 
+// ---------- Channel ID table (userspace access) ----------
+
+// chanIDTableSize is the maximum number of channels registered for userspace access.
+const chanIDTableSize = 32
+
+var (
+	chanIDTable [chanIDTableSize]*Channel
+	chanIDCount uint64
+)
+
+// chanRegister registers a channel and returns its integer ID for userspace access.
+func chanRegister(ch *Channel) uint64 {
+	if chanIDCount >= chanIDTableSize {
+		return 0xFFFFFFFFFFFFFFFF
+	}
+	id := chanIDCount
+	chanIDTable[id] = ch
+	chanIDCount++
+	return id
+}
+
+// chanLookup returns the channel pointer for the given ID, or nil if invalid.
+func chanLookup(id uint64) *Channel {
+	if id >= chanIDCount {
+		return nil
+	}
+	return chanIDTable[id]
+}
+
 // chanCreate allocates a channel from the static pool with the given capacity.
 // capacity=0 means unbuffered (rendezvous). Returns nil if pool is exhausted.
 func chanCreate(capacity int) *Channel {
@@ -457,5 +486,29 @@ func selectProducerB() {
 	serialPrintln("Select: producer B sent 0xBBBB to ch2")
 	for {
 		taskSleep(10000)
+	}
+}
+
+// ---------- User print channel (userspace sys_send target) ----------
+
+// userPrintChannel receives values from userspace via sys_send and prints to serial.
+var userPrintChannel *Channel
+
+// userPrintTaskAddr returns the address of userPrintTask. Implemented in switch.S.
+//
+//go:linkname userPrintTaskAddr userPrintTaskAddr
+func userPrintTaskAddr() uintptr
+
+// userPrintTask receives uintptr values from userPrintChannel and writes
+// the packed bytes to serial output. Used to test sys_send from userspace.
+//
+//export userPrintTask
+func userPrintTask() {
+	sti()
+	serialPrintln("UserPrint: task started")
+	for {
+		val := chanRecv(userPrintChannel)
+		serialPrint("UserPrint: recv 0x")
+		serialPrintln(hextoa(uint64(val)))
 	}
 }
