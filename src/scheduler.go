@@ -75,11 +75,18 @@ func initScheduler() {
 //	stackTop - 64: 0               (r15)
 //	<-- SP saved here
 func createTask(entryAddr uintptr) uint32 {
-	// Try to reuse a free slot first.
+	// Try to reuse a free or exited slot first.
 	var id uint32
 	reuse := false
 	for i := uint32(1); i < taskCount; i++ {
-		if tasks[i].State == taskFree {
+		if tasks[i].State == taskFree || tasks[i].State == taskExited {
+			// Free the old stack if present (exited tasks keep their
+			// stack until slot reuse because processExit cannot free
+			// the stack of the currently running task).
+			if tasks[i].StackBase != 0 {
+				freePage(tasks[i].StackBase)
+				tasks[i].StackBase = 0
+			}
 			id = i
 			reuse = true
 			break

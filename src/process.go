@@ -9,7 +9,9 @@ package main
 import "unsafe"
 
 // Maximum user pages tracked per process.
-const maxUserPages = 64
+// Must be large enough to hold all PT_LOAD + stack + argument + heap pages.
+// TinyGo's mmap requests up to 1 MiB (256 pages) for the initial heap.
+const maxUserPages = 512
 
 // Process holds per-process metadata beyond what Task provides.
 type Process struct {
@@ -28,6 +30,7 @@ type Process struct {
 }
 
 // SavedMapping stores a parent's page mappings during child exec.
+// Uses the same capacity as Process.UserPages.
 type SavedMapping struct {
 	Vaddrs [maxUserPages]uintptr
 	Paddrs [maxUserPages]uintptr
@@ -55,6 +58,8 @@ func processRecordPage(proc *Process, vaddr, paddr uintptr) {
 		proc.UserPages[proc.UserPageCnt] = vaddr
 		proc.UserPaddrs[proc.UserPageCnt] = paddr
 		proc.UserPageCnt++
+	} else {
+		serialPrintln("processRecordPage: OVERFLOW")
 	}
 }
 
@@ -231,8 +236,9 @@ func processExit(exitCode uintptr) {
 	// Clean up the child's process entry.
 	proc.Used = false
 
-	// Reclaim the task slot and schedule.
+	// Mark the task as exited and schedule away. Do NOT call taskReclaim
+	// here — we are still running on this task's kernel stack. The stack
+	// will be freed lazily when createTask reuses the slot.
 	tasks[currentTask].State = taskExited
-	taskReclaim(currentTask)
 	schedule()
 }
