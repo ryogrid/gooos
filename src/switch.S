@@ -70,5 +70,27 @@ taskReturnHaltAddr:
     leaq    taskReturnHalt(%rip), %rax
     ret
 
+    /* ---- Channel test task address helpers ------------------------------- */
+
+    .global chanProducerTaskAddr
+chanProducerTaskAddr:
+    leaq    chanProducerTask(%rip), %rax
+    ret
+
+    .global chanConsumerTaskAddr
+chanConsumerTaskAddr:
+    leaq    chanConsumerTask(%rip), %rax
+    ret
+
+    .global chanRendezvousAAddr
+chanRendezvousAAddr:
+    leaq    chanRendezvousA(%rip), %rax
+    ret
+
+    .global chanRendezvousBAddr
+chanRendezvousBAddr:
+    leaq    chanRendezvousB(%rip), %rax
+    ret
+
     /* Mark the stack as non-executable. */
     .section .note.GNU-stack,"",@progbits

@@ -47,197 +47,91 @@
 - lock xaddl atomically claims AP index from shared counter; each AP loads its stack from a pre-indexed array
 - After LAPIC enable (SVR bit 8), configure LVT LINT0=ExtINT to preserve PIC interrupt delivery to BSP
 
+- freePage/allocPage free-list: first 8 bytes of a free page store the next-pointer; freeListHead is the list head
+- WaitQueue: fixed-size [16]uint32 FIFO of task IDs; waitQueueSleep blocks caller, wakeOne/wakeAll are interrupt-safe
+- schedule() only sets old task to taskReady if it was taskRunning — preserves taskBlocked state for waitQueueSleep callers
+- yield() sets current task to taskReady and calls schedule() — same pattern as waitQueueSleep but without blocking
+- taskSleep(ticks) uses a sorted sleep queue (ascending by WakeupTick); timer handler wakes expired entries before schedule()
+- Sleep queue is a fixed-size [16]uint32 array of task IDs; sorted insert + shift on wake keeps it ordered
+- Channel: static pool of [32]Channel; chanCreate returns *Channel from pool; ring buffer max 256 uintptr slots
+- chanSend/chanRecv block via waitQueueSleep when buffer full/empty; chanTrySend is non-blocking (interrupt-safe)
+- Unbuffered channels (capacity=0) use buf[0] + count as a single-slot handoff; sender/receiver coordinate via WaitQueues
+- Spawn receiver task before sender for unbuffered channels so receiver blocks first, ensuring clean rendezvous
 ---
 
-## 2026-04-13 - US-001
-- Implemented COM1 serial output: outb/inb assembly stubs, serial.go with init/putchar/print/println
-- Files changed: src/stubs.S (added outb/inb), src/serial.go (new), src/main.go (serial init + logging)
+## 2026-04-14 - US-001
+- Implemented page-frame free-list allocator: freeListHead global, freePage() push, allocPage() pop-first
+- Added test in main.go: alloc, free, alloc again — verifies same physical address returned
+- Files changed: src/vm.go, src/main.go
 - **Learnings for future iterations:**
-  - TinyGo supports `//go:linkname` with bodyless function declarations to link against external assembly symbols (same pattern used by TinyGo runtime for `tinygo_scanCurrentStack`)
-  - COM1 initialization sequence: disable interrupts, DLAB on, set divisor, DLAB off (8N1), enable FIFO, set modem control
-  - Must wait for transmit holding register empty (LSR bit 5) before writing data to COM1
-  - `make run-kernel` with `-kernel` flag doesn't work for ELF64 kernels; use `make run` (ISO with GRUB) for testing
+  - allocPage() is called from 6 files (vm.go, main.go, scheduler.go, userspace.go, smp.go, gdt.go) — signature must stay unchanged
+  - Free-list uses identity-mapped physical addresses as virtual pointers (phys=virt in this kernel)
+  - All pre-existing demos (GC, VM, FS, timer, SMP, scheduler, userspace Ring 3) continue to pass after the change
 ---
 
-## 2026-04-13 - US-002
-- Implemented 256-entry IDT: IDTEntry struct (16 bytes), setGate helper, idtInit with lidt
-- Assembly stubs added: defaultHandler (cli+hlt), defaultHandlerAddr (leaq), lidt
-- Files changed: src/idt.go (new), src/stubs.S (3 new stubs), src/main.go (call idtInit, display status)
+## 2026-04-14 - US-002
+- Implemented WaitQueue primitive: WaitQueue struct with fixed [16]uint32 FIFO array
+- Added waitQueueSleep(wq): sets current task to taskBlocked, appends to queue, calls schedule()
+- Added waitQueueWakeOne(wq): dequeues first task, sets to taskReady (interrupt-safe)
+- Added waitQueueWakeAll(wq): sets all queued tasks to taskReady, resets count (interrupt-safe)
+- Fixed schedule() to only set old task to taskReady if it was taskRunning (preserves taskBlocked)
+- Files changed: src/scheduler.go
 - **Learnings for future iterations:**
-  - IDT descriptor for lidt is packed (10 bytes); Go structs add alignment padding on uint64, so use [10]byte and pack manually
-  - To pass an assembly symbol address to Go, use a helper function with `leaq symbol(%rip), %rax; ret` rather than trying to take the address directly
-  - IDTEntry struct fields naturally pack to 16 bytes without padding: uint16+uint16+uint8+uint8+uint16+uint32+uint32
-  - VGA line numbers need to be shifted when adding new status lines (bumped GC output from lines 1-3 to 2-4)
-  - Interrupt gate type attr = 0x8E: Present(1) | DPL(00) | 0 | Type(1110 = interrupt gate)
+  - schedule() unconditionally set tasks[old].State = taskReady — must guard with state check to support blocking primitives
+  - WaitQueue functions don't allocate or block, making wakeOne/wakeAll safe from interrupt context
+  - Makefile only tracks main.go as Go dependency; must `make clean` before `make build` after changing other .go files
 ---
 
-## 2026-04-13 - US-003
-- Implemented 256 ISR entry stubs in src/isr.S with macros (ISR_NOERR/ISR_ERR)
-- Created table-driven Go interrupt dispatcher in src/interrupt.go (//export go_interrupt_handler)
-- Updated src/idt.go to populate IDT from ISR address table instead of default handler
-- Registered #DE (division error) handler on vector 0 in main.go
-- Updated Makefile to assemble isr.S and link isr.o
-- Files changed: src/isr.S (new), src/interrupt.go (new), src/idt.go, src/main.go, Makefile
+## 2026-04-14 - US-003
+- Implemented yield() in src/scheduler.go: sets current task to taskReady and calls schedule()
+- Modified demoTaskC to use yield() instead of hlt() in its spin-wait loop
+- Files changed: src/scheduler.go
 - **Learnings for future iterations:**
-  - GNU as .altmacro mode with .rept and %COUNTER is effective for generating bulk stubs; define macros in normal mode, switch to altmacro for invocation
-  - Vectors that push CPU error codes: 8, 10, 11, 12, 13, 14, 17, 21; all others need dummy push $0
-  - ISR common handler must align stack to 16 bytes before calling Go (SysV ABI); save RSP in a callee-saved register (%rbx), andq $-16, %rsp, restore after call
-  - 15 GPR pushes (120 bytes) from an interrupt frame; vector number offset = RSP + 120
-  - //export directive in TinyGo creates C-ABI-compatible function callable from assembly
-  - ISR address table in .rodata + Go helper with leaq/ret is the clean pattern for passing assembly symbol arrays to Go
+  - yield() follows the same pattern as waitQueueSleep (set state, call schedule) but sets taskReady instead of taskBlocked
+  - Replacing hlt() with yield() causes much higher context switch frequency — task gives up CPU immediately instead of waiting for next timer interrupt
+  - All 4 tasks (0-3) continue to round-robin correctly with yield-based voluntary switching mixed with timer-preempted switching
 ---
 
-## 2026-04-13 - US-004
-- Implemented PIC remap (8259A): master PIC remapped to vectors 32-39, slave to vectors 40-47
-- Added picSendEOI() for acknowledging interrupts from both PICs
-- Added sti and hlt assembly stubs to stubs.S
-- Registered default IRQ handlers (vectors 32-47) that send EOI for unhandled hardware interrupts
-- Added halt loop at end of main() to keep kernel alive after initialization
-- VGA displays 'Interrupts: enabled', kernel runs without triple-fault
-- Files changed: src/pic.go (new), src/stubs.S (sti + hlt stubs), src/main.go (PIC init, IRQ handlers, halt loop)
+## 2026-04-14 - US-004
+- Implemented taskSleep(ticks uint64): computes WakeupTick, inserts into sorted sleep queue, blocks task, calls schedule()
+- Added sleep queue: fixed-size sorted array of task IDs (ascending by WakeupTick), with sleepQueueWakeExpired() called from timer handler
+- Extended Task struct with WakeupTick uint64 field
+- Updated handleTimer in pit.go to call sleepQueueWakeExpired(pitTicks) before EOI and schedule()
+- Refactored demoTaskA (50 ticks), demoTaskB (75 ticks), demoTaskC (100 ticks) from spin-wait to taskSleep()
+- Files changed: src/scheduler.go, src/pit.go
 - **Learnings for future iterations:**
-  - 8259A PIC remap uses ICW1-ICW4 initialization sequence on both command and data ports
-  - Slave PIC is on IRQ2 of master (ICW3: master=0x04, slave=0x02)
-  - Must send EOI to both slave and master for IRQs 8-15 (slave first, then master)
-  - Register default IRQ handlers for all 16 hardware IRQs to prevent PIC from hanging on spurious interrupts
-  - hlt loop keeps kernel alive: `for { hlt() }` — CPU sleeps between interrupts, saving power
-  - VGA line numbers shift down when adding new status lines; keep track of which row each message uses
+  - taskSleep inserts into sorted sleep queue before calling schedule() — timer handler only needs to check head entries
+  - sleepQueueWakeExpired is interrupt-safe (no allocation, no blocking) — wakes all entries with WakeupTick <= now
+  - Preemptive round-robin still works for task 0 (Ring 3 userspace) which doesn't call taskSleep
+  - Demo tasks now truly block instead of spin-waiting — CPU is free for other tasks during sleep
 ---
 
-## 2026-04-13 - US-005
-- Implemented PIT timer: channel 0 at ~100 Hz using rate generator mode 2
-- Created src/pit.go with pitInit(), handleTimer(), and global pitTicks counter
-- Updated src/main.go: PIT init before sti, timer handler on vector 32, spin-wait displays tick count
-- VGA shows "Timer: 200 ticks" after ~2 seconds, serial logs the same
-- Files changed: src/pit.go (new), src/main.go (PIT init, VGA line shifts, spin-wait loop)
+## 2026-04-14 - US-005
+- Created src/channel.go with Channel struct and chanCreate function
+- Channel struct: fixed [256]uintptr ring buffer, readIdx/writeIdx/count/capacity, sender/receiver WaitQueues, used flag
+- Static pool: [32]Channel array with chanPoolCount index; chanCreate allocates from pool sequentially
+- chanCreate(capacity) initializes all fields, clamps capacity to 256, returns nil if pool exhausted; capacity=0 = unbuffered
+- Files changed: src/channel.go (new)
 - **Learnings for future iterations:**
-  - PIT command byte 0x34: channel 0, lobyte/hibyte access mode, rate generator (mode 2), binary counting
-  - PIT oscillator frequency = 1193182 Hz; divisor = freq/target_hz (11932 for 100 Hz)
-  - Register specific IRQ handlers AFTER the default IRQ handler loop so they override the defaults
-  - Spin-wait with hlt() is efficient: `for pitTicks < N { hlt() }` — CPU sleeps between timer ticks
-  - VGA line numbers need to shift when adding new status lines (PIT status on line 3, interrupts moved to line 4, etc.)
+  - Channel pool is pre-allocated statically — no heap allocation needed, safe for bare-metal
+  - capacity=0 means unbuffered (rendezvous); send/recv logic in US-006 must handle this specially
+  - WaitQueue type from scheduler.go is reused directly in Channel struct for sender/receiver blocking
+  - Build succeeds and all existing demos boot correctly in QEMU with the new file included
 ---
 
-## 2026-04-13 - US-006
-- Implemented PS/2 keyboard driver: IRQ1 handler (vector 33), scancode set 1 to ASCII mapping, VGA echo buffer
-- Created src/keyboard.go: handleKeyboard(), scancode-to-ASCII table, echo buffer with backspace/enter support
-- Updated src/main.go: registered keyboard handler on vector 33, added vgaClearLine helper, shifted VGA line numbers
-- VGA shows "Keyboard: ready" on line 4, typed characters echo on line 10
-- Serial logs each keypress
-- Files changed: src/keyboard.go (new), src/main.go (keyboard registration, vgaClearLine, VGA line shifts)
+## 2026-04-14 - US-006
+- Implemented chanSend(ch, val) — blocking send with WaitQueue-based blocking when buffer full
+- Implemented chanRecv(ch) — blocking receive with WaitQueue-based blocking when buffer empty
+- Implemented chanTrySend(ch, val) — non-blocking send, returns false if full (interrupt-safe)
+- Unbuffered (capacity=0) rendezvous: uses buf[0] + count as single-slot handoff between sender and receiver
+- Buffered test: producer sends 10 values (0-9) on capacity-4 channel, consumer receives all in correct order — PASS
+- Unbuffered test: receiver blocks, sender delivers 0xBEEF via rendezvous, receiver confirms — PASS
+- Added 4 assembly address stubs in switch.S for chanProducerTask, chanConsumerTask, chanRendezvousA, chanRendezvousB
+- Files changed: src/channel.go, src/switch.S, src/main.go
 - **Learnings for future iterations:**
-  - PS/2 keyboard scancodes: read from port 0x60; bit 7 set means key release (break code), clear means key press (make code)
-  - Scancode set 1 mapping: 0x02-0x0B = digits, 0x10-0x19 = qwertyuiop, 0x1E-0x26 = asdfghjkl, 0x2C-0x32 = zxcvbnm, 0x39 = space
-  - Special scancodes: 0x0E = backspace, 0x1C = enter
-  - VGA echo pattern: maintain a fixed-size byte buffer + length counter; redraw full line on every change; use vgaClearLine to erase trailing chars after backspace
-  - VGA line number management is becoming fragile — each new status line shifts all subsequent lines; consider using named constants for line assignments
----
-
-## 2026-04-13 - US-007
-- Implemented virtual memory: page fault handler (vector 14), mapPage/unmapPage with 4 KiB granularity
-- Created src/vm.go: bump page allocator, 4-level page table walk, mapPage(), unmapPage(), handlePageFault(), hextoa()
-- Added assembly stubs to src/stubs.S: heapEndAddr, readCR2, readCR3, invlpg
-- Modified src/isr.S: isr_common now passes error code as second arg (%rsi) to go_interrupt_handler
-- Updated src/interrupt.go: go_interrupt_handler(vector, errorCode) stores errorCode in lastErrorCode global
-- Updated src/main.go: registered page fault handler on vector 14, VM demo maps 0x40000000 writes/reads/unmaps
-- Updated src/keyboard.go: shifted echo buffer from VGA line 10 to line 11
-- VGA shows "VM: map/unmap OK" on line 9; timer ticks shifted to line 10; keyboard echo on line 11
-- Files changed: src/vm.go (new), src/stubs.S, src/isr.S, src/interrupt.go, src/main.go, src/keyboard.go
-- **Learnings for future iterations:**
-  - x86_64 page table walk: PML4[bits 47-39] → PDP[bits 38-30] → PD[bits 29-21] → PT[bits 20-12]; each index = (vaddr >> shift) & 0x1FF
-  - readCR3() &^ 0xFFF gives PML4 base; identity mapping means physical address = virtual address for page tables below 1 GiB
-  - Bump page allocator starting at _heap_end (aligned to 4 KiB) is simple and effective; heapEndAddr() returns linker symbol via `movq $_heap_end, %rax`
-  - mapPage must NOT be used on addresses within the boot 1 GiB identity map — those use 2 MiB huge pages and walkOrCreate would misinterpret PD entries
-  - invlpg flushes TLB for a single page; must be called after clearing a PTE in unmapPage
-  - Passing error code from ISR: add `movq 128(%rsp), %rsi` in isr_common; store in Go global since InterruptHandler type doesn't need to change
-  - VGA line management: new status lines (VM) go at row 9; timer shifted to 10; keyboard echo to 11
----
-
-## 2026-04-13 - US-008
-- Implemented preemptive round-robin scheduler with context switch assembly
-- Created src/scheduler.go: Task struct (SP, State, ID), initScheduler(), createTask(), schedule(), 3 demo tasks (A/B/C)
-- Created src/switch.S: switchContext (save/restore callee-saved regs + RSP), taskReturnHalt safety net, address helpers for Go entry functions
-- Updated src/pit.go: handleTimer now calls schedule() after EOI for preemptive switching
-- Updated src/main.go: init scheduler, create 3 demo tasks, set schedReady, scheduler status on VGA lines 11-12
-- Updated Makefile: added switch.S -> switch.o assembly and linking
-- Demo tasks write incrementing counters to VGA lines 14-16 at different rates (50/75/100 tick intervals)
-- Serial logs every task switch: "Switch: N -> M" showing clean round-robin 0→1→2→3→0→...
-- Kernel runs 15+ seconds without triple-fault; scheduling is stable
-- Files changed: src/scheduler.go (new), src/switch.S (new), src/pit.go, src/main.go, Makefile, prd.json
-- **Learnings for future iterations:**
-  - Context switch only needs to save callee-saved registers (rbx, rbp, r12-r15) since the C ABI guarantees the caller saved the rest
-  - New task initial stack layout: [halt addr][entry addr][rbx=0][rbp=0][r12=0][r13=0][r14=0][r15=0] with SP at bottom
-  - Tasks first scheduled from inside a timer ISR run with IF=0; must call sti() at the start of the entry function
-  - isr_common uses %rbx to save pre-alignment RSP; switchContext preserves this correctly as a callee-saved register
-  - Schedule must send EOI before switchContext — otherwise the PIC stays masked for IRQ0 on the new task
-  - allocPage() from vm.go works well for per-task stack allocation (4 KiB pages)
-  - //export Go functions + assembly leaq helpers is the clean pattern for getting function addresses into Go
-  - VGA line assignments: scheduler status on lines 11-12, demo task output on lines 14-16
----
-
-## 2026-04-13 - US-009
-- Implemented Ring 3 userspace: TSS, GDT with Ring 3 segments, iretq to user mode, int 0x80 syscall
-- Created src/gdt.go: runtime GDT with 7 entries (null, kernel CS/DS, user CS/DS, TSS low/high), TSS with RSP0, lgdt + ltr
-- Created src/userspace.go: user code/stack page allocation with User bit, 6-byte user program (xor eax/int 0x80/jmp $), syscall handler
-- Added assembly stubs to src/stubs.S: lgdtReload (lgdt + reload CS via lretq + DS/ES/FS/GS/SS), ltr, jumpToRing3 (iretq frame)
-- Modified src/vm.go: added pageUser flag, walkOrCreate now propagates User bit to intermediate page table entries
-- Modified src/idt.go: added setGateDPL3() for user-callable interrupt gates (TypeAttr=0xEE)
-- Modified src/main.go: gdtInit() after VM demo, setupUserspace() replaces hlt loop, VGA lines shifted (GDT:11, sched:12-13, user:17)
-- VGA shows "User: Hello from Ring 3!" — user program in Ring 3 invokes syscall via int 0x80, kernel handler prints message
-- Scheduler continues to run: task 0 (user mode) preempted by timer via TSS RSP0, switches to demo tasks and back
-- Kernel runs 15+ seconds without triple-fault or GP fault
-- Files changed: src/gdt.go (new), src/userspace.go (new), src/stubs.S, src/vm.go, src/idt.go, src/main.go, prd.json
-- **Learnings for future iterations:**
-  - GDT rebuilt at runtime in Go: [7]uint64 array, TSS descriptor spans 2 entries (16 bytes for 64-bit system segment)
-  - TSS RSP0 (offset 4) is the kernel stack loaded by CPU on Ring 3 → Ring 0 transitions; must be pre-allocated
-  - Page table User bit must be set at ALL levels (PML4E through PTE); CPU ANDs permissions across levels
-  - IDT gates with DPL=0 cause #GP when int instruction is executed from Ring 3; set DPL=3 (TypeAttr=0xEE) for syscall vectors
-  - lgdt reload: after lgdt, must reload CS via lretq (far return) and DS/ES/FS/GS/SS via mov
-  - iretq frame for Ring 3: push SS(0x23), RSP(user stack), RFLAGS(with IF=1), CS(0x1B), RIP(user entry); RPL=3 in selectors
-  - User code virtual addresses must be outside boot 1 GiB identity map (used 0x40010000, 0x40020000)
-  - Existing ISR infrastructure (isr_common + go_interrupt_handler) works for syscalls without modification — int 0x80 is just another vector
-  - After jumpToRing3, the original boot stack is abandoned; TSS RSP0 becomes task 0's kernel stack for scheduling
-  - VGA line assignments: GDT on 11, scheduler 12-13, demo tasks 14-16, user output 17
----
-
-## 2026-04-13 - US-010
-- Implemented in-memory filesystem: FileSystem struct with flat directory of 16 fixed-size entries
-- Created src/fs.go: fsCreate(), fsWrite(), fsRead(), fsList() — pure Go, no assembly needed
-- Updated src/main.go: FS demo creates "hello.txt", writes "hello world", reads back and verifies, lists files
-- VGA shows "FS: create/write/read OK | Files: hello.txt" on line 10
-- Serial logs each filesystem operation
-- Shifted VGA line assignments: FS on 10, timer on 11, GDT on 12, kbd echo on 12, sched 13-14, tasks 15-17, user 18
-- Files changed: src/fs.go (new), src/main.go, src/keyboard.go, src/scheduler.go, src/userspace.go, prd.json
-- **Learnings for future iterations:**
-  - Pure Go filesystem needs no assembly — TinyGo handles structs, slices, string comparison, and append natively
-  - FileEntry uses fixed-size [4096]byte array rather than slices to avoid per-file heap allocation
-  - String equality (`==`) works in TinyGo for comparing read-back data against expected values
-  - `[]byte("string literal")` conversion works in bare-metal TinyGo for passing data to fsWrite
-  - VGA line shifts cascade across keyboard.go, scheduler.go, and userspace.go — every status line addition requires updating all files with hardcoded VGA line numbers
-  - New VGA line assignments: FS on 10, timer 11, GDT 12, kbd echo 12, scheduler 13-14, demo tasks 15-17, user 18
----
-
-## 2026-04-13 - US-011
-- Implemented SMP multi-core boot: ACPI MADT AP detection, real-mode trampoline, INIT-SIPI-SIPI, multi-core boot
-- Created src/trampoline.S: 16-bit real-mode AP entry → 32-bit protected mode → 64-bit long mode, with data area at offset 0xF00 for GDT, PML4, entry point, stack array, and atomic counter
-- Created src/smp.go: LAPIC MMIO mapping and access, ACPI RSDP/RSDT/MADT parsing for AP count, trampoline copy and patching, INIT-SIPI-SIPI IPI sequence, adaptive AP wait with timeout, AP entry function with allocation-free serial output
-- Updated Makefile: added trampoline.S build rule and run-smp target with -smp 4
-- Updated src/main.go: added smpInit() call between timer spin-wait and gdtInit()
-- VGA shows "SMP: 4 cores online" on line 19 with -smp 4
-- Serial logs BSP APIC ID, MADT AP count, and each AP coming online
-- Tested with -smp 1/2/4: correct core counts (1/2/4), no triple-fault, kernel runs 15+ seconds
-- MADT detection works for -smp 2+ (SeaBIOS provides ACPI tables); for -smp 1, falls back to broadcast with timeout
-- Files changed: src/trampoline.S (new), src/smp.go (new), Makefile, src/main.go, prd.json
-- **Learnings for future iterations:**
-  - AP trampoline in .rodata with hardcoded 0x8000-based addresses works: .org pads to fixed offsets, ljmpl with constant expressions for absolute jump targets
-  - .code16/.code32/.code64 directives in .rodata section work fine in GNU as; they only affect instruction encoding, not section type
-  - LAPIC at 0xFEE00000 is outside boot 1 GiB identity map; mapPage creates PDP[3]→PD→PT chain for the mapping
-  - LAPIC SVR enable (bit 8) is required before sending IPIs; must also configure LVT LINT0=ExtINT to preserve PIC interrupt delivery
-  - ACPI RSDP search: scan 0xE0000-0xFFFFF for "RSD PTR " at 16-byte boundaries; RSDT address at RSDP+16; MADT has signature "APIC"
-  - MADT entry type 0 = Processor Local APIC: APIC ID at offset 3, flags at offset 4 (bit 0 = enabled); skip entries where APIC ID = BSP ID
-  - AP concurrent serial output interleaves characters; use serialPutChar (no allocation) to avoid heap corruption from concurrent GC
-  - lock xaddl returns old value in eax; 32-bit operations in 64-bit mode auto zero-extend to rax
-  - lgdt in 16-bit mode with .byte 0x66 prefix reads 6-byte descriptor (4-byte base); address 0x8F20 fits in 16-bit displacement
-  - pagePCD|pagePWT on leaf PTE makes MMIO uncacheable; walkOrCreate only sets Present|Write on intermediate entries
-  - SMP status on VGA line 19 avoids shifting existing line assignments (lines 0-18 unchanged)
+  - For unbuffered channels, spawn the receiver task before the sender so receiver blocks first — ensures clean rendezvous
+  - chanSend/chanRecv use `for` loops around waitQueueSleep to handle spurious wakeups (re-check condition after waking)
+  - chanTrySend and waitQueueWakeOne are interrupt-safe (no blocking, no allocation) — safe for IRQ handlers
+  - With 8 tasks (0=userspace, 1-3=demo, 4-7=channel test), scheduler round-robin continues to work correctly
+  - Task entry functions need //export annotation + matching assembly leaq stub in switch.S
 ---
