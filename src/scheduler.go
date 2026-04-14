@@ -24,9 +24,10 @@ const (
 
 // Task holds the state for a schedulable unit of execution.
 type Task struct {
-	SP    uintptr // saved stack pointer (set by switchContext)
-	State uint8   // taskRunning, taskReady, or taskBlocked
-	ID    uint32  // task identifier
+	SP         uintptr // saved stack pointer (set by switchContext)
+	State      uint8   // taskRunning, taskReady, or taskBlocked
+	ID         uint32  // task identifier
+	WakeupTick uint64  // PIT tick at which a sleeping task should be woken
 }
 
 var (
@@ -162,7 +163,7 @@ func demoTaskBAddr() uintptr
 //go:linkname demoTaskCAddr demoTaskCAddr
 func demoTaskCAddr() uintptr
 
-// demoTaskA writes an incrementing counter to VGA line 14.
+// demoTaskA writes an incrementing counter to VGA line 15.
 //
 //export demoTaskA
 func demoTaskA() {
@@ -171,15 +172,11 @@ func demoTaskA() {
 	for {
 		counter++
 		vgaWriteLine(15, "Task A: count="+utoa(counter))
-		// Spin-wait ~500ms using PIT ticks.
-		target := pitTicks + 50
-		for pitTicks < target {
-			hlt()
-		}
+		taskSleep(50) // ~500ms at 100 Hz
 	}
 }
 
-// demoTaskB writes an incrementing counter to VGA line 15.
+// demoTaskB writes an incrementing counter to VGA line 16.
 //
 //export demoTaskB
 func demoTaskB() {
@@ -188,10 +185,7 @@ func demoTaskB() {
 	for {
 		counter++
 		vgaWriteLine(16, "Task B: count="+utoa(counter))
-		target := pitTicks + 75
-		for pitTicks < target {
-			hlt()
-		}
+		taskSleep(75) // ~750ms at 100 Hz
 	}
 }
 
@@ -201,6 +195,65 @@ func demoTaskB() {
 func yield() {
 	tasks[currentTask].State = taskReady
 	schedule()
+}
+
+// ---------- Sleep Queue ----------
+
+// Maximum number of tasks that can be in the sleep queue simultaneously.
+const sleepQueueMax = 16
+
+// sleepQueue holds task IDs sorted by ascending WakeupTick.
+var (
+	sleepQueue      [sleepQueueMax]uint32
+	sleepQueueCount int
+)
+
+// taskSleep blocks the current task for the given number of PIT ticks.
+// Sets WakeupTick, inserts into the sorted sleep queue, and calls schedule().
+func taskSleep(ticks uint64) {
+	tid := currentTask
+	tasks[tid].WakeupTick = pitTicks + ticks
+	tasks[tid].State = taskBlocked
+
+	// Insert into sleep queue in sorted order (ascending by WakeupTick).
+	wt := tasks[tid].WakeupTick
+	pos := sleepQueueCount
+	for i := 0; i < sleepQueueCount; i++ {
+		if tasks[sleepQueue[i]].WakeupTick > wt {
+			pos = i
+			break
+		}
+	}
+	// Shift elements right to make room.
+	for i := sleepQueueCount; i > pos; i-- {
+		sleepQueue[i] = sleepQueue[i-1]
+	}
+	sleepQueue[pos] = tid
+	sleepQueueCount++
+
+	schedule()
+}
+
+// sleepQueueWakeExpired wakes all tasks whose WakeupTick <= now.
+// Called from the timer IRQ handler. Safe from interrupt context.
+func sleepQueueWakeExpired(now uint64) {
+	woken := 0
+	for woken < sleepQueueCount {
+		tid := sleepQueue[woken]
+		if tasks[tid].WakeupTick > now {
+			break
+		}
+		tasks[tid].State = taskReady
+		woken++
+	}
+	if woken > 0 {
+		// Shift remaining entries forward.
+		remaining := sleepQueueCount - woken
+		for i := 0; i < remaining; i++ {
+			sleepQueue[i] = sleepQueue[i+woken]
+		}
+		sleepQueueCount = remaining
+	}
 }
 
 // ---------- WaitQueue ----------
@@ -251,8 +304,7 @@ func waitQueueWakeAll(wq *WaitQueue) {
 	wq.count = 0
 }
 
-// demoTaskC writes an incrementing counter to VGA line 16.
-// Uses yield() instead of spin-waiting to voluntarily relinquish the CPU.
+// demoTaskC writes an incrementing counter to VGA line 17.
 //
 //export demoTaskC
 func demoTaskC() {
@@ -261,9 +313,6 @@ func demoTaskC() {
 	for {
 		counter++
 		vgaWriteLine(17, "Task C: count="+utoa(counter))
-		target := pitTicks + 100
-		for pitTicks < target {
-			yield()
-		}
+		taskSleep(100) // ~1000ms at 100 Hz
 	}
 }

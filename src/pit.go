@@ -37,6 +37,7 @@ func pitInit() {
 // preemptive task switching.
 func handleTimer(vector uint64) {
 	pitTicks++
+	sleepQueueWakeExpired(pitTicks)
 	picSendEOI(0)
 	schedule()
 }
