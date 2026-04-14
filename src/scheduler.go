@@ -26,11 +26,12 @@ const (
 
 // Task holds the state for a schedulable unit of execution.
 type Task struct {
-	SP         uintptr // saved stack pointer (set by switchContext)
-	State      uint8   // taskRunning, taskReady, taskBlocked, taskExited, or taskFree
-	ID         uint32  // task identifier
-	StackBase  uintptr // base address of allocated stack page (for reclamation)
-	WakeupTick uint64  // PIT tick at which a sleeping task should be woken
+	SP             uintptr // saved stack pointer (set by switchContext)
+	State          uint8   // taskRunning, taskReady, taskBlocked, taskExited, or taskFree
+	ID             uint32  // task identifier
+	StackBase      uintptr // base address of allocated task stack page (for reclamation)
+	KernelStackTop uintptr // top of per-task kernel stack for Ring 3→Ring 0 (TSS RSP0)
+	WakeupTick     uint64  // PIT tick at which a sleeping task should be woken
 }
 
 var (
@@ -54,10 +55,19 @@ func switchContext(oldSP *uintptr, newSP uintptr)
 func taskReturnHaltAddr() uintptr
 
 // initScheduler sets up task 0 as the currently running (main/boot) task.
+// Allocates a per-task kernel stack for task 0 (the shell).
 func initScheduler() {
-	tasks[0] = Task{State: taskRunning, ID: 0}
+	// Allocate kernel stack for task 0 (2 pages = 8 KiB).
+	kernelStackBase := allocPage()
+	allocPage() // second contiguous page
+	kernelStackTop := kernelStackBase + 2*pageSize
+
+	tasks[0] = Task{State: taskRunning, ID: 0, KernelStackTop: kernelStackTop}
 	taskCount = 1
 	currentTask = 0
+
+	// Set TSS RSP0 to task 0's kernel stack.
+	tssSetRSP0(kernelStackTop)
 }
 
 // createTask allocates a stack and initializes a new task that will
@@ -97,9 +107,17 @@ func createTask(entryAddr uintptr) uint32 {
 		taskCount++
 	}
 
-	// Allocate a 4 KiB page for the task's stack.
+	// Allocate a 4 KiB page for the task's context-switch stack.
 	stackBase := allocPage()
 	stackTop := stackBase + taskStackSize
+
+	// Allocate a per-task kernel stack (8 KiB = 2 pages) for Ring 3→Ring 0
+	// transitions via TSS RSP0. Each task gets its own kernel stack so
+	// ISR frames from different tasks do not overwrite each other.
+	const kernelStackPages = 2
+	kernelStackBase := allocPage()
+	allocPage() // second contiguous page (bump allocator)
+	kernelStackTop := kernelStackBase + kernelStackPages*pageSize
 
 	sp := stackTop
 
@@ -125,7 +143,7 @@ func createTask(entryAddr uintptr) uint32 {
 	sp -= 8
 	*(*uintptr)(unsafe.Pointer(sp)) = 0 // r15
 
-	tasks[id] = Task{SP: sp, State: taskReady, ID: id, StackBase: stackBase}
+	tasks[id] = Task{SP: sp, State: taskReady, ID: id, StackBase: stackBase, KernelStackTop: kernelStackTop}
 	return id
 }
 
@@ -185,6 +203,12 @@ func schedule() {
 	// serialPrint(utoa(uint64(old)))
 	// serialPrint(" -> ")
 	// serialPrintln(utoa(uint64(next)))
+
+	// Update TSS RSP0 to the next task's kernel stack so Ring 3 → Ring 0
+	// transitions use the correct per-task kernel stack.
+	if tasks[next].KernelStackTop != 0 {
+		tssSetRSP0(tasks[next].KernelStackTop)
+	}
 
 	// Perform the context switch.
 	switchContext(&tasks[old].SP, tasks[next].SP)

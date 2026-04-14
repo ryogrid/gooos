@@ -110,6 +110,13 @@ inb:
     movzbl  %al, %eax
     ret
 
+    /* ---- cli: disable maskable interrupts ------------------------------- */
+    /* No args, no return value. Simply executes the x86 CLI instruction.  */
+    .global cli
+cli:
+    cli
+    ret
+
     /* ---- sti: enable maskable interrupts ------------------------------- */
     /* No args, no return value. Simply executes the x86 STI instruction.  */
     .global sti
@@ -206,6 +213,11 @@ tinygo_scanCurrentStack:
     movq    %rsp, %rdi              /* pass RSP as first arg */
     callq   tinygo_scanstack        /* Go function in gc_stack_raw.go */
     addq    $56, %rsp               /* clean up: 6 regs (48) + align (8) */
+    retq
+
+    /* Dummy tinygo_scanstack for gc=leaking (never called, satisfies linker). */
+    .weak   tinygo_scanstack
+tinygo_scanstack:
     retq
 
     /* ---- lgdtReload: load new GDT and reload segment registers --------- */

@@ -11,6 +11,11 @@ import (
 	"unsafe"
 )
 
+// cli disables maskable interrupts. Implemented in stubs.S.
+//
+//go:linkname cli cli
+func cli()
+
 // sti enables maskable interrupts. Implemented in stubs.S.
 //
 //go:linkname sti sti

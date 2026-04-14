@@ -73,23 +73,11 @@ func gdtInit() {
 	// Bits: 41=Writable, 44=S, 45-46=DPL(3), 47=Present.
 	gdtTable[gdtUserData] = (1 << 41) | (1 << 44) | (1 << 45) | (1 << 46) | (1 << 47)
 
-	// Zero the TSS, then fill in RSP0 and IOPB offset.
+	// Zero the TSS, then fill in IOPB offset.
+	// RSP0 is set per-task by tssSetRSP0() during context switches.
 	for i := 0; i < tssSize; i++ {
 		tss[i] = 0
 	}
-
-	// Allocate kernel stack for Ring 3 -> Ring 0 transitions.
-	// 16 KiB (4 pages) to handle deep call chains in syscall handlers
-	// (e.g., sys_read → chanRecv → waitQueueSleep → schedule → switchContext).
-	const kernelStackPages = 4
-	kernelStack := allocPage()
-	for i := 1; i < kernelStackPages; i++ {
-		allocPage() // allocate contiguous pages (bump allocator guarantees this)
-	}
-	kernelStackTop := kernelStack + kernelStackPages*pageSize
-
-	// RSP0 (offset 4): stack pointer loaded by CPU on Ring 3 -> Ring 0.
-	*(*uint64)(unsafe.Pointer(&tss[4])) = uint64(kernelStackTop)
 
 	// IOPB offset (offset 102): set to tssSize (no I/O permission bitmap).
 	*(*uint16)(unsafe.Pointer(&tss[102])) = tssSize
@@ -130,4 +118,11 @@ func gdtInit() {
 
 	// Load the Task State Segment into the Task Register.
 	ltr(selectorTSS)
+}
+
+// tssSetRSP0 updates the TSS RSP0 field (offset 4) to point to the
+// given kernel stack top. Called during context switches so each task
+// has its own kernel stack for Ring 3 → Ring 0 transitions.
+func tssSetRSP0(rsp0 uintptr) {
+	*(*uint64)(unsafe.Pointer(&tss[4])) = uint64(rsp0)
 }
