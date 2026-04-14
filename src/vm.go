@@ -173,6 +173,37 @@ func walkExisting(table uintptr, index uintptr) uintptr {
 	return uintptr(*entry) &^ 0xFFF
 }
 
+// walkAndGetPaddr returns the physical page frame address for a virtual
+// address by walking the 4-level page table. Returns 0 if the address
+// is not mapped at 4 KiB granularity.
+func walkAndGetPaddr(vaddr uintptr) uintptr {
+	pml4 := readCR3() &^ 0xFFF
+
+	pml4Idx := (vaddr >> 39) & 0x1FF
+	pdpIdx := (vaddr >> 30) & 0x1FF
+	pdIdx := (vaddr >> 21) & 0x1FF
+	ptIdx := (vaddr >> 12) & 0x1FF
+
+	pdp := walkExisting(pml4, pml4Idx)
+	if pdp == 0 {
+		return 0
+	}
+	pd := walkExisting(pdp, pdpIdx)
+	if pd == 0 {
+		return 0
+	}
+	pt := walkExisting(pd, pdIdx)
+	if pt == 0 {
+		return 0
+	}
+
+	entry := (*uint64)(unsafe.Pointer(pt + ptIdx*8))
+	if *entry&uint64(pagePresent) == 0 {
+		return 0
+	}
+	return uintptr(*entry) &^ 0xFFF
+}
+
 // handlePageFault displays the faulting address and error code on VGA
 // and serial, then halts. Page faults are fatal in this kernel.
 func handlePageFault(vector uint64) {

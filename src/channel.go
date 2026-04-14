@@ -63,11 +63,26 @@ func chanLookup(id uint64) *Channel {
 // chanCreate allocates a channel from the static pool with the given capacity.
 // capacity=0 means unbuffered (rendezvous). Returns nil if pool is exhausted.
 func chanCreate(capacity int) *Channel {
-	if chanPoolCount >= chanPoolSize {
-		return nil
-	}
 	if capacity > chanMaxSlots {
 		capacity = chanMaxSlots
+	}
+	// Try to reuse a freed slot first.
+	for i := 0; i < chanPoolCount; i++ {
+		if !chanPool[i].used {
+			ch := &chanPool[i]
+			ch.readIdx = 0
+			ch.writeIdx = 0
+			ch.count = 0
+			ch.capacity = capacity
+			ch.senderWQ.count = 0
+			ch.receiverWQ.count = 0
+			ch.used = true
+			return ch
+		}
+	}
+	// Fall back to the next fresh slot.
+	if chanPoolCount >= chanPoolSize {
+		return nil
 	}
 	idx := chanPoolCount
 	chanPoolCount++
@@ -80,6 +95,18 @@ func chanCreate(capacity int) *Channel {
 	ch.receiverWQ.count = 0
 	ch.used = true
 	return ch
+}
+
+// chanFree marks a channel's pool slot as unused so it can be reused
+// by a subsequent chanCreate call.
+func chanFree(ch *Channel) {
+	ch.used = false
+	ch.count = 0
+	ch.readIdx = 0
+	ch.writeIdx = 0
+	ch.capacity = 0
+	ch.senderWQ.count = 0
+	ch.receiverWQ.count = 0
 }
 
 // chanSend sends val on ch, blocking until space is available.

@@ -10,8 +10,8 @@ import "unsafe"
 
 // Maximum number of files and maximum data size per file.
 const (
-	maxFiles    = 16
-	maxFileData = 4096
+	maxFiles    = 32
+	maxFileData = 65536
 )
 
 // FileEntry represents a single file in the filesystem.
@@ -95,6 +95,20 @@ func fsList() []string {
 	return names
 }
 
+// fsDelete removes a file by name.
+// Returns true if the file was found and deleted, false otherwise.
+func fsDelete(name string) bool {
+	for i := 0; i < maxFiles; i++ {
+		if fs.files[i].used && fs.files[i].name == name {
+			fs.files[i].used = false
+			fs.files[i].name = ""
+			fs.files[i].size = 0
+			return true
+		}
+	}
+	return false
+}
+
 // ---------- Filesystem task (microkernel service) ----------
 
 // FS operation codes.
@@ -103,6 +117,7 @@ const (
 	fsOpWrite  = 1
 	fsOpRead   = 2
 	fsOpList   = 3
+	fsOpDelete = 4
 )
 
 // FSRequest is sent to the filesystem task via fsRequestChannel.
@@ -170,6 +185,10 @@ func fsTaskEntry() {
 			resp.names = fsList()
 			resp.ok = true
 			resp.data = nil
+		case fsOpDelete:
+			resp.ok = fsDelete(req.name)
+			resp.data = nil
+			resp.names = nil
 		default:
 			resp.ok = false
 			resp.data = nil
@@ -188,6 +207,7 @@ func fsSendCreate(name string) bool {
 	fsReqPool[ri] = FSRequest{op: fsOpCreate, name: name, replyCh: replyCh}
 	chanSend(fsRequestChannel, uintptr(unsafe.Pointer(&fsReqPool[ri])))
 	val := chanRecv(replyCh)
+	chanFree(replyCh)
 	resp := (*FSResponse)(unsafe.Pointer(val))
 	return resp.ok
 }
@@ -200,6 +220,7 @@ func fsSendWrite(name string, data []byte) bool {
 	fsReqPool[ri] = FSRequest{op: fsOpWrite, name: name, data: data, replyCh: replyCh}
 	chanSend(fsRequestChannel, uintptr(unsafe.Pointer(&fsReqPool[ri])))
 	val := chanRecv(replyCh)
+	chanFree(replyCh)
 	resp := (*FSResponse)(unsafe.Pointer(val))
 	return resp.ok
 }
@@ -212,6 +233,7 @@ func fsSendRead(name string) []byte {
 	fsReqPool[ri] = FSRequest{op: fsOpRead, name: name, replyCh: replyCh}
 	chanSend(fsRequestChannel, uintptr(unsafe.Pointer(&fsReqPool[ri])))
 	val := chanRecv(replyCh)
+	chanFree(replyCh)
 	resp := (*FSResponse)(unsafe.Pointer(val))
 	return resp.data
 }
@@ -224,8 +246,22 @@ func fsSendList() []string {
 	fsReqPool[ri] = FSRequest{op: fsOpList, replyCh: replyCh}
 	chanSend(fsRequestChannel, uintptr(unsafe.Pointer(&fsReqPool[ri])))
 	val := chanRecv(replyCh)
+	chanFree(replyCh)
 	resp := (*FSResponse)(unsafe.Pointer(val))
 	return resp.names
+}
+
+// fsSendDelete sends a delete request to the FS task and blocks for the response.
+func fsSendDelete(name string) bool {
+	replyCh := chanCreate(1)
+	ri := fsReqPoolNext
+	fsReqPoolNext = (fsReqPoolNext + 1) % fsPoolSize
+	fsReqPool[ri] = FSRequest{op: fsOpDelete, name: name, replyCh: replyCh}
+	chanSend(fsRequestChannel, uintptr(unsafe.Pointer(&fsReqPool[ri])))
+	val := chanRecv(replyCh)
+	chanFree(replyCh)
+	resp := (*FSResponse)(unsafe.Pointer(val))
+	return resp.ok
 }
 
 // fsDemoTaskAddr returns the address of fsDemoTask. Implemented in switch.S.

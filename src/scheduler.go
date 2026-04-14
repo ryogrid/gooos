@@ -15,19 +15,21 @@ const (
 	taskReady   = 1
 	taskBlocked = 2
 	taskExited  = 3
+	taskFree    = 4
 )
 
 // Maximum number of tasks and per-task stack size.
 const (
-	maxTasks      = 16
+	maxTasks      = 32
 	taskStackSize = 4096 // 4 KiB per task stack
 )
 
 // Task holds the state for a schedulable unit of execution.
 type Task struct {
 	SP         uintptr // saved stack pointer (set by switchContext)
-	State      uint8   // taskRunning, taskReady, or taskBlocked
+	State      uint8   // taskRunning, taskReady, taskBlocked, taskExited, or taskFree
 	ID         uint32  // task identifier
+	StackBase  uintptr // base address of allocated stack page (for reclamation)
 	WakeupTick uint64  // PIT tick at which a sleeping task should be woken
 }
 
@@ -73,8 +75,20 @@ func initScheduler() {
 //	stackTop - 64: 0               (r15)
 //	<-- SP saved here
 func createTask(entryAddr uintptr) uint32 {
-	id := taskCount
-	taskCount++
+	// Try to reuse a free slot first.
+	var id uint32
+	reuse := false
+	for i := uint32(1); i < taskCount; i++ {
+		if tasks[i].State == taskFree {
+			id = i
+			reuse = true
+			break
+		}
+	}
+	if !reuse {
+		id = taskCount
+		taskCount++
+	}
 
 	// Allocate a 4 KiB page for the task's stack.
 	stackBase := allocPage()
@@ -104,8 +118,21 @@ func createTask(entryAddr uintptr) uint32 {
 	sp -= 8
 	*(*uintptr)(unsafe.Pointer(sp)) = 0 // r15
 
-	tasks[id] = Task{SP: sp, State: taskReady, ID: id}
+	tasks[id] = Task{SP: sp, State: taskReady, ID: id, StackBase: stackBase}
 	return id
+}
+
+// taskReclaim frees the resources of an exited task and marks its slot
+// as available for reuse. taskCount is a high-water mark and is never
+// decremented.
+func taskReclaim(id uint32) {
+	if tasks[id].State != taskExited {
+		return
+	}
+	if tasks[id].StackBase != 0 {
+		freePage(tasks[id].StackBase)
+	}
+	tasks[id] = Task{State: taskFree}
 }
 
 // schedule performs a round-robin context switch to the next ready task.

@@ -6,10 +6,10 @@
 - [x] Determine minimum set of undefined symbols that need stubs → **`abort`, `mmap`, `raise`, `tinygo_register_fatal_signals`, `write`** (5 stubs only)
 
 ## Phase 1: Kernel Infrastructure
-- [ ] Expand filesystem: `maxFiles=32`, `maxFileData=65536`, add `fsDelete`
-- [ ] Task recycling: `maxTasks=32`, `taskFree` state, `StackBase` field, `taskReclaim()`, slot reuse in `createTask()`
-- [ ] Add `chanFree()` to channel.go for channel pool reclamation
-- [ ] Add `walkAndGetPaddr()` to vm.go for page cleanup
+- [x] Expand filesystem: `maxFiles=32`, `maxFileData=65536`, add `fsDelete`
+- [x] Task recycling: `maxTasks=32`, `taskFree` state, `StackBase` field, `taskReclaim()`, slot reuse in `createTask()`
+- [x] Add `chanFree()` to channel.go for channel pool reclamation
+- [x] Add `walkAndGetPaddr()` to vm.go for page cleanup
 - [ ] Create `src/vga.go` — VGA console with cursor, scrolling, `vgaConsolePutChar/Print/Clear`
 - [ ] Create `src/process.go` — Process struct, SavedMapping, elfExec, elfExecTrampoline, processExit
 - [ ] Add `elfExecTrampolineAddr` assembly stub to switch.S
