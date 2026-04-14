@@ -61,8 +61,12 @@
 - waitQueueAppend/waitQueueRemove are non-blocking WQ helpers for select; append adds without changing task state, remove deregisters by task ID
 - chanRecvReady/chanSendReady check readiness without side effects; chanRecvDirect/chanSendDirect execute without blocking (assume ready)
 - Microkernel service pattern: IRQ handler uses chanTrySend (non-blocking) to publish events to a channel; dedicated consumer task calls chanRecv in a loop to process them
+- For request-response over channels: use static pools for Request/Response structs, pass unsafe.Pointer as uintptr, reply on per-request channel (capacity 1)
+- fsSend* helpers each create a reply channel, send request pointer, and block on reply — clean RPC-over-channel pattern
 - Pack small structs into uintptr for channel transport: e.g., KeyEvent = scancode | (ascii << 8)
 - keyboardChannel capacity=16; IRQ1 handler drops events if full (chanTrySend returns false)
+- serialSend uses a static [16]string pool + uintptr(unsafe.Pointer(&slot)) to pass string pointers through channels safely
+- Direct serialPrint/serialPrintln remain for interrupt context and early boot; serialSend is for task context only
 ---
 
 ## 2026-04-14 - US-001
@@ -177,4 +181,39 @@
   - keyboardInit() must be called before registerHandler(33, handleKeyboard) to avoid nil channel dereference in IRQ
   - With 12 tasks (0=userspace, 1-3=demo, 4-7=channel, 8-10=select, 11=keyboard), maxTasks=16 has 4 slots remaining
   - Consumer task follows same pattern as other tasks: sti(), log start, infinite loop with blocking recv
+---
+
+## 2026-04-14 - US-009
+- Implemented serial output task as a microkernel service
+- Created serialChannel (capacity 16) in src/serial.go
+- Created serialTaskEntry: chanRecv loop receives uintptr (string pointer), writes bytes to COM1 via serialPutChar
+- Implemented serialSend(msg string): stores msg in static pool slot, sends pointer via chanSend (blocking, task-context only)
+- Direct serialPrint/serialPrintln preserved for interrupt context and early boot (before serialChannel exists)
+- Added assembly address stub serialTaskEntryAddr in switch.S
+- Spawned serialTaskEntry as Task 12 in main.go
+- Files changed: src/serial.go, src/switch.S, src/main.go
+- **Learnings for future iterations:**
+  - Static string pool avoids heap allocation and GC issues: [16]string array with ring index, pointer to slot passed via channel
+  - Pool size must match channel capacity (16) so chanSend blocks before ring wraps around consumed slots
+  - serialSend is NOT safe from interrupt context (uses chanSend which can block) — use serialPrint/serialPrintln directly for IRQ handlers
+  - With 13 tasks (0=userspace, 1-3=demo, 4-7=channel, 8-10=select, 11=keyboard, 12=serial), maxTasks=16 has 3 slots remaining
+  - Same microkernel pattern as keyboard: dedicated task with sti() + infinite chanRecv loop
+---
+
+## 2026-04-14 - US-010
+- Implemented filesystem task as a microkernel service with request-response IPC
+- Defined FSRequest struct (op, name, data, replyCh) and FSResponse struct (ok, data, names)
+- Created fsRequestChannel (capacity 8) and fsTaskEntry: chanRecv loop dispatches to fsCreate/fsWrite/fsRead/fsList, sends FSResponse on replyCh
+- Implemented helper functions: fsSendCreate, fsSendWrite, fsSendRead, fsSendList — each creates reply channel, sends request, blocks on reply
+- Created fsDemoTask that exercises all 4 helpers and verifies round-trip create/write/read/list
+- Added assembly address stubs fsTaskEntryAddr and fsDemoTaskAddr in switch.S
+- Spawned fsTaskEntry (Task 13) and fsDemoTask (Task 14) in main.go
+- Kept direct FS demo in early boot for pre-scheduler verification; channel-based demo runs as a task
+- Files changed: src/fs.go, src/switch.S, src/main.go
+- **Learnings for future iterations:**
+  - Request-response pattern: static pools for FSRequest/FSResponse (size matches channel capacity), unsafe.Pointer as uintptr through channels
+  - Reply channels use capacity 1 so the FS task can send response without blocking even if requester hasn't called chanRecv yet
+  - Each fsSend* helper consumes one channel from the pool (chanCreate) — with 32-slot pool, 8 helpers can be in-flight simultaneously
+  - With 15 tasks (0=userspace, 1-3=demo, 4-7=channel, 8-10=select, 11=keyboard, 12=serial, 13=fs, 14=fs-demo), maxTasks=16 has 1 slot remaining
+  - Direct fsCreate/fsWrite/fsRead/fsList still callable from task context but are internal to the FS task service
 ---

@@ -209,23 +209,15 @@ func main() {
 		serialPrintln("FreeList: FAIL — expected same address")
 	}
 
-	// In-memory filesystem demo: create, write, read, list.
-	serialPrintln("FS: starting demo")
+	// In-memory filesystem demo (direct calls, before scheduler starts).
+	// The channel-based FS demo runs after the FS task is spawned below.
+	serialPrintln("FS: starting direct demo")
 	fsCreate("hello.txt")
-	serialPrintln("FS: created hello.txt")
 	fsWrite("hello.txt", []byte("hello world"))
-	serialPrintln("FS: wrote 'hello world' to hello.txt")
 	readBack := fsRead("hello.txt")
-	serialPrintln("FS: read back from hello.txt")
-
 	if string(readBack) == "hello world" {
-		fileNames := fsList()
-		listing := "FS: create/write/read OK | Files:"
-		for _, name := range fileNames {
-			listing += " " + name
-		}
-		vgaWriteLine(10, listing)
-		serialPrintln(listing)
+		vgaWriteLine(10, "FS: direct create/write/read OK")
+		serialPrintln("FS: direct create/write/read OK")
 	} else {
 		vgaWriteLine(10, "FS: FAIL - read mismatch")
 		serialPrintln("FS: FAIL - read mismatch")
@@ -278,8 +270,13 @@ func main() {
 	serialChannel = chanCreate(16)
 	createTask(serialTaskEntryAddr()) // Task 12 — serial output
 
-	vgaWriteLine(13, "Scheduler: 12 tasks created")
-	serialPrintln("Scheduler: 12 tasks created (3 demo + 4 channel + 3 select + 1 keyboard + 1 serial)")
+	// Filesystem task: handles FS requests via channel.
+	fsRequestChannel = chanCreate(8)
+	createTask(fsTaskEntryAddr()) // Task 13 — filesystem
+	createTask(fsDemoTaskAddr())  // Task 14 — FS channel demo
+
+	vgaWriteLine(13, "Scheduler: 15 tasks created")
+	serialPrintln("Scheduler: 15 tasks created (3 demo + 4 channel + 3 select + 1 keyboard + 1 serial + 1 fs + 1 fs-demo)")
 
 	// Enable preemptive scheduling — the next timer tick will start switching.
 	schedReady = true

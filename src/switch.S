@@ -123,5 +123,17 @@ serialTaskEntryAddr:
     leaq    serialTaskEntry(%rip), %rax
     ret
 
+    /* ---- FS task address helpers ------------------------------------------- */
+
+    .global fsTaskEntryAddr
+fsTaskEntryAddr:
+    leaq    fsTaskEntry(%rip), %rax
+    ret
+
+    .global fsDemoTaskAddr
+fsDemoTaskAddr:
+    leaq    fsDemoTask(%rip), %rax
+    ret
+
     /* Mark the stack as non-executable. */
     .section .note.GNU-stack,"",@progbits

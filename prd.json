@@ -154,7 +154,7 @@
         "make build succeeds"
       ],
       "priority": 9,
-      "passes": false,
+      "passes": true,
       "notes": "Depends on US-006. Keep direct serial functions for interrupt/boot context."
     },
     {
@@ -173,7 +173,7 @@
         "make build succeeds"
       ],
       "priority": 10,
-      "passes": false,
+      "passes": true,
       "notes": "Depends on US-006. Existing fs functions become internal to the FS task."
     },
     {
