@@ -131,7 +131,10 @@ func schedule() {
 	}
 
 	// Update task states.
-	tasks[old].State = taskReady
+	// Only move old task to ready if it was running (not if it blocked itself).
+	if tasks[old].State == taskRunning {
+		tasks[old].State = taskReady
+	}
 	tasks[next].State = taskRunning
 	currentTask = next
 
@@ -190,6 +193,54 @@ func demoTaskB() {
 			hlt()
 		}
 	}
+}
+
+// ---------- WaitQueue ----------
+
+// Maximum number of tasks that can be waiting in a single WaitQueue.
+const wqMax = 16
+
+// WaitQueue holds a FIFO list of task IDs waiting on a condition.
+type WaitQueue struct {
+	ids   [wqMax]uint32
+	count int
+}
+
+// waitQueueSleep blocks the current task on wq and calls schedule().
+// Must be called from task context (not interrupt context).
+func waitQueueSleep(wq *WaitQueue) {
+	if wq.count >= wqMax {
+		return // queue full — drop (should not happen with 16 tasks max)
+	}
+	tid := currentTask
+	wq.ids[wq.count] = tid
+	wq.count++
+	tasks[tid].State = taskBlocked
+	schedule()
+}
+
+// waitQueueWakeOne dequeues the first waiting task and sets it to taskReady.
+// Safe to call from interrupt context (no blocking, no allocation).
+func waitQueueWakeOne(wq *WaitQueue) {
+	if wq.count == 0 {
+		return
+	}
+	tid := wq.ids[0]
+	// Shift remaining entries forward.
+	wq.count--
+	for i := 0; i < wq.count; i++ {
+		wq.ids[i] = wq.ids[i+1]
+	}
+	tasks[tid].State = taskReady
+}
+
+// waitQueueWakeAll sets all queued tasks to taskReady and resets the queue.
+// Safe to call from interrupt context (no blocking, no allocation).
+func waitQueueWakeAll(wq *WaitQueue) {
+	for i := 0; i < wq.count; i++ {
+		tasks[wq.ids[i]].State = taskReady
+	}
+	wq.count = 0
 }
 
 // demoTaskC writes an incrementing counter to VGA line 16.
