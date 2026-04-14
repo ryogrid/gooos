@@ -110,6 +110,23 @@ inb:
     movzbl  %al, %eax
     ret
 
+    /* ---- readFlags: return RFLAGS register ------------------------------ */
+    /* readFlags() uintptr                                                  */
+    .global readFlags
+readFlags:
+    pushfq
+    popq    %rax
+    ret
+
+    /* ---- restoreFlags: restore RFLAGS register ------------------------- */
+    /* restoreFlags(flags uintptr)                                          */
+    /* SysV ABI: rdi = flags value to restore.                              */
+    .global restoreFlags
+restoreFlags:
+    pushq   %rdi
+    popfq
+    ret
+
     /* ---- cli: disable maskable interrupts ------------------------------- */
     /* No args, no return value. Simply executes the x86 CLI instruction.  */
     .global cli

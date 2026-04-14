@@ -45,6 +45,16 @@ func readCR2() uintptr
 //go:linkname readCR3 readCR3
 func readCR3() uintptr
 
+// readFlags returns the current RFLAGS register. Implemented in stubs.S.
+//
+//go:linkname readFlags readFlags
+func readFlags() uintptr
+
+// restoreFlags loads the given value into RFLAGS. Implemented in stubs.S.
+//
+//go:linkname restoreFlags restoreFlags
+func restoreFlags(flags uintptr)
+
 // invlpg invalidates the TLB entry for a virtual address.
 // Implemented in stubs.S.
 //
@@ -69,7 +79,6 @@ func vmInit() {
 // allocPage returns the physical address of a zeroed 4 KiB page.
 // It pops from the free list first; only bumps nextFreePage if the list is empty.
 func allocPage() uintptr {
-	cli() // prevent timer interrupt from interleaving allocator state
 	var page uintptr
 	if freeListHead != 0 {
 		page = freeListHead
@@ -82,17 +91,14 @@ func allocPage() uintptr {
 	for i := uintptr(0); i < pageSize; i += 8 {
 		*(*uint64)(unsafe.Pointer(page + i)) = 0
 	}
-	sti()
 	return page
 }
 
 // freePage returns a 4 KiB page to the free list.
 // The first 8 bytes of the freed page store the next-pointer.
 func freePage(paddr uintptr) {
-	cli()
 	*(*uintptr)(unsafe.Pointer(paddr)) = freeListHead
 	freeListHead = paddr
-	sti()
 }
 
 // mapPage maps a 4 KiB virtual page to a physical page.

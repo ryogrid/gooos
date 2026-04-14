@@ -183,8 +183,6 @@ func schedule() {
 	if next == currentTask {
 		// No other ready task found. Enable interrupts and halt until
 		// an IRQ fires (timer, keyboard, etc.) which may wake a task.
-		// Without this, a blocked task looping in chanRecv inside an
-		// ISR (IF=0) would spin with interrupts disabled — deadlock.
 		sti()
 		hlt()
 		return
