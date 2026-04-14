@@ -11,7 +11,7 @@ import "unsafe"
 // Maximum number of files and maximum data size per file.
 const (
 	maxFiles    = 32
-	maxFileData = 65536
+	maxFileData = 40960 // 40 KiB — fits all user ELFs (max 37 KiB)
 )
 
 // FileEntry represents a single file in the filesystem.

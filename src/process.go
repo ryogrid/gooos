@@ -135,6 +135,10 @@ func elfExec(filename, args string, parentTaskID uint32) (uint32, bool) {
 		endAddr := ph.Vaddr + uintptr(ph.Memsz)
 
 		for addr := startPage; addr < endAddr; addr += pageSize {
+			// Skip if this page is already mapped (segments may share pages).
+			if walkAndGetPaddr(addr) != 0 {
+				continue
+			}
 			paddr := allocPage()
 			mapPage(addr, paddr, userFlags)
 			processRecordPage(childProc, addr, paddr)

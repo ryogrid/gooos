@@ -195,6 +195,10 @@ func elfLoad(name string) bool {
 		endAddr := ph.Vaddr + uintptr(ph.Memsz)
 
 		for addr := startPage; addr < endAddr; addr += pageSize {
+			// Skip if this page is already mapped (segments may overlap pages).
+			if walkAndGetPaddr(addr) != 0 {
+				continue
+			}
 			paddr := allocPage()
 			mapPage(addr, paddr, userFlags)
 			processRecordPage(proc, addr, paddr)
