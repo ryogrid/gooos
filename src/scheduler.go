@@ -180,10 +180,11 @@ func schedule() {
 	tasks[next].State = taskRunning
 	currentTask = next
 
-	serialPrint("Switch: ")
-	serialPrint(utoa(uint64(old)))
-	serialPrint(" -> ")
-	serialPrintln(utoa(uint64(next)))
+	// Switch logging disabled to avoid kernel heap allocation in ISR context.
+	// serialPrint("Switch: ")
+	// serialPrint(utoa(uint64(old)))
+	// serialPrint(" -> ")
+	// serialPrintln(utoa(uint64(next)))
 
 	// Perform the context switch.
 	switchContext(&tasks[old].SP, tasks[next].SP)
