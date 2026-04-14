@@ -73,6 +73,9 @@
 - Syscall ABI: RAX=number, RDI/RSI/RDX/R10/R8/R9=args, return value written to frame.RAX; frame writes propagate back through iretq
 - taskExited (state 3): task is never rescheduled; schedule() skips it because it only matches taskReady
 - sys_print writes user buffer byte-by-byte via serialPutChar — safe from interrupt context (int 0x80 handler runs with IF=0)
+- ELF64 header: 64 bytes; program header: 56 bytes; fields at fixed offsets read with readU16LE/readU32LE/readU64LE helpers
+- Avoid append() for large struct slices — TinyGo's sliceAppend needs memmove (not provided in stubs.S); use static fixed-size arrays instead
+- elfParse returns a slice backed by a static [16]Elf64Phdr buffer — caller must consume before next call
 ---
 
 ## 2026-04-14 - US-001
@@ -246,4 +249,22 @@
   - User program machine code: use movabs rdi,imm64 (48 BF + 8 bytes) for absolute 64-bit addresses in user space
   - String data embedded directly after code in the user code page; offset calculation: code_size bytes from userCodeVaddr
   - sys_exit + schedule() from int 0x80 context works correctly: abandoned task stack is never returned to
+---
+
+## 2026-04-14 - US-012
+- Created src/elf.go with ELF64 parser: header and program header structs, validation, PT_LOAD extraction
+- Defined Elf64Ehdr (Ident, Type, Machine, Entry, Phoff, Phentsize, Phnum) and Elf64Phdr (Type, Flags, Offset, Vaddr, Paddr, Filesz, Memsz, Align) structs
+- Implemented elfParse(data []byte) → (entry, phdrs, ok): validates magic (0x7f ELF), ELFCLASS64, ELFDATA2LSB, ET_EXEC, EM_X86_64
+- Returns entry point and slice of PT_LOAD program headers via static buffer (avoids memmove dependency)
+- Added readU16LE/readU32LE/readU64LE little-endian byte-reading helpers
+- Test in main.go: synthetic 120-byte ELF64 binary with one PT_LOAD segment, entry=0x401000 — PASS
+- Serial confirms: parse OK, correct entry point, correct phdr vaddr/filesz/memsz
+- Files changed: src/elf.go (new), src/main.go
+- **Learnings for future iterations:**
+  - TinyGo's sliceAppend for large structs requires memmove (not in stubs.S); use static fixed-size arrays instead of append
+  - stubs.S provides memcpy and memset but NOT memmove — adding memmove would fix append for all struct types
+  - ELF64 field offsets are fixed: e_entry at 24, e_phoff at 32, e_phentsize at 54, e_phnum at 56
+  - Program header p_type at +0, p_flags at +4, p_offset at +8, p_vaddr at +16, p_paddr at +24, p_filesz at +32, p_memsz at +40, p_align at +48
+  - elfParse returns a slice backed by a global buffer — caller must use data before calling elfParse again (for US-013 elfLoad)
+  - All 15 tasks + userspace Ring 3 continue to work after adding ELF parser test to early boot sequence
 ---

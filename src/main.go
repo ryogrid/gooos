@@ -209,6 +209,74 @@ func main() {
 		serialPrintln("FreeList: FAIL — expected same address")
 	}
 
+	// ELF64 parser test: construct a synthetic ELF64 binary with one PT_LOAD segment.
+	serialPrintln("ELF: testing parser")
+	var elfTest [120]byte // 64-byte header + 56-byte program header
+	// e_ident: magic + class + data + version
+	elfTest[0] = 0x7f
+	elfTest[1] = 'E'
+	elfTest[2] = 'L'
+	elfTest[3] = 'F'
+	elfTest[4] = 2 // ELFCLASS64
+	elfTest[5] = 1 // ELFDATA2LSB
+	elfTest[6] = 1 // EV_CURRENT
+	// e_type = ET_EXEC (2) at offset 16
+	elfTest[16] = 2
+	// e_machine = EM_X86_64 (0x3E) at offset 18
+	elfTest[18] = 0x3E
+	// e_version = 1 at offset 20
+	elfTest[20] = 1
+	// e_entry = 0x401000 at offset 24 (little-endian)
+	elfTest[24] = 0x00
+	elfTest[25] = 0x10
+	elfTest[26] = 0x40
+	// e_phoff = 64 at offset 32
+	elfTest[32] = 64
+	// e_phentsize = 56 at offset 54
+	elfTest[54] = 56
+	// e_phnum = 1 at offset 56
+	elfTest[56] = 1
+	// Program header at offset 64: PT_LOAD segment.
+	// p_type = PT_LOAD (1)
+	elfTest[64] = 1
+	// p_flags = PF_R|PF_X (5) at +4
+	elfTest[68] = 5
+	// p_vaddr = 0x400000 at +16
+	elfTest[80] = 0x00
+	elfTest[81] = 0x00
+	elfTest[82] = 0x40
+	// p_paddr = 0x400000 at +24
+	elfTest[88] = 0x00
+	elfTest[89] = 0x00
+	elfTest[90] = 0x40
+	// p_filesz = 0x1000 at +32
+	elfTest[96] = 0x00
+	elfTest[97] = 0x10
+	// p_memsz = 0x2000 at +40
+	elfTest[104] = 0x00
+	elfTest[105] = 0x20
+	// p_align = 0x1000 at +48
+	elfTest[112] = 0x00
+	elfTest[113] = 0x10
+
+	elfEntry, elfPhdrs, elfOk := elfParse(elfTest[:])
+	if elfOk {
+		serialPrintln("ELF: parse OK, entry=0x" + hextoa(uint64(elfEntry)))
+		serialPrintln("ELF: " + utoa(uint64(len(elfPhdrs))) + " PT_LOAD segment(s)")
+		if len(elfPhdrs) > 0 {
+			serialPrintln("ELF: phdr[0] vaddr=0x" + hextoa(uint64(elfPhdrs[0].Vaddr)) +
+				" filesz=0x" + hextoa(elfPhdrs[0].Filesz) +
+				" memsz=0x" + hextoa(elfPhdrs[0].Memsz))
+		}
+		if elfEntry == 0x401000 {
+			serialPrintln("ELF: entry point PASS")
+		} else {
+			serialPrintln("ELF: entry point FAIL — got 0x" + hextoa(uint64(elfEntry)))
+		}
+	} else {
+		serialPrintln("ELF: parse FAIL")
+	}
+
 	// In-memory filesystem demo (direct calls, before scheduler starts).
 	// The channel-based FS demo runs after the FS task is spawned below.
 	serialPrintln("FS: starting direct demo")

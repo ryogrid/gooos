@@ -209,7 +209,7 @@
         "make build succeeds"
       ],
       "priority": 12,
-      "passes": false,
+      "passes": true,
       "notes": "Depends on US-010 (FS task for file reading). Parser only, no loading/execution."
     },
     {
