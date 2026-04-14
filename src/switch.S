@@ -116,5 +116,12 @@ keyboardConsumerTaskAddr:
     leaq    keyboardConsumerTask(%rip), %rax
     ret
 
+    /* ---- Serial task address helper ----------------------------------------- */
+
+    .global serialTaskEntryAddr
+serialTaskEntryAddr:
+    leaq    serialTaskEntry(%rip), %rax
+    ret
+
     /* Mark the stack as non-executable. */
     .section .note.GNU-stack,"",@progbits

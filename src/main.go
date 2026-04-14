@@ -274,8 +274,12 @@ func main() {
 	// Keyboard consumer task: receives KeyEvents from keyboardChannel.
 	createTask(keyboardConsumerTaskAddr()) // Task 11 — keyboard consumer
 
-	vgaWriteLine(13, "Scheduler: 11 tasks created")
-	serialPrintln("Scheduler: 11 tasks created (3 demo + 4 channel + 3 select + 1 keyboard)")
+	// Serial output task: serializes multi-task serial writes via channel.
+	serialChannel = chanCreate(16)
+	createTask(serialTaskEntryAddr()) // Task 12 — serial output
+
+	vgaWriteLine(13, "Scheduler: 12 tasks created")
+	serialPrintln("Scheduler: 12 tasks created (3 demo + 4 channel + 3 select + 1 keyboard + 1 serial)")
 
 	// Enable preemptive scheduling — the next timer tick will start switching.
 	schedReady = true
