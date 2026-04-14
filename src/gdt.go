@@ -78,9 +78,15 @@ func gdtInit() {
 		tss[i] = 0
 	}
 
-	// Allocate a 4 KiB page for the kernel stack used on Ring 3 -> Ring 0 transitions.
+	// Allocate kernel stack for Ring 3 -> Ring 0 transitions.
+	// 16 KiB (4 pages) to handle deep call chains in syscall handlers
+	// (e.g., sys_read → chanRecv → waitQueueSleep → schedule → switchContext).
+	const kernelStackPages = 4
 	kernelStack := allocPage()
-	kernelStackTop := kernelStack + pageSize
+	for i := 1; i < kernelStackPages; i++ {
+		allocPage() // allocate contiguous pages (bump allocator guarantees this)
+	}
+	kernelStackTop := kernelStack + kernelStackPages*pageSize
 
 	// RSP0 (offset 4): stack pointer loaded by CPU on Ring 3 -> Ring 0.
 	*(*uint64)(unsafe.Pointer(&tss[4])) = uint64(kernelStackTop)
