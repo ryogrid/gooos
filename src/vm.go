@@ -77,7 +77,7 @@ func vmInit() {
 }
 
 // allocPage returns the physical address of a zeroed 4 KiB page.
-// It pops from the free list first; only bumps nextFreePage if the list is empty.
+// Uses a bump allocator (nextFreePage++). Free list is disabled.
 func allocPage() uintptr {
 	page := nextFreePage
 	nextFreePage += pageSize
