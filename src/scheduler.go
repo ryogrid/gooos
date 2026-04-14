@@ -181,10 +181,14 @@ func schedule() {
 	}
 
 	if next == currentTask {
-		// No other ready task found. Enable interrupts and halt until
-		// an IRQ fires (timer, keyboard, etc.) which may wake a task.
-		sti()
-		hlt()
+		// No other ready task found. Just return — do NOT call
+		// sti()+hlt() here. handleTimer also calls schedule(), and
+		// if we sti()+hlt() here, a timer interrupt during hlt causes
+		// nested handleTimer → schedule() → sti()+hlt() → infinite
+		// stack recursion overflowing the kernel stack.
+		//
+		// Instead, the waitQueueSleep loop enables interrupts briefly
+		// between iterations via the sti+hlt idiom.
 		return
 	}
 
@@ -332,16 +336,32 @@ type WaitQueue struct {
 }
 
 // waitQueueSleep blocks the current task on wq and calls schedule().
-// Must be called from task context (not interrupt context).
+// If no other task is ready (schedule returns immediately), enables
+// interrupts briefly via sti+hlt so IRQs can wake blocked tasks.
+// This is safe because waitQueueSleep is called from task context
+// (syscall handlers), never from handleTimer directly.
 func waitQueueSleep(wq *WaitQueue) {
 	if wq.count >= wqMax {
-		return // queue full — drop (should not happen with 16 tasks max)
+		return
 	}
 	tid := currentTask
 	wq.ids[wq.count] = tid
 	wq.count++
 	tasks[tid].State = taskBlocked
-	schedule()
+
+	// Loop until we are actually switched out by schedule().
+	// If schedule() returns without switching (no ready task),
+	// enable interrupts briefly so IRQs can fire and potentially
+	// wake a task (e.g., keyboard IRQ → chanTrySend → wakeOne).
+	for tasks[tid].State == taskBlocked {
+		schedule()
+		if tasks[tid].State == taskBlocked {
+			// Still blocked — no ready task to switch to.
+			// Enable interrupts and halt for one IRQ cycle.
+			sti()
+			hlt()
+		}
+	}
 }
 
 // waitQueueWakeOne dequeues the first waiting task and sets it to taskReady.

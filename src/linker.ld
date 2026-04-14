@@ -65,14 +65,14 @@ SECTIONS
         _heap_end = .;
     }
 
-    /* Page tables: placed AFTER the heap and _heap_end.
-     *
+    /* Guard gap: 1 page between _heap_end and page tables.
+     * Ensures GC metadata memset (which covers up to _heap_end) cannot
+     * touch page table memory even with off-by-one or inclusive bounds. */
+    . += 4096;
+
+    /* Page tables: placed well AFTER _heap_end with a guard gap.
      * The conservative GC's metadata memset covers metadataStart to
-     * _heap_end. By placing page tables AFTER _heap_end, they are
-     * outside both the GC scan range and the metadata memset range.
-     *
-     * allocPage() must start AFTER page tables. _alloc_start marks
-     * the first address available for dynamic page allocation. */
+     * _heap_end. Page tables must be completely outside this range. */
     .pagetables : ALIGN(4096)
     {
         *(.pagetables)
