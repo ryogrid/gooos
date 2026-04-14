@@ -27,23 +27,23 @@
 - [x] Remove old syscall handlers and hand-crafted user ELF binary
 
 ## Phase 3: Userland SDK
-- [ ] Create `user/target.json` — TinyGo target for gooos userspace
-- [ ] Create `user/linker_user.ld` — linker script (entry at 0x40100000)
-- [ ] Create `user/rt0.S` — startup assembly + syscall stubs (syscall0..syscall4)
-- [ ] Create `user/gooos/syscall.go` — raw syscall wrappers and constants
-- [ ] Create `user/gooos/io.go` — Print, Println, ReadLine
-- [ ] Create `user/gooos/fs.go` — ReadFile, ListDir
-- [ ] Create `user/gooos/proc.go` — Exec, Exit, Args, Yield, Sleep
-- [ ] Create `user/gooos/runtime_stubs.go` — mmap, write, exit stubs for TinyGo runtime
-- [ ] Create `user/Makefile` — build all user programs
-- [ ] Verify user SDK compiles a minimal test binary successfully
+- [x] Create `user/target.json` — TinyGo target for gooos userspace
+- [x] Create `user/linker_user.ld` — linker script (entry at 0x40100000)
+- [x] Create `user/rt0.S` — startup assembly + syscall stubs + runtime stubs (mmap, write, abort, memcpy, memset, raise, tinygo_register_fatal_signals)
+- [x] Create `user/gooos/syscall.go` — raw syscall wrappers and constants
+- [x] Create `user/gooos/io.go` — Print, Println, ReadLine
+- [x] Create `user/gooos/fs.go` — ReadFile, ListDir
+- [x] Create `user/gooos/proc.go` — Exec, Exit, Args, Yield, Sleep
+- [x] Runtime stubs in rt0.S (assembly, not separate Go file) — mmap, write, abort, raise, tinygo_register_fatal_signals, memcpy, memset
+- [x] Create `user/Makefile` — build all user programs (two-step: TinyGo → ld.lld)
+- [x] Verify user SDK compiles a minimal test binary successfully
 
 ## Phase 4: User Programs
-- [ ] Create `user/cmd/hello/main.go` — hello world
-- [ ] Create `user/cmd/sh/main.go` — interactive shell (help, echo, clear, exit + external dispatch)
-- [ ] Create `user/cmd/ls/main.go` — list files
-- [ ] Create `user/cmd/cat/main.go` — display file contents
-- [ ] Create `user/cmd/wc/main.go` — word/line/byte count
+- [x] Create `user/cmd/hello/main.go` — hello world (27 KiB)
+- [x] Create `user/cmd/sh/main.go` — interactive shell (37 KiB)
+- [x] Create `user/cmd/ls/main.go` — list files (33 KiB)
+- [x] Create `user/cmd/cat/main.go` — display file contents (33 KiB)
+- [x] Create `user/cmd/wc/main.go` — word/line/byte count (35 KiB)
 
 ## Phase 5: Integration
 - [ ] Create `scripts/embed_elfs.sh` — convert user ELF binaries to Go byte arrays
