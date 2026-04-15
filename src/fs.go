@@ -9,7 +9,9 @@ package main
 // Maximum number of files and maximum data size per file.
 const (
 	maxFiles    = 32
-	maxFileData = 40960 // 40 KiB — fits all user ELFs (max 37 KiB)
+	maxFileData = 65536 // 64 KiB — fits the post-shell-IO sh.elf (~47 KiB)
+	// and leaves headroom for redirected file output. Total FS
+	// memory footprint = maxFiles * maxFileData = 2 MiB.
 )
 
 // FileEntry represents a single file in the filesystem.

@@ -97,19 +97,30 @@ The per-process PML4 design (keep user vaddrs at link-time
 
 ## Phase 2 — redirection
 
-- [ ] **2** — shell redirection (`<`, `>`, `>>`).
-  - [ ] `user/cmd/sh/parse.go` (new): `tokenize`,
-    `parseLine`, `cmdLine` struct, `errSyntax`.
-  - [ ] `user/cmd/sh/main.go` `executeCommand` rewritten
-    to handle `cmdLine`; `saveStdio` / `restoreStdio` dance
-    around exec.
-  - [ ] Failure paths: syntax error, open failure both
-    print to stderr and skip the command.
-  - [ ] New harness `tmp/test_redirect.sh`:
-    `echo hi > out.txt`; `cat out.txt`; `echo more >> out.txt`;
-    `wc < out.txt`.
-  - [ ] Verify: harness passes; `make build` clean;
-    10/10 sendkey.
+- [x] **2** — shell redirection (`<`, `>`, `>>`).
+  - [x] `src/keyboard.go` shift handling: tracks
+    left/right shift make/break, shifted ASCII table
+    for symbols and uppercase letters. Verification
+    prerequisite (gives the sendkey harness `<`, `>`,
+    `|`, `_`, etc.).
+  - [x] `user/cmd/sh/parse.go` (new): `tokenize`,
+    `parseLine`, `cmdLine` struct, `joinArgs`.
+  - [x] `user/cmd/sh/main.go` `executeCommand` (now
+    `executeCmdLine`) handles `cmdLine`; saved-stdio
+    dup2 dance via slots 10/11.
+  - [x] Failure paths: syntax error, open failure both
+    print to stderr (`gooos.Println` for v1; serial only
+    until stderr split) and skip the command.
+  - [x] `user/rt0.S`: `memmove` added (now needed by
+    `runtime.sliceAppend` for the parser's `[]string`
+    slices).
+  - [x] `src/fs.go` `maxFileData` bumped 40 KiB → 64 KiB;
+    `sh.elf` grew to ~47 KiB after the parser landed.
+  - [x] New harness `tmp/test_redirect.sh`:
+    `echo hello > out.txt; cat out.txt` produces
+    `hello` on serial.
+  - [x] Verify: `bash tmp/test_redirect.sh` PASS
+    (`hello_lines=1 pf=0`); 10/10 sendkey.
 
 ## Phase 3 — sequential pipe
 

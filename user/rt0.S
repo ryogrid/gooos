@@ -126,6 +126,29 @@ memcpy:
     rep     movsb            /* copy RSI→RDI, RCX bytes */
     ret
 
+    /* memmove(dest, src, n) — required by runtime.sliceAppend.
+     * Handles overlap: copy backward when dest > src && dest < src+n. */
+    .global memmove
+memmove:
+    movq    %rdi, %rax       /* return dest */
+    movq    %rdx, %rcx       /* count */
+    cmpq    %rsi, %rdi
+    jbe     .memmove_fwd     /* dest <= src → forward copy */
+    movq    %rsi, %r8
+    addq    %rdx, %r8
+    cmpq    %r8, %rdi
+    jae     .memmove_fwd     /* dest >= src+n → no overlap */
+    /* Backward copy: rsi += n-1, rdi += n-1, std, rep movsb, cld. */
+    leaq    -1(%rsi,%rdx), %rsi
+    leaq    -1(%rdi,%rdx), %rdi
+    std
+    rep     movsb
+    cld
+    ret
+.memmove_fwd:
+    rep     movsb
+    ret
+
     /* memset(dest, c, n) — required by runtime for zeroing memory. */
     .global memset
 memset:
