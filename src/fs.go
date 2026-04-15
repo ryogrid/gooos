@@ -140,6 +140,7 @@ var fsReqCh = make(chan *fsRequest, 8)
 
 // fsTask is the FS service goroutine. Spawned from main() via `go`.
 func fsTask() {
+	fsTaskHandle = taskCurrent()
 	for req := range fsReqCh {
 		resp := &fsResponse{}
 		switch req.op {

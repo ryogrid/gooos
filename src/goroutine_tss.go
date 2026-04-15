@@ -98,6 +98,18 @@ func registerRing3G() {
 	gInfoByTask[t] = &gInfo{stackTop: taskStackTop(t)}
 }
 
+// registerRing3GWithStack is like registerRing3G but uses a
+// caller-supplied kernel stack top instead of the goroutine's own
+// stack. Used by ring3Wrapper when the kernel stack comes from
+// ring3StackPool — see impldoc/deferred_stack_reclaim.md §4.2.
+func registerRing3GWithStack(stackTop uintptr) {
+	t := taskCurrent()
+	if t == 0 {
+		return
+	}
+	gInfoByTask[t] = &gInfo{stackTop: stackTop}
+}
+
 func unregisterRing3G() {
 	t := taskCurrent()
 	if t == 0 {

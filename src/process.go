@@ -32,8 +32,9 @@ type Process struct {
 	EntryPoint  uintptr
 	StackTop    uintptr
 
-	parent *Process       // nil for the boot shell
-	exitCh chan uintptr   // parent waits here; child sends exit code
+	parent  *Process     // nil for the boot shell
+	exitCh  chan uintptr // parent waits here; child sends exit code
+	poolIdx int          // ring3StackPool slot index, -1 if none
 }
 
 // SavedMapping caches a parent's page mappings during child exec.
@@ -111,12 +112,18 @@ func elfExecTrampoline() {
 }
 
 // ring3Wrapper is the goroutine entry for every Ring-3 process. It
-// registers TSS.RSP0 for the goroutine's own kernel stack and jumps
-// to Ring 3. Never returns: the Ring-3 program exits via sys_exit →
+// registers TSS.RSP0 for the pool-owned kernel stack and jumps to
+// Ring 3. Never returns: the Ring-3 program exits via sys_exit →
 // processExit, which sends on proc.exitCh and halts this goroutine.
+//
+// The pool slot is acquired here and released by processExit. See
+// impldoc/deferred_stack_reclaim.md.
 func ring3Wrapper(proc *Process) {
+	ring3WrapperHandle = taskCurrent()
+	idx, kernelStackTop := ring3StackAcquire()
+	proc.poolIdx = idx
 	setCurrentProc(proc)
-	registerRing3G()
+	registerRing3GWithStack(kernelStackTop)
 	tssSetRSP0ForCurrentG()
 	// Allow Ring 3 to trigger int 0x80 each time a Ring-3 goroutine
 	// enters; safe to call repeatedly.
@@ -155,8 +162,9 @@ func elfExec(filename, args string, parent *Process) (uintptr, bool) {
 	}
 
 	child := &Process{
-		parent: parent,
-		exitCh: make(chan uintptr, 1),
+		parent:  parent,
+		exitCh:  make(chan uintptr, 1),
+		poolIdx: -1, // populated by ring3Wrapper from ring3StackPool
 	}
 
 	// Copy arguments.
@@ -218,8 +226,16 @@ func elfExec(filename, args string, parent *Process) (uintptr, bool) {
 	// Spawn the Ring-3 goroutine and wait for it to send on exitCh.
 	go ring3Wrapper(child)
 	exitCode := <-child.exitCh
+	if !firstExecAudited {
+		firstExecAudited = true
+		stackSizeAudit()
+	}
 	return exitCode, true
 }
+
+// firstExecAudited gates the post-exec stack-size audit so it
+// fires exactly once. See impldoc/deferred_gc_and_stacks.md §4.3.
+var firstExecAudited bool
 
 // processExit terminates the current Ring-3 goroutine. Unmaps the
 // child's pages, restores the parent's, wakes the parent via
@@ -265,6 +281,10 @@ func processExit(exitCode uintptr) {
 	// to the ISR epilogue or Ring 3 anyway.
 	unregisterRing3G()
 	clearCurrentProc()
+	if proc.poolIdx >= 0 {
+		ring3StackRelease(proc.poolIdx)
+		proc.poolIdx = -1
+	}
 	// This goroutine was entered from an int 0x80 ISR, so the ISR
 	// prologue bumped gooos_in_interrupt_depth. The ISR epilogue on
 	// this goroutine's kernel stack will never run (taskPause below

@@ -30,6 +30,8 @@ const (
 )
 
 // vgaWriteLine writes a string to the given row of the VGA text buffer.
+//
+//go:nosplit
 func vgaWriteLine(row int, s string) {
 	vga := (*[vgaCells]uint16)(unsafe.Pointer(vgaAddr))
 	offset := row * vgaWidth
@@ -84,9 +86,17 @@ func allocateGarbage() *[256]byte {
 
 // handleDivisionError displays an exception message on VGA and serial
 // when vector 0 (#DE - Division Error) fires.
+//
+// Allocation-free for ISR safety; see src/panic.go.
+//
+//go:nosplit
 func handleDivisionError(vector uint64) {
-	vgaWriteLine(7, "Exception: #DE")
-	serialPrintln("Exception: #DE (Division Error)")
+	off := 0
+	off = appendStr(panicHexBuf[:], off, "#DE: division error")
+	vgaWriteLine(7, bytesToString(panicHexBuf[:off]))
+	serialPrintBytes(panicHexBuf[:off])
+	serialPutChar('\r')
+	serialPutChar('\n')
 }
 
 // handleDefaultIRQ handles any hardware IRQ (vectors 32-47) that does
@@ -179,6 +189,11 @@ func main() {
 
 	// Virtual memory demo: map a 4 KiB page, write, read back, unmap.
 	vmInit()
+
+	// Allocate the Ring-3 kernel-stack pool (item 9). Each Ring-3
+	// process gets one slot via ring3Wrapper; the slot returns to
+	// the pool on processExit. Bounds the per-exec heap leak.
+	ring3StackPoolInit()
 	testVaddr := uintptr(0x40000000) // 1 GiB — outside the boot-time identity map
 	testPaddr := allocPage()         // allocate a physical page from free memory
 	mapPage(testVaddr, testPaddr, pagePresent|pageWrite)
@@ -317,6 +332,14 @@ func main() {
 		}
 	}
 
+	// afterTicks self-test (item 12 fallback). Spawned in the
+	// background so a slow timer cannot stall boot. Logs to serial
+	// when the channel fires (~20 ms).
+	go func() {
+		<-afterTicks(2)
+		serialPrintln("afterTicks: OK")
+	}()
+
 	// Boot Application Processors via INIT-SIPI-SIPI.
 	smpInit()
 
@@ -335,6 +358,11 @@ func main() {
 
 	vgaWriteLine(13, "Services: fsTask + keyboardPump running")
 	serialPrintln("Services: fsTask + keyboardPump running")
+
+	// Run boot-time stack-size audit if enabled (compile-time
+	// const). Service goroutines have parked at least once after
+	// the runtime.Gosched above.
+	stackSizeAudit()
 
 	// Store user ELF binaries in the filesystem (direct calls, before
 	// scheduler starts so FS task is not needed yet).
