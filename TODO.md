@@ -1,77 +1,71 @@
-# BusyBox Shell Implementation — TODO
+# TODO — Ring-0 goroutine & channel support
 
-## Phase 0: TinyGo Feasibility Verification
-- [x] Compile a minimal TinyGo test program with `gc=leaking`, `scheduler=none` to identify required runtime stubs
-- [x] Verify the entry point symbol name (`main` vs `runtime.main` vs other) → **`main`** (C ABI, T symbol)
-- [x] Determine minimum set of undefined symbols that need stubs → **`abort`, `mmap`, `raise`, `tinygo_register_fatal_signals`, `write`** (5 stubs only)
+Implementation of the design in `impldoc/goroutine_design_*.md`.
+Every item is a discrete commit. Completed items remain here as an
+audit trail — do not delete.
 
-## Phase 1: Kernel Infrastructure
-- [x] Expand filesystem: `maxFiles=32`, `maxFileData=65536`, add `fsDelete`
-- [x] Task recycling: `maxTasks=32`, `taskFree` state, `StackBase` field, `taskReclaim()`, slot reuse in `createTask()`
-- [x] Add `chanFree()` to channel.go for channel pool reclamation
-- [x] Add `walkAndGetPaddr()` to vm.go for page cleanup
-- [x] Create `src/vga.go` — VGA console with cursor, scrolling, `vgaConsolePutChar/Print/Clear`
-- [x] Create `src/process.go` — Process struct, SavedMapping, elfExec, elfExecTrampoline, processExit
-- [x] Add `elfExecTrampolineAddr` assembly stub to switch.S
+## Phase A — Prerequisite spikes
 
-## Phase 2: Syscall ABI
-- [x] Redesign syscall dispatch in userspace.go — 12 syscalls (exit, write, read, exec, fs_read, fs_write, fs_list, yield, sleep, getargs, sbrk, vga_clear)
-- [x] Implement `sys_write` (fd=0 VGA+serial, fd=1 serial only) using VGA console
-- [x] Implement `sys_read` — kernel-side line-buffered keyboard input with echo
-- [x] Implement `sys_exec` — calls elfExec, blocks parent
-- [x] Implement `sys_exit` — calls processExit
-- [x] Implement `sys_fs_read`, `sys_fs_write`, `sys_fs_list`
-- [x] Implement `sys_getargs`
-- [x] Implement `sys_sbrk` — per-process heap growth
-- [x] Implement `sys_vga_clear`
-- [x] Remove old syscall handlers and hand-crafted user ELF binary
+- [ ] **Spike 1 — Runtime collision**: decide how to replace
+  `runtime_unix.go`'s `sleepTicks`/`ticks`/`ticksToNanoseconds`/
+  `nanosecondsToTicks`/`deadlock`/`tinygo_register_fatal_signals`
+  with gooos-local bodies. Pass when a build succeeds without
+  duplicate-symbol errors.
+- [ ] **Spike 2 — Link viability**: trivial `ch := make(chan int); go func(){ ch<-1 }(); <-ch`
+  links and boots to the shell banner under QEMU.
+- [ ] **Spike 3 — `interrupt.In()`**: `in_interrupt_depth` counter
+  in `src/isr.S`, `interruptIn()` exposed via `//go:linkname`.
+  Pass when `task.Pause()` outside ISR does not panic.
+- [ ] **Spike 4 — Boot-goroutine stack**: identify a mechanism to
+  give `main()`'s goroutine ≥16 KiB, or install a manual early-in-
+  `main` stack swap. Pass when a canary at the stack boundary
+  survives the full boot sequence.
 
-## Phase 3: Userland SDK
-- [x] Create `user/target.json` — TinyGo target for gooos userspace
-- [x] Create `user/linker_user.ld` — linker script (entry at 0x40100000)
-- [x] Create `user/rt0.S` — startup assembly + syscall stubs + runtime stubs (mmap, write, abort, memcpy, memset, raise, tinygo_register_fatal_signals)
-- [x] Create `user/gooos/syscall.go` — raw syscall wrappers and constants
-- [x] Create `user/gooos/io.go` — Print, Println, ReadLine
-- [x] Create `user/gooos/fs.go` — ReadFile, ListDir
-- [x] Create `user/gooos/proc.go` — Exec, Exit, Args, Yield, Sleep
-- [x] Runtime stubs in rt0.S (assembly, not separate Go file) — mmap, write, abort, raise, tinygo_register_fatal_signals, memcpy, memset
-- [x] Create `user/Makefile` — build all user programs (two-step: TinyGo → ld.lld)
-- [x] Verify user SDK compiles a minimal test binary successfully
+## Phase B — Production migration
 
-## Phase 4: User Programs
-- [x] Create `user/cmd/hello/main.go` — hello world (27 KiB)
-- [x] Create `user/cmd/sh/main.go` — interactive shell (37 KiB)
-- [x] Create `user/cmd/ls/main.go` — list files (33 KiB)
-- [x] Create `user/cmd/cat/main.go` — display file contents (33 KiB)
-- [x] Create `user/cmd/wc/main.go` — word/line/byte count (35 KiB)
+- [ ] **B1** — Add `src/goroutine_stubs.go` (stub bodies for the
+  six runtime hooks; compiles under `scheduler=none` as inert).
+- [ ] **B2** — Flip `src/target.json` to `scheduler=tasks`. 10-trial
+  sendkey regression.
+- [ ] **B3** — Migrate `serialChannel` → native `chan string`.
+  Sendkey regression.
+- [ ] **B4** — Migrate `fsRequestChannel` + per-request replies
+  → native channels. Sendkey regression.
+- [ ] **B5** — Replace keyboard IRQ path with ring-buffer + pump.
+  Sendkey regression.
+- [ ] **B6** — Fatal handlers (`handlePageFault`,
+  `handleDivisionError`) use non-allocating `serialPanicPrint` +
+  hex helper.
+- [ ] **B7** — Replace `createTask` calls in `src/main.go` with
+  `go serialTask()` / `go fsTask()`.
+- [ ] **B8** — Delete `src/scheduler.go` + dead `*TaskAddr`
+  `//go:linkname` declarations.
+- [ ] **B9** — Convert `elfExec` to `ring3Wrapper` + `exitCh`
+  channel.
+- [ ] **B10** — Delete `src/channel.go`. Strip dead stubs from
+  `src/switch.S`.
+- [ ] **B11** — `src/smp.go` AP trampoline becomes bare
+  `sti; hlt`.
 
-## Phase 5: Integration
-- [x] Create `scripts/embed_elfs.sh` — convert user ELF binaries to Go byte arrays
-- [x] Update root Makefile — add `user`, `embed-user` targets, integrate into `build`
-- [x] Update `src/main.go` — revised boot sequence: store ELFs in FS, spawn service tasks, exec shell
-- [x] Remove demo/channel/select tasks from boot sequence
-- [x] Build and verify `make clean && make build` succeeds
-- [ ] Test in QEMU — shell boots, `help`, `echo hello`, `ls` work
+## Phase C — Verification gates (after B11)
 
-## Phase 6: Review and Verification
-- [x] Submit to reviewer subagent — check consistency with design docs
-- [x] Address all reviewer findings (C1: add schedule() to elfExec, H2: reject nested exec, H4: add punctuation scancodes, L6: heap-alloc ListDir buffer)
-- [x] Final TODO.md cross-check — no unchecked items
-- [x] Search for TODO/FIXME/HACK/XXX comments — resolve or defer explicitly (zero found)
+- [ ] `make build` clean + no unresolved symbols.
+- [ ] 10/10 `tmp/test_sendkey.sh` trials (pf=0, exit=3, cat=1).
+- [ ] `tmp/stress_test.sh` pass (pf=0, exit=6, cat=1).
+- [ ] `make run-smp` reaches shell with 4 cores.
 
-## Deferred Items
+## Phase D — Reviewer subagent pass
 
-### Workarounds (should be properly fixed)
-- **Schedule switch logging disabled**: `src/scheduler.go` — `serialPrint("Switch: ...")` commented out to avoid kernel heap allocation (`utoa` string concat) in ISR context, which could trigger GC.
+- [ ] Reviewer subagent run against the full diff + design docs.
+  CRITICAL/MAJOR findings addressed.
 
-### Functional limitations
-- **Shift key / uppercase**: Keyboard driver only maps lowercase letters (no shift key tracking)
-- **Nested exec**: `sys_exec` from a child process is rejected (single `savedParent` global)
-- **sys_read concurrency**: Global line buffer — only one task can call sys_read at a time
-- **User pointer validation**: Syscall handlers do not validate user buffer addresses (should reject < 0x40000000)
-- **sbrk bounds check**: No upper bound check against heap region limit (0x40C00000)
-- **NUL termination**: sys_read does not NUL-terminate the returned string (spec says "if space permits")
-- **uptime command**: Listed in help but not implemented
-- **Dead code**: keyboardConsumerTask and demo task functions remain in source (not spawned)
-- **wc command untested**: `wc` binary is built and embedded but not tested via sendkey
-- **echo built-in only**: `echo` is a shell built-in, not a separate ELF binary (per design)
+## Phase E — Reconciliation
+
+- [ ] `grep -rE "TODO|FIXME|HACK|XXX|temporarily"` over `src/`
+  returns nothing new.
+- [ ] Final `make build` clean; `git status` shows only expected
+  untracked paths.
+
+## Deferred (out-of-scope for this session)
+
+(empty at start — items populated when encountered)
