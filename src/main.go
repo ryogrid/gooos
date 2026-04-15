@@ -189,6 +189,11 @@ func main() {
 
 	// Virtual memory demo: map a 4 KiB page, write, read back, unmap.
 	vmInit()
+
+	// Allocate the Ring-3 kernel-stack pool (item 9). Each Ring-3
+	// process gets one slot via ring3Wrapper; the slot returns to
+	// the pool on processExit. Bounds the per-exec heap leak.
+	ring3StackPoolInit()
 	testVaddr := uintptr(0x40000000) // 1 GiB — outside the boot-time identity map
 	testPaddr := allocPage()         // allocate a physical page from free memory
 	mapPage(testVaddr, testPaddr, pagePresent|pageWrite)

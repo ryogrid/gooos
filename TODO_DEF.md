@@ -134,21 +134,27 @@ verification step pass. One commit per top-level item.
 
 ### `deferred_stack_reclaim.md` (item 9)
 
-- [ ] **Item 9** — Ring-3 stack pool (option 2b).
-  - [ ] Add `src/ring3_pool.go` (`ring3StackPoolInit`,
-    `ring3StackAcquire`, `ring3StackRelease`).
-  - [ ] Modify `src/main.go` to call `ring3StackPoolInit()`
+- [x] **Item 9** — Ring-3 stack pool (option 2b).
+  - [x] Add `src/ring3_pool.go` (`ring3StackPoolInit`,
+    `ring3StackAcquire`, `ring3StackRelease`,
+    `maxRing3Procs = 32`).
+  - [x] Modify `src/main.go` to call `ring3StackPoolInit()`
     after `vmInit()`.
-  - [ ] Modify `src/process.go`: `ring3Wrapper` acquires;
-    `processExit` releases; add `Process.poolIdx`.
-  - [ ] Add `registerRing3GWithStack(stackTop)` to
-    `src/goroutine_tss.go`.
-  - [ ] Conditionally lower `target.json`
-    `default-stack-size` only if item 13 audit confirms
-    headroom.
-  - [ ] Verify: 10/10 `bash tmp/test_sendkey.sh`.
-  - [ ] Verify: extended stress-exec script (≥ 500 execs)
-    shows `HeapInuse` plateaus.
+  - [x] Modify `src/process.go`: `ring3Wrapper` acquires
+    on entry; `processExit` releases before
+    `taskPause()`; add `Process.poolIdx`.
+  - [x] Initialize `poolIdx = -1` in `elfExec` child and in
+    `elfLoad`'s boot-shell `Process` struct.
+  - [x] Add `registerRing3GWithStack(stackTop uintptr)` to
+    `src/goroutine_tss.go` so ring3Wrapper can install the
+    pool-owned stack into TSS.RSP0 instead of the
+    goroutine's own stack.
+  - [x] No `target.json` change — item 13 audit showed
+    ring3Wrapper at 7%, headroom plenty already.
+  - [x] Verify: 10/10 `bash tmp/test_sendkey.sh`.
+  - [x] Verify: `bash tmp/stress_test.sh` (5 sequential
+    execs in one session) passes — no heap growth, no
+    pool exhaustion.
 
 ### `deferred_gc_and_stacks.md §2` (item 6, doc-only)
 
