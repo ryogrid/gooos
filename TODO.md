@@ -24,10 +24,14 @@ audit trail — do not delete.
   `//go:linkname` to implement `interrupt.In()`. `task.Pause()` from
   the Spike 2 probe (non-ISR) does not panic; 3/3 sendkey trials
   still pass with the counter actively bouncing on every timer IRQ.
-- [ ] **Spike 4 — Boot-goroutine stack**: identify a mechanism to
-  give `main()`'s goroutine ≥16 KiB, or install a manual early-in-
-  `main` stack swap. Pass when a canary at the stack boundary
-  survives the full boot sequence.
+- [x] **Spike 4 — Boot-goroutine stack**: TinyGo's `run()` spawns
+  `initAll()`+`callMain()` on a fresh goroutine stack under
+  `scheduler=tasks` (`runtime/scheduler_any.go:23`). Setting
+  `"automatic-stack-size": true` with `"default-stack-size": 8192`
+  in `src/target.json` lets TinyGo size the main goroutine's stack
+  by static call-graph analysis. The boot sequence (IDT, PIC, PIT,
+  keyboard, VM, FS, SMP, GC demo, ELF embed, shell launch) completes
+  without stack corruption; 3/3 sendkey trials pass end-to-end.
 
 ## Phase B — Production migration
 
