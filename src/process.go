@@ -265,8 +265,15 @@ func processExit(exitCode uintptr) {
 	// to the ISR epilogue or Ring 3 anyway.
 	unregisterRing3G()
 	clearCurrentProc()
-	gooosInInterruptDepth = 0 // force out of ISR-context view
-	taskPause()               // never returns for this goroutine
+	// This goroutine was entered from an int 0x80 ISR, so the ISR
+	// prologue bumped gooos_in_interrupt_depth. The ISR epilogue on
+	// this goroutine's kernel stack will never run (taskPause below
+	// parks forever). Decrement by 1 to represent leaving THIS
+	// ISR frame without underflowing any outer nesting level.
+	if gooosInInterruptDepth > 0 {
+		gooosInInterruptDepth--
+	}
+	taskPause() // never returns for this goroutine
 	for {
 		hlt()
 	}

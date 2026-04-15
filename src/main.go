@@ -325,6 +325,10 @@ func main() {
 	vgaWriteLine(12, "GDT: Ring 3 + TSS loaded")
 	serialPrintln("GDT: Ring 3 + TSS loaded")
 
+	// Phase B self-test: verify the TinyGo Task struct layout
+	// assumed by src/goroutine_tss.go before anything depends on it.
+	checkTaskOffset()
+
 	go fsTask()
 	go keyboardPump()
 	runtime.Gosched()

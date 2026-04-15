@@ -67,19 +67,22 @@ func keyboardPump() {
 		ev, ok := keyboardIRQRecv()
 		if ok {
 			keyboardCh <- ev
-			runtime.Gosched() // let other goroutines run
 			continue
 		}
-		// Empty ring. Yield first; if nothing else is runnable, the
-		// scheduler will come back and we'll sti+hlt to save CPU
-		// until the next IRQ.
+		// Empty ring. Yield so fsTask / shell / ring3Wrapper can
+		// run. If they all park and nothing else is runnable, the
+		// scheduler falls through to runtime.sleepTicks (a.k.a.
+		// gooos's sti+hlt idle loop) which wakes on the next IRQ.
 		runtime.Gosched()
 		if _, again := keyboardIRQRecv(); again {
-			// new events arrived while we yielded
 			continue
 		}
+		// Idle briefly on sti+hlt — leave IF enabled afterwards so
+		// other kernel goroutines can still service IRQs while we
+		// yield. (Don't cli after hlt: interrupts must stay enabled
+		// for cooperative goroutines to receive keyboard/timer
+		// events.)
 		sti()
 		hlt()
-		cli()
 	}
 }

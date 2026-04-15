@@ -30,16 +30,20 @@ Completed items remain here as audit trail — do not delete rows.
 
 ## Verification gates (after all items)
 
-- [ ] `make build` clean; `nm tmp/kernel.bin | grep " U "` empty
-- [ ] 10/10 `tmp/test_sendkey.sh` trials (pf=0, exit=3, cat=1)
-- [ ] `tmp/stress_test.sh` (pf=0, exit=6, cat=1)
-- [ ] `make run-smp` reaches shell with 4 cores
-- [ ] `grep -rE "TODO|FIXME|HACK|XXX|temporarily" src/ user/`
+- [x] `make build` clean; `nm tmp/kernel.bin | grep " U "` empty
+- [x] 10/10 `tmp/test_sendkey.sh` trials (pf=0, exit=3, cat=1)
+- [x] `tmp/stress_test.sh` (pf=0, exit=6, cat=1)
+- [x] `make run-smp` reaches shell with 4 cores
+- [x] `grep -rE "TODO|FIXME|HACK|XXX|temporarily" src/ user/`
   returns no new hits
 
 ## Reviewer pass + README.md update
 
-- [ ] Reviewer subagent run; CRITICAL/MAJOR addressed inline
+- [x] Reviewer subagent run; MAJOR findings addressed in-place
+  (keyboardPump no longer clears IF after hlt; processExit
+  decrements the ISR counter by 1 instead of forcing 0; Task
+  struct layout guarded by boot-time `checkTaskOffset`;
+  orphaned `switchContext` asm removed from `src/switch.S`).
 - [ ] `README.md` updated to reflect post-Phase-B state
   (progress table, assembly section, architecture diagram,
   `src/` layout, prerequisites)
@@ -60,6 +64,16 @@ and `impldoc/phase_b_overview.md §4`):
 
 Items discovered during execution will be added below with a
 one-line summary and a `phase_b_*.md §N` reference.
+
+- **Orphaned Ring-3 goroutine stack leak per `exec`**:
+  `processExit` calls `taskPause()` which parks the child
+  goroutine forever. The goroutine's stack (~8 KiB) is not
+  reclaimed by the GC because the Task struct remains
+  reachable from TinyGo's internal state. ~500 execs
+  before 4 MiB heap is exhausted. Acceptable for the
+  sendkey harness; documented in
+  `impldoc/phase_b_ring3_and_exec.md §11`. Needs a runtime
+  hook ("really kill this goroutine") in a future pass.
 
 ### Design flaw discovered during B4 attempt (2026-04-15)
 

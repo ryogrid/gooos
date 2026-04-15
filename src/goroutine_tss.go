@@ -39,23 +39,51 @@ var gInfoByTask = make(map[uintptr]*gInfo)
 //go:linkname taskCurrent internal/task.Current
 func taskCurrent() uintptr
 
+// stackTopOffset is the byte offset of state.stackTop inside a
+// TinyGo Task struct on amd64 under gc=conservative +
+// !tinygo.wasm (gcData is zero-sized via gc_stack_noop.go):
+//
+//	Next            *Task           offset  0 (size 8)
+//	Ptr             unsafe.Pointer  offset  8 (size 8)
+//	Data            uint64          offset 16 (size 8)
+//	gcData          struct{}        offset 24 (size 0)
+//	state.sp        uintptr         offset 24 (size 8)
+//	state.canaryPtr *uintptr        offset 32 (size 8)
+//	state.stackTop  uintptr         offset 40 (size 8)  <-- this
+//
+// If this ever shifts, `checkTaskOffset` below halts at boot with
+// a clear message before anything else tries to dereference a bad
+// pointer.
+const stackTopOffset = 40
+
 // taskStackTop reads state.stackTop from a TinyGo Task pointer.
-//
-// Task struct layout under gc=conservative && !tinygo.wasm (amd64):
-//   Next       *Task            offset  0 (size 8)
-//   Ptr        unsafe.Pointer   offset  8 (size 8)
-//   Data       uint64           offset 16 (size 8)
-//   gcData     struct{}         offset 24 (size 0)
-//   state.sp   uintptr          offset 24 (size 8)
-//   state.canaryPtr *uintptr    offset 32 (size 8)
-//   state.stackTop uintptr      offset 40 (size 8)  <- this
-//
-// Verified against internal/task/task.go + task_stack.go
-// (patched) + gc_stack_noop.go. If TinyGo's layout shifts this must
-// be updated.
 func taskStackTop(t uintptr) uintptr {
-	const stackTopOffset = 40
 	return *(*uintptr)(unsafe.Pointer(t + stackTopOffset))
+}
+
+// checkTaskOffset is a cheap self-test called at boot (from
+// main.go) that traps immediately if the Task layout assumption
+// above is wrong — e.g., if a TinyGo upgrade changes the struct.
+// The check works by spawning a throwaway goroutine that writes
+// its own canaryPtr into a local var; the layout is consistent
+// iff taskStackTop of that goroutine points strictly above its
+// canary.
+func checkTaskOffset() {
+	done := make(chan struct{}, 1)
+	go func() {
+		t := taskCurrent()
+		top := taskStackTop(t)
+		// canaryPtr field is at offset stackTopOffset - 8.
+		canary := *(**uintptr)(unsafe.Pointer(t + stackTopOffset - 8))
+		if top == 0 || canary == nil || top <= uintptr(unsafe.Pointer(canary)) {
+			serialPrintln("FATAL: TinyGo Task layout mismatch (stackTop offset)")
+			for {
+				hlt()
+			}
+		}
+		done <- struct{}{}
+	}()
+	<-done
 }
 
 // registerRing3G records the current goroutine as Ring-3-bound. Must

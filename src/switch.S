@@ -1,42 +1,15 @@
 /*
- * src/switch.S -- Context switch and task entry helpers for the scheduler.
+ * src/switch.S -- Phase B leftovers.
  *
- * switchContext saves callee-saved registers and RSP for the current task,
- * loads the new task's RSP, restores its callee-saved registers, and returns.
- *
- * Task entry address helpers return the address of //export Go functions
- * so createTask can place them on the initial stack.
+ * The hand-written scheduler was retired in Phase B; switchContext is
+ * gone (TinyGo's tinygo_swapTask does context switching under
+ * scheduler=tasks). Only taskReturnHalt (safety net) and
+ * elfExecTrampolineAddr (referenced by src/process.go's legacy stub)
+ * survive. Both may be deleted entirely in a future cleanup pass if
+ * ring3Wrapper is proven to never bottom out into either path.
  */
 
     .text
-
-    /* ---- switchContext: cooperative context switch ---------------------- */
-    /* switchContext(oldSP *uintptr, newSP uintptr)                         */
-    /* SysV ABI: rdi = pointer to save current RSP, rsi = new RSP to load.  */
-    /*                                                                       */
-    /* Saves callee-saved registers (rbx, rbp, r12-r15) on the current       */
-    /* stack, writes RSP to *oldSP, loads newSP into RSP, restores the       */
-    /* callee-saved registers from the new stack, and returns.               */
-    .global switchContext
-switchContext:
-    pushq   %rbx
-    pushq   %rbp
-    pushq   %r12
-    pushq   %r13
-    pushq   %r14
-    pushq   %r15
-
-    movq    %rsp, (%rdi)        /* save current RSP to *oldSP */
-    movq    %rsi, %rsp          /* switch to new stack */
-
-    popq    %r15
-    popq    %r14
-    popq    %r13
-    popq    %r12
-    popq    %rbp
-    popq    %rbx
-
-    ret
 
     /* ---- taskReturnHalt: safety net if a task function returns ---------- */
     /* A task entry function should loop forever. If it returns, halt.       */
