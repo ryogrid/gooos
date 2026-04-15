@@ -175,67 +175,8 @@ verification step pass. One commit per top-level item.
 
 ### `deferred_smp_v2.md` — SMP v2 (items 1–5)
 
-- [ ] **SMP v2 §7** — per-CPU storage foundation.
-  - [ ] Add `src/percpu.go` (per-CPU block layout;
-    `CPU_INTR_DEPTH` byte offset; `cpuID()` helper).
-  - [ ] Modify `src/smp.go` `apEntry` to set
-    `IA32_GS_BASE` (`wrmsr`) per AP.
-  - [ ] Modify `src/isr.S` prologue to write
-    `incl %gs:CPU_INTR_DEPTH` instead of the global
-    `gooos_in_interrupt_depth`. Update `interruptIn()`
-    accessor.
-  - [ ] Verify: 10/10 `make run-smp` sendkey green.
-
-- [ ] **Item 3** — per-CPU TSS + GDT.
-  - [ ] Modify `src/gdt.go` for `perCPUGDT[maxCPUs]` +
-    `perCPUTSS[maxCPUs]`.
-  - [ ] Each AP `apEntry` builds and `lgdt`/`ltr` per-CPU
-    GDT/TSS.
-  - [ ] `src/goroutine_tss.go` `tssSetRSP0` writes
-    `perCPUTSS[cpuID()]`.
-  - [ ] Verify: 10/10 `make run-smp` sendkey green.
-
-- [ ] **Item 1** — per-CPU runqueues + work stealing.
-  - [ ] Extend `scripts/tinygo_runtime.patch`:
-    `runtime/scheduler.go` `runqueue` →
-    `runqueues[maxCPUs]`; `runtime/chan.go` `resumeRX`/
-    `resumeTX` route via `cpuID()` (or target-CPU); new
-    `task.Queue.PopTail()`.
-  - [ ] Add `src/spinlock.go` (`xchg`-based
-    `Acquire`/`Release`).
-  - [ ] Add `xchg` helper in `src/stubs.S` only if
-    `sync/atomic` is insufficient.
-  - [ ] Verify: 10/10 `make run-smp` sendkey green.
-  - [ ] Verify: counter-balance smoke (4 goroutines, tight
-    counter loop 1 s; counters within ±20%).
-
-- [ ] **Item 4** — `atomic.StoreUint32` / `LoadUint32`
-  retrofit.
-  - [ ] `src/keyboard_irq.go`: head/tail use atomics.
-  - [ ] `src/goroutine_tss.go`: spinlock around
-    `gInfoByTask` map access (new `gInfoLock`).
-  - [ ] `src/process.go`: spinlock around `procByTask`
-    (new `procLock`).
-  - [ ] Verify: `objdump -d` shows `lock`-prefixed
-    instructions.
-  - [ ] Verify: 10/10 `make run-smp` sendkey green.
-
-- [ ] **Item 5** — LAPIC IPI support.
-  - [ ] Add `src/lapic_ipi.go` (`lapicSendIPI`).
-  - [ ] Register IPI vectors in `src/idt.go` /
-    `src/main.go`.
-  - [ ] Smoke handler that flips a per-CPU flag.
-  - [ ] Verify: BSP→AP IPI smoke succeeds.
-  - [ ] Verify: 10/10 `make run-smp` sendkey green.
-
-- [ ] **Item 2** — APIC timer preemption on APs.
-  - [ ] Calibrate `lapicTimerCount` against PIT once at
-    boot.
-  - [ ] Each AP programs LAPIC timer @ 100 Hz periodic.
-  - [ ] Per-CPU `handleAPTimer(vector)` registered.
-  - [ ] Verify: 10/10 `make run-smp` sendkey green.
-  - [ ] Verify: counter-balance smoke (cross-CPU work
-    distribution observable).
+**Deferred from this round** — see `## Further deferred`
+below.
 
 ## Phase C — Reviewer pass
 
@@ -270,5 +211,39 @@ deferred rather than fixed)
 
 ## Further deferred
 
-(empty — populated if a deferred item must slip out of
-this task's scope; include reason + unlock condition)
+**SMP v2 items 1–5** — original design in
+`impldoc/deferred_smp_v2.md`. The user-approved
+implementation strategy was "extend the in-place patch
+(`scripts/tinygo_runtime.patch`)". Item 1 (per-CPU runqueues
++ work stealing) needs more than a unified-diff patch can
+comfortably express:
+
+- Replace `runqueue` (single `task.Queue` global) with
+  `runqueues[maxCPUs]` and rewrite every `Push/Pop` call
+  site in `runtime/scheduler.go` (5+ sites) and
+  `runtime/chan.go` (`resumeRX`, `resumeTX`).
+- Add a way for APs to enter `scheduler()` — currently only
+  `main()` calls `run()` which calls `scheduler()` once on
+  the BSP. APs would need their own scheduler instance.
+- Decide per-CPU vs shared sleepQueue / timerQueue (and add
+  locking either way).
+- Add work-stealing (`PopTail`), cross-CPU IPI nudges, and
+  `cpuID()` plumbing inside the runtime.
+
+These changes amount to a small fork of TinyGo's runtime —
+the ergonomic break-point the plan flagged as a stop
+condition. Items 2–5 (APIC timer, per-CPU TSS, atomics
+retrofit, LAPIC IPI) are mostly useless without item 1
+(APs would still idle), so deferring all five together
+keeps the codebase coherent.
+
+**Reason**: blocked on a TinyGo fork commitment (declined
+this round in favour of the in-place patch flow that has
+already proven its limits here).
+
+**Unlock condition**: user signs off on a gooos-owned
+TinyGo fork (per `impldoc/deferred_overview.md §8 Q1`),
+hosted as a submodule, vendored copy, or maintained branch.
+Once the fork exists, `impldoc/deferred_smp_v2.md`'s
+implementation order remains valid: §7 → item 3 → item 1 →
+item 4 → item 5 → item 2.
