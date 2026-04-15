@@ -68,16 +68,22 @@ verification step pass. One commit per top-level item.
   - [x] Verify: `make build` still green and runs the new
     target as part of the normal build.
 
-- [ ] **Items 10 + 14** — ISR-safety lint.
-  - [ ] Add `scripts/lint_isr.go` (AST walker; flags string
-    concat + `make(chan)` + `go` + runtime-alloc reentry
-    inside ISR-reachable functions).
-  - [ ] Add `lint` Makefile target; wire as `build` prereq.
-  - [ ] Verify: passes on clean tree.
-  - [ ] Verify: deliberately inserted violation
-    (`serialPrintln("x" + utoa(1))` in `handleTimer`) fails
-    the lint. Revert violation.
-  - [ ] Verify: 10/10 `bash tmp/test_sendkey.sh`.
+- [x] **Items 10 + 14** — ISR-safety lint.
+  - [x] Add `scripts/lint_isr.go` (AST walker, stdlib-only;
+    flags string concat / `make(chan)` / send / receive /
+    `go` / slice-or-map literals / interface boxing inside
+    every ISR-reachable function chain, depth ≤ 4, with
+    safelist of 22 reviewed-safe helpers).
+  - [x] Add `lint` Makefile target; wire as `build` prereq
+    (runs before TinyGo compile, with `LINT_BIN` cached).
+  - [x] Verify: lint exit 0 on clean tree.
+  - [x] Verify: deliberate
+    `serialPrintln("debug: " + utoa(pitTicks))` inside
+    `handleTimer` triggered
+    `ISR-LINT: src/pit.go:43:16: string concat in
+    handleTimer (root=handleTimer)` and exit 1. Reverted.
+  - [x] Verify: `make build` runs lint first, exit 0.
+  - [x] Verify: 10/10 `bash tmp/test_sendkey.sh`.
 
 - [ ] **Item 12** — `time.After` spike.
   - [ ] Add scratch spike to `src/main.go` behind
