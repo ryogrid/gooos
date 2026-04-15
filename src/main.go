@@ -329,11 +329,10 @@ func main() {
 	initScheduler()
 
 	// Spawn essential kernel service tasks only (no demo tasks).
-	// Serial output task: serializes multi-task serial writes via channel.
-	serialChannel = chanCreate(16)
-	createTask(serialTaskEntryAddr()) // Task 1 — serial output
+	// B3: serial output path bypasses any task/channel — serialPrintln
+	// writes directly to COM1 via busy-wait on the UART TX bit.
 
-	// Filesystem task: handles FS requests via channel.
+	// Filesystem task: handles FS requests via channel (B4 migrates).
 	fsRequestChannel = chanCreate(8)
 	createTask(fsTaskEntryAddr()) // Task 2 — filesystem
 

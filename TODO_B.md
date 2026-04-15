@@ -6,7 +6,7 @@ Completed items remain here as audit trail — do not delete rows.
 ## Items
 
 - [x] B1 — close-out note (no code change; subsumed by Phase A)
-- [ ] B3 — retire `serialChannel` / `serialSend` / `serialTaskEntry`
+- [x] B3 — retire `serialChannel` / `serialSend` / `serialTaskEntry`
   (dead code per `phase_b_channel_migrations.md §1.1`)
 - [ ] B4 — `fsRequestChannel` → native `chan *fsRequest`; drop
   `fsReqPool` / `fsRespPool` static pools

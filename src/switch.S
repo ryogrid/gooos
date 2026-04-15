@@ -116,13 +116,6 @@ keyboardConsumerTaskAddr:
     leaq    keyboardConsumerTask(%rip), %rax
     ret
 
-    /* ---- Serial task address helper ----------------------------------------- */
-
-    .global serialTaskEntryAddr
-serialTaskEntryAddr:
-    leaq    serialTaskEntry(%rip), %rax
-    ret
-
     /* ---- FS task address helpers ------------------------------------------- */
 
     .global fsTaskEntryAddr
