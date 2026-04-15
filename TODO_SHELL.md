@@ -194,21 +194,23 @@ The per-process PML4 design (keep user vaddrs at link-time
   - [x] Verify: `make build` clean; 10/10 sendkey
     (helpers unused — wired in 4e).
 
-- [ ] **4d** — `gInfo.proc` cache + `gooosOnResume` CR3 swap.
-  - [ ] Add `proc *Process` field to `gInfo` in
-    `src/goroutine_tss.go:27`.
-  - [ ] `registerRing3GWithStack(stackTop, proc)` 2-arg
-    signature.
-  - [ ] `gooosOnResume` calls
-    `writeCR3(gi.proc.pml4)` if `gi.proc != nil &&
-    gi.proc.pml4 != 0`. **No second map lookup**.
-  - [ ] Document the first-resume `gi == nil`
-    short-circuit invariant.
-  - [ ] Update `ring3Wrapper` to pass `proc` into
-    `registerRing3GWithStack`.
-  - [ ] Verify: `make build` clean; 10/10 sendkey
-    (no behavior change yet because Process.pml4 is
-    always 0 — verified by 10/10 trials).
+- [x] **4d** — `gInfo.proc` cache + `gooosOnResume` CR3 swap.
+  - [x] Added `proc *Process` field to `gInfo`.
+  - [x] `registerRing3GWithStack(stackTop, proc)` 2-arg
+    signature; ring3Wrapper passes `proc`.
+  - [x] `gooosOnResume` calls `writeCR3(gi.proc.pml4)`
+    when `gi.proc != nil && gi.proc.pml4 != 0`. Still
+    one map lookup (`gInfoByTask[t]`); the rest is
+    pointer-load + asm — nosplit-safe.
+  - [x] First-resume `gi == nil` invariant documented in
+    the function's comment.
+  - [x] Added `Process.pml4 uintptr` field (zero until
+    4e populates it). `gooosOnResume` short-circuits CR3
+    swap when pml4 == 0, so this commit ships the hook
+    behavior with no functional change yet.
+  - [x] Verify: `make build` clean; 10/10 sendkey
+    (Process.pml4 is always 0 in this commit; pipe
+    harness PASS unchanged).
 
 - [ ] **4e** — `elfSpawn` + `processWait` split.
   - [ ] Split `elfExec` into `elfSpawn(name, args, parent)

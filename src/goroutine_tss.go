@@ -24,8 +24,14 @@ import (
 // gInfo is the side-table entry keyed on a *task.Task pointer.
 // stackTop is the high address of the goroutine's stack (lazy-read
 // from the patched state struct in TinyGo's task_stack.go).
+//
+// proc is cached here so gooosOnResume (//go:nosplit) can swap
+// CR3 without a second map lookup; map access from a nosplit
+// hook is unsafe (TinyGo's hash path can call into the runtime
+// allocator). See impldoc/shell_io_multiprocess.md §3.3.
 type gInfo struct {
 	stackTop uintptr
+	proc     *Process
 }
 
 // gInfoByTask maps task pointers to Ring-3 mapping entries. Only
@@ -99,15 +105,18 @@ func registerRing3G() {
 }
 
 // registerRing3GWithStack is like registerRing3G but uses a
-// caller-supplied kernel stack top instead of the goroutine's own
-// stack. Used by ring3Wrapper when the kernel stack comes from
-// ring3StackPool — see impldoc/deferred_stack_reclaim.md §4.2.
-func registerRing3GWithStack(stackTop uintptr) {
+// caller-supplied kernel stack top and a *Process pointer.
+// Cached on gInfo so the nosplit gooosOnResume hook can swap
+// CR3 without consulting procByTask. Used by ring3Wrapper
+// when the kernel stack comes from ring3StackPool — see
+// impldoc/deferred_stack_reclaim.md §4.2 and
+// impldoc/shell_io_multiprocess.md §3.3.
+func registerRing3GWithStack(stackTop uintptr, proc *Process) {
 	t := taskCurrent()
 	if t == 0 {
 		return
 	}
-	gInfoByTask[t] = &gInfo{stackTop: stackTop}
+	gInfoByTask[t] = &gInfo{stackTop: stackTop, proc: proc}
 }
 
 func unregisterRing3G() {
@@ -139,10 +148,27 @@ func tssSetRSP0ForCurrentG() {
 //go:linkname taskPause internal/task.Pause
 func taskPause()
 
-// gooosOnResume is called from the patched internal/task.resume() on
-// every goroutine switch. If the goroutine being resumed has a Ring-3
-// mapping, TSS.RSP0 is pointed at its stack top before the CPU can
-// dispatch any trap to it.
+// gooosOnResume is called from the patched internal/task.resume()
+// on every goroutine switch. If the goroutine being resumed is
+// Ring-3-bound, TSS.RSP0 is pointed at its kernel stack top and
+// (post-4d) CR3 is swapped to its per-process PML4 before the
+// CPU can dispatch any trap to it.
+//
+// nosplit: must not allocate, must not park, must not call into
+// any function that might grow the goroutine stack. The single
+// `gInfoByTask[t]` lookup matches the pre-4d cost; the gi.proc
+// access that follows is a plain pointer field load, and
+// writeCR3 is one asm instruction.
+//
+// First-resume invariant: ring3Wrapper calls
+// registerRing3GWithStack BEFORE its own first writeCR3, but
+// the very first scheduler resume of the wrapper goroutine
+// happens before that (the wrapper hasn't run yet). On that
+// first fire, gInfoByTask[t] is nil; the gi == nil short-
+// circuit returns without touching TSS.RSP0 or CR3, leaving
+// the boot PML4 active. Safe because the wrapper prologue
+// only touches kernel-half memory until it explicitly
+// writeCR3's into the proc's PML4.
 //
 //go:linkname gooosOnResume runtime.gooosOnResume
 //go:nosplit
@@ -156,4 +182,7 @@ func gooosOnResume() {
 		return
 	}
 	tssSetRSP0(gi.stackTop)
+	if gi.proc != nil && gi.proc.pml4 != 0 {
+		writeCR3(gi.proc.pml4)
+	}
 }

@@ -41,6 +41,12 @@ type Process struct {
 	// FileDesc instance is shared with the parent until one side
 	// closes). See impldoc/shell_io_fd_table.md.
 	fds [procMaxFDs]FileDesc
+
+	// pml4 is the physical address of this process's PML4 page.
+	// Zero until 4e populates it via newProcPML4. The
+	// gooosOnResume hook only swaps CR3 when pml4 != 0.
+	// See impldoc/shell_io_multiprocess.md.
+	pml4 uintptr
 }
 
 // SavedMapping caches a parent's page mappings during child exec.
@@ -129,7 +135,7 @@ func ring3Wrapper(proc *Process) {
 	idx, kernelStackTop := ring3StackAcquire()
 	proc.poolIdx = idx
 	setCurrentProc(proc)
-	registerRing3GWithStack(kernelStackTop)
+	registerRing3GWithStack(kernelStackTop, proc)
 	tssSetRSP0ForCurrentG()
 	// Allow Ring 3 to trigger int 0x80 each time a Ring-3 goroutine
 	// enters; safe to call repeatedly.
