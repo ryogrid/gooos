@@ -79,15 +79,21 @@ The per-process PML4 design (keep user vaddrs at link-time
   - [x] Verify: 10/10 sendkey (`pf=0 exit=3 cat=1` — full
     end-to-end through new fd path).
 
-- [ ] **1d** — `fd_probe` ELF.
-  - [ ] `user/cmd/fd_probe/main.go`: opens `hello.txt`,
+- [x] **1d** — `fdprobe` ELF (renamed from `fd_probe`
+  because the gooos keyboard handler doesn't decode shift +
+  minus, so `_` is unreachable from the sendkey harness;
+  documented inline).
+  - [x] `user/cmd/fdprobe/main.go`: opens `hello.txt`,
     reads via `Read(fd, buf)`, writes to stdout via
-    `Write(Stdout, buf)`, closes; tries opening missing
-    file and prints expected error.
-  - [ ] Embedded via `scripts/embed_elfs.sh`.
-  - [ ] Verify: shell command `fd_probe` round-trips file
-    content; serial log shows expected output and error.
-  - [ ] Verify: 10/10 sendkey.
+    `Write(Stdout, buf)`, closes; tries opening
+    `nope.txt` and confirms negative return.
+  - [x] Embedded via `scripts/embed_elfs.sh` (entry added
+    to `user/Makefile` `CMDS`).
+  - [x] `src/main.go` writes `fdprobe.elf` into the FS
+    alongside the other user binaries.
+  - [x] Verify: `tmp/test_fd_probe.sh` PASS:
+    `contents=1 read_write=1 err=1 pf=0`.
+  - [x] Verify: 10/10 sendkey.
 
 ## Phase 2 — redirection
 

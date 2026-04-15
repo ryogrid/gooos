@@ -387,6 +387,10 @@ func main() {
 	fsWrite("wc.elf", userElf_wc[:])
 	serialPrintln("  wc.elf: " + utoa(uint64(len(userElf_wc))) + " bytes")
 
+	fsCreate("fdprobe.elf")
+	fsWrite("fdprobe.elf", userElf_fdprobe[:])
+	serialPrintln("  fdprobe.elf: " + utoa(uint64(len(userElf_fdprobe))) + " bytes")
+
 	// Store a test file for cat/wc demos.
 	fsCreate("hello.txt")
 	fsWrite("hello.txt", []byte("Hello from the gooos filesystem!\nThis is a test file.\n"))
