@@ -9,11 +9,48 @@ type cmdLine struct {
 	appendOut  bool     // true if '>>'
 }
 
-// parseLine tokenises a shell input line and pulls out
-// redirection operators. Returns ok=false on syntax error
-// (e.g., '>' with no following filename).
-func parseLine(line string) (cmdLine, bool) {
+// pipeline is one or more cmdLines connected by '|'. A line
+// with no '|' parses to a one-element pipeline.
+type pipeline struct {
+	stages []cmdLine
+}
+
+// parsePipeline tokenises and splits the line on '|' into
+// per-stage cmdLines. Returns ok=false on syntax error.
+func parsePipeline(line string) (pipeline, bool) {
 	toks := tokenize(line)
+	var p pipeline
+	var stageToks []string
+	flushStage := func() bool {
+		if len(stageToks) == 0 {
+			return false
+		}
+		c, ok := parseStage(stageToks)
+		if !ok {
+			return false
+		}
+		p.stages = append(p.stages, c)
+		stageToks = stageToks[:0]
+		return true
+	}
+	for _, t := range toks {
+		if t == "|" {
+			if !flushStage() {
+				return p, false
+			}
+			continue
+		}
+		stageToks = append(stageToks, t)
+	}
+	if !flushStage() {
+		return p, false
+	}
+	return p, true
+}
+
+// parseStage extracts argv + redirection from a single
+// pipeline stage's token list.
+func parseStage(toks []string) (cmdLine, bool) {
 	var c cmdLine
 	for i := 0; i < len(toks); i++ {
 		switch toks[i] {
@@ -48,8 +85,8 @@ func parseLine(line string) (cmdLine, bool) {
 }
 
 // tokenize splits line on whitespace AND breaks out '<', '>',
-// '>>' as standalone tokens even when not whitespace-separated
-// (so `cat>out` parses as ["cat", ">", "out"]).
+// '>>', '|' as standalone tokens even when not whitespace-
+// separated (so `cat|wc` parses as ["cat", "|", "wc"]).
 func tokenize(line string) []string {
 	var toks []string
 	var cur []byte
@@ -67,6 +104,9 @@ func tokenize(line string) []string {
 		case '<':
 			flush()
 			toks = append(toks, "<")
+		case '|':
+			flush()
+			toks = append(toks, "|")
 		case '>':
 			flush()
 			// Look ahead for '>>'.

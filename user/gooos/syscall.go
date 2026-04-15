@@ -41,4 +41,5 @@ const (
 	sysOpen     = 12
 	sysClose    = 13
 	sysDup2     = 14
+	sysPipe     = 17
 )

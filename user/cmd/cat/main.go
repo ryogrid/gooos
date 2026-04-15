@@ -5,8 +5,16 @@ import "github.com/ryogrid/gooos/user/gooos"
 func main() {
 	args := gooos.Args()
 	if args == "" {
-		gooos.Println("usage: cat <filename>")
-		gooos.Exit(1)
+		// No filename arg → read stdin until EOF (POSIX cat).
+		var buf [256]byte
+		for {
+			n := gooos.Read(gooos.Stdin, buf[:])
+			if n <= 0 {
+				break
+			}
+			gooos.Write(gooos.Stdout, buf[:n])
+		}
+		return
 	}
 	data := gooos.ReadFile(args)
 	if data == nil {

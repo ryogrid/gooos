@@ -93,3 +93,14 @@ func ReadLine() string {
 func VgaClear() {
 	syscall0(sysVgaClear)
 }
+
+// Pipe returns [readFd, writeFd] on success. On failure both
+// values are -1 and the second return is the negative errno.
+func Pipe() (int, int, int) {
+	var fds [2]uint64
+	r := syscall1(sysPipe, uintptr(unsafe.Pointer(&fds[0])))
+	if int64(r) < 0 {
+		return -1, -1, int(int64(r))
+	}
+	return int(fds[0]), int(fds[1]), 0
+}

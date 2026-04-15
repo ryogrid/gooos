@@ -122,20 +122,40 @@ The per-process PML4 design (keep user vaddrs at link-time
   - [x] Verify: `bash tmp/test_redirect.sh` PASS
     (`hello_lines=1 pf=0`); 10/10 sendkey.
 
-## Phase 3 — sequential pipe
-
-- [ ] **3** — sequential pipe + `sys_pipe`.
-  - [ ] `src/pipe.go` (new): `seqPipeBuf`, `seqPipeReader`,
-    `seqPipeWriter`, `newSeqPipe()`.
-  - [ ] `sys_pipe` (17) constant + handler in
+- [x] **3** — sequential pipe + `sys_pipe`.
+  - [x] `src/pipe.go` (new): `seqPipeBuf`, `seqPipeReader`,
+    `seqPipeWriter`, `newSeqPipe()` — sequential variant
+    (writer fills, reader drains, no concurrency).
+    Idempotent `Close` on both ends to survive fd
+    inheritance.
+  - [x] `sys_pipe` (17) constant + handler in
     `src/userspace.go`; `procAllocFD` allocates the two
-    fds with rollback on partial failure.
-  - [ ] Userland: `gooos.Pipe()` in `user/gooos/io.go`.
-  - [ ] Shell parser handles `|` (single-stage); pipe
-    orchestration in `executeCommand`.
-  - [ ] New harness `tmp/test_pipe.sh`:
-    `echo hello | wc -c` → 6.
-  - [ ] Verify: harness passes; 10/10 sendkey.
+    fds with rollback if the second one fails.
+  - [x] `user/gooos/syscall.go` `sysPipe` constant.
+  - [x] `user/gooos/io.go` `Pipe()` returns
+    `(rfd, wfd, errno)`.
+  - [x] Shell parser refactored: `parsePipeline` splits on
+    `|` into per-stage `cmdLine`s; `tokenize` recognizes
+    `|` as a token. `executePipeline` dispatches:
+    1-stage → existing redirect path, 2-stage →
+    `executeTwoStagePipe`, 3+ stages → "not supported in
+    this round" message (handled in phase 5).
+  - [x] `executeTwoStagePipe` orchestrates fd dance:
+    save stdout, dup2(wfd→stdout), exec stage 1, restore
+    stdout, close wfd (writer-done now), save stdin,
+    dup2(rfd→stdin), exec stage 2, restore stdin,
+    close rfd. Order matters — closing wfd before stage 1
+    runs would mark the writer done prematurely (writes
+    still proceed but the discipline is misleading).
+  - [x] `user/cmd/cat/main.go` extended: with no
+    filename arg, reads stdin in 256-byte chunks until
+    EOF and writes to stdout (POSIX `cat`). Lets the
+    pipe harness validate end-to-end data flow with no
+    new ELF needed.
+  - [x] New harness `tmp/test_pipe.sh`:
+    `echo hello | cat` produces `hello` on serial.
+  - [x] Verify: harness PASS (`pf=0 exit=1
+    hello_lines=1`); 10/10 sendkey.
 
 ## Phase 4 — multi-process foundation
 

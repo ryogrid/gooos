@@ -22,13 +22,76 @@ func main() {
 		if len(line) == 0 {
 			continue
 		}
-		c, ok := parseLine(line)
+		p, ok := parsePipeline(line)
 		if !ok {
 			gooos.Println("sh: syntax error")
 			continue
 		}
-		executeCmdLine(c)
+		executePipeline(p)
 	}
+}
+
+// executePipeline runs a parsed pipeline. Single-stage falls
+// through to the existing redirect-aware path. Two-stage uses
+// the sequential-pipe variant from src/pipe.go: stage 1's
+// stdout is dup2'd onto a pipe write end; stage 1 runs to
+// completion buffering its output; stage 2's stdin is dup2'd
+// onto the pipe read end; stage 2 reads the buffered data.
+//
+// Three+ stage pipelines are not supported by the sequential
+// variant — phase 5's concurrent pipe handles them.
+func executePipeline(p pipeline) {
+	switch len(p.stages) {
+	case 0:
+		return
+	case 1:
+		executeCmdLine(p.stages[0])
+		return
+	case 2:
+		executeTwoStagePipe(p.stages[0], p.stages[1])
+		return
+	default:
+		gooos.Println("sh: multi-stage pipelines (>2) not supported in this round (phase 5)")
+		return
+	}
+}
+
+func executeTwoStagePipe(stage1, stage2 cmdLine) {
+	rfd, wfd, err := gooos.Pipe()
+	if err < 0 {
+		gooos.Println("sh: pipe failed")
+		return
+	}
+
+	// Stage 1: dup the write end onto stdout, exec, then
+	// restore. Closing wfd happens AFTER exec returns (and
+	// after restoring stdout) so the *seqPipeWriter is not
+	// marked closed prematurely. Stage 1's processExit
+	// closes its inherited fd 1 — that is harmless because
+	// our seqPipe Close is idempotent.
+	if gooos.Dup2(gooos.Stdout, savedStdoutFD) < 0 {
+		gooos.Close(rfd)
+		gooos.Close(wfd)
+		gooos.Println("sh: out of fd slots")
+		return
+	}
+	gooos.Dup2(wfd, gooos.Stdout)
+	executeCmdLine(stage1)
+	gooos.Dup2(savedStdoutFD, gooos.Stdout)
+	gooos.Close(savedStdoutFD)
+	gooos.Close(wfd) // mark writer done after stage 1 has filled the buffer
+
+	// Stage 2: dup the read end onto stdin, exec, restore.
+	if gooos.Dup2(gooos.Stdin, savedStdinFD) < 0 {
+		gooos.Close(rfd)
+		gooos.Println("sh: out of fd slots")
+		return
+	}
+	gooos.Dup2(rfd, gooos.Stdin)
+	executeCmdLine(stage2)
+	gooos.Dup2(savedStdinFD, gooos.Stdin)
+	gooos.Close(savedStdinFD)
+	gooos.Close(rfd)
 }
 
 // executeCmdLine applies any redirection in c, dispatches to

@@ -61,6 +61,7 @@ const (
 	sysOpen     = 12
 	sysClose    = 13
 	sysDup2     = 14
+	sysPipe     = 17
 )
 
 // jumpToRing3 transitions the CPU to Ring 3 user mode via iretq.
@@ -103,6 +104,8 @@ func syscallDispatch(frame *SyscallFrame) {
 		sysCloseHandler(frame)
 	case sysDup2:
 		sysDup2Handler(frame)
+	case sysPipe:
+		sysPipeHandler(frame)
 	default:
 		frame.RAX = 0xFFFFFFFFFFFFFFFF // -1 for invalid syscall
 	}
@@ -495,6 +498,36 @@ func sysDup2Handler(frame *SyscallFrame) {
 		return
 	}
 	frame.RAX = uintptr(newfd)
+}
+
+// --- Syscall 17: sys_pipe ---
+// RDI = pointer to two consecutive uint64s in user memory
+// (kernel writes [readFd, writeFd])
+
+func sysPipeHandler(frame *SyscallFrame) {
+	proc := currentProc()
+	if proc == nil {
+		frame.RAX = sysFail(fdErrBad)
+		return
+	}
+	rd, wr := newSeqPipe()
+	rdFd, err := procAllocFD(proc, rd)
+	if err != fdErrOK {
+		frame.RAX = sysFail(err)
+		return
+	}
+	wrFd, err := procAllocFD(proc, wr)
+	if err != fdErrOK {
+		// Roll back the partial allocation so the caller's
+		// fd table doesn't leak the read end.
+		procClose(proc, rdFd)
+		frame.RAX = sysFail(err)
+		return
+	}
+	out := (*[2]uint64)(unsafe.Pointer(frame.RDI))
+	out[0] = uint64(rdFd)
+	out[1] = uint64(wrFd)
+	frame.RAX = 0
 }
 
 // --- Shell bootstrap ---
