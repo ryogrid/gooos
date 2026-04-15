@@ -79,6 +79,25 @@ func allocPID() uint32 {
 	return pid
 }
 
+// foregroundProc is the process that owns the keyboard right
+// now. consoleStdin.Read returns EOF to any other process,
+// preventing two Ring-3 processes from racing on keyboardCh.
+//
+// Set initially by elfLoad (boot shell). Switched in
+// processWait — the about-to-block parent transfers ownership
+// to the child, then takes it back when the child exits.
+var foregroundProc *Process
+
+// setForegroundProc installs p as the keyboard owner.
+func setForegroundProc(p *Process) {
+	foregroundProc = p
+}
+
+// getForegroundProc returns the current foreground (or nil).
+func getForegroundProc() *Process {
+	return foregroundProc
+}
+
 // Argument page virtual address: kernel writes arg string here
 // before exec.
 const argPageVaddr = uintptr(0x40300000)
@@ -274,8 +293,16 @@ func elfSpawn(filename, args string, parent *Process) (*Process, bool) {
 // processWait blocks the caller until proc exits and returns
 // the child's exit code. Reaps the entry from procByPID so a
 // future sys_wait(pid) can't find it again.
+//
+// Foreground transfer (4h): the parent yields keyboard
+// ownership to proc on entry, takes it back when proc exits.
+// Background processes (those whose parent is not waiting on
+// them) see EOF on stdin reads.
 func processWait(proc *Process) uintptr {
+	prevForeground := foregroundProc
+	setForegroundProc(proc)
 	exitCode := <-proc.exitCh
+	setForegroundProc(prevForeground)
 	delete(procByPID, proc.pid)
 	if !firstExecAudited {
 		firstExecAudited = true

@@ -279,18 +279,22 @@ The per-process PML4 design (keep user vaddrs at link-time
     multi-stage pipelines naturally exercise
     concurrent Spawn / Wait through the shell.
 
-- [ ] **4h** — foreground stdin model.
-  - [ ] `foregroundProc *Process` package-scope in
+- [x] **4h** — foreground stdin model.
+  - [x] `foregroundProc *Process` package-scope in
     `src/process.go`; `setForegroundProc` /
     `getForegroundProc` accessors.
-  - [ ] `consoleStdin.Read` returns `(0, fdErrEOF)` when
+  - [x] `consoleStdin.Read` returns `(0, fdErrEOF)` when
     `currentProc() != getForegroundProc()`.
-  - [ ] Shell sets foreground around `Spawn`/`Wait`
-    sequences (its own PID when at prompt; child PID
-    when waiting).
-  - [ ] Verify: 10/10 sendkey (shell remains the
-    foreground when reading the prompt; children take
-    over while running).
+  - [x] `processWait` transfers foreground to the child
+    on entry, restores prev (parent) on exit. Symmetric
+    save/restore so nested waits compose correctly.
+  - [x] `elfLoad` (boot shell launcher) sets the boot
+    shell as initial foreground.
+  - [x] Verify: 10/10 sendkey; tmp/test_redirect.sh,
+    tmp/test_pipe.sh, tmp/test_fd_probe.sh all PASS
+    (shell reads prompt, children inherit foreground
+    while running, pipe stages whose stdin is a pipe
+    end aren't blocked by the foreground check).
 
 ## Phase 5 — concurrent pipe
 

@@ -97,6 +97,14 @@ func readKeyboardLine(buf []byte) int {
 }
 
 func (consoleStdin) Read(buf []byte) (int, fdErr) {
+	// Foreground model (4h): only the keyboard owner reads
+	// real input; everyone else sees EOF. Keeps two concurrent
+	// Ring-3 processes from racing on keyboardCh and lets
+	// pipe-stage children (whose stdin is a pipe end, not the
+	// console) coexist with the foreground.
+	if currentProc() != getForegroundProc() {
+		return 0, fdErrEOF
+	}
 	return readKeyboardLine(buf), fdErrOK
 }
 
