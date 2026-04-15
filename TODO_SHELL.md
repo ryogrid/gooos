@@ -180,16 +180,19 @@ The per-process PML4 design (keep user vaddrs at link-time
   - [x] Verify: `make build` clean; 10/10 sendkey
     (helpers unused so far; lint sees them as unused).
 
-- [ ] **4c** — `newProcPML4` / `freeProcPML4`.
-  - [ ] Allocate fresh PML4 + per-process PDP page; set
-    `procPDP[0] = bootPDP[0]` by value (shared kernel
-    identity map).
-  - [ ] `freeProcPML4(pml4)` walks per-process PDP
-    entries (skips index 0), frees PT/PD/PDP/PML4 pages.
-  - [ ] Lives in `src/process.go` or new
-    `src/proc_pml4.go`.
-  - [ ] Verify: `make build` clean; 10/10 sendkey
-    (helpers not yet wired into spawn).
+- [x] **4c** — `newProcPML4` / `freeProcPML4`.
+  - [x] `src/proc_pml4.go` (new). `newProcPML4` allocs a
+    fresh PML4 page and copies the boot PML4[0] entry
+    verbatim into it (shares the boot PDP — and
+    therefore the 0..1 GiB identity map — by reference).
+    `pml4SharedKernelPDP` cached on first use.
+  - [x] `freeProcPML4(pml4)` walks PML4[1..511] (skips
+    [0] which is shared) → freePDP → freePD → freePage.
+    User physical pages themselves are freed by
+    processExit's existing UserPaddrs walk; this only
+    releases the table machinery.
+  - [x] Verify: `make build` clean; 10/10 sendkey
+    (helpers unused — wired in 4e).
 
 - [ ] **4d** — `gInfo.proc` cache + `gooosOnResume` CR3 swap.
   - [ ] Add `proc *Process` field to `gInfo` in
