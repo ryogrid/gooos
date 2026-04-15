@@ -220,9 +220,12 @@ func elfSpawn(filename, args string, parent *Process) (*Process, bool) {
 	child.pml4 = newProcPML4()
 	procByPID[child.pid] = child
 
-	// fd inheritance — shallow copy of parent's table.
+	// fd inheritance — shallow copy of parent's table with a
+	// refcount bump for each pipe end so the pipe survives
+	// until the child closes on processExit.
 	for i := 0; i < procMaxFDs; i++ {
 		child.fds[i] = parent.fds[i]
+		fdAddRef(parent.fds[i])
 	}
 
 	// Copy arguments into the Process struct (not user vaddrs

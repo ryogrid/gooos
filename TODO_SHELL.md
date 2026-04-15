@@ -296,23 +296,31 @@ The per-process PML4 design (keep user vaddrs at link-time
     while running, pipe stages whose stdin is a pipe
     end aren't blocked by the foreground check).
 
-## Phase 5 — concurrent pipe
-
-- [ ] **5** — concurrent pipe (`chan byte`).
-  - [ ] Replace `seqPipe*` in `src/pipe.go` with `pipe`
-    struct backed by `chan byte` (4 KiB cap).
-  - [ ] `pipeReader.Read` parks on `<-p.ch` until data
-    or EOF (chan close).
-  - [ ] `pipeWriter.Write` parks on `p.ch <-` when full;
-    re-checks `p.rdClosed` per byte for prompt EPIPE.
-  - [ ] **Idempotent `Close`** on both ends (guard with
-    `wrClosed` / `rdClosed`).
-  - [ ] Multi-stage shell pipelines via nested
-    `sys_pipe` + `sys_spawn` + close-the-end-you-don't-own.
-  - [ ] Stress harness extends `tmp/test_pipe.sh`:
-    `cat hello.txt | cat | wc -c` agrees with
-    `cat hello.txt | wc -c`.
-  - [ ] Verify: 10/10 sendkey; harness passes.
+- [x] **5** — concurrent pipe (`chan byte`).
+  - [x] Replaced `seqPipe*` in `src/pipe.go` with a
+    `chan byte` pipe (4 KiB cap). Reader parks on
+    receive, writer parks on send, TinyGo's scheduler
+    handles both via native chan parking.
+  - [x] **Refcounted Close** on both ends (`rdRefs` /
+    `wrRefs` on the shared `*pipe`; each `procAllocFD` /
+    `procDup2` / elfSpawn-fd-inheritance bumps via
+    `fdAddRef`, each `Close` decrements). Without
+    refcounts, shell's dup2 of its own pipe-end
+    reference would kill the chan for the just-spawned
+    child that legitimately inherited it.
+  - [x] Shell `executeConcurrentPipe` supports N-stage
+    pipelines via nested `sys_pipe` + `sys_spawn` +
+    close-the-end-you-don't-own discipline. Shell
+    closes its ORIGINAL pipe slots right after each
+    stage that owns them is spawned — children inherit
+    correctly, chans close when last child exits.
+  - [x] Harness `tmp/test_pipe.sh` extended to a
+    3-stage pipeline (`echo world | cat | cat`). Both
+    2-stage (`echo hello | cat`) and 3-stage paths
+    PASS.
+  - [x] Verify: harness PASS (`pf=0 exit=3
+    hello_lines=1 world_lines=1`); 10/10 sendkey;
+    test_redirect + test_fd_probe still PASS.
 
 ## Phase C — reviewer pass
 

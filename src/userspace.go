@@ -513,7 +513,7 @@ func sysPipeHandler(frame *SyscallFrame) {
 		frame.RAX = sysFail(fdErrBad)
 		return
 	}
-	rd, wr := newSeqPipe()
+	rd, wr := newPipe()
 	rdFd, err := procAllocFD(proc, rd)
 	if err != fdErrOK {
 		frame.RAX = sysFail(err)

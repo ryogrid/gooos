@@ -236,7 +236,9 @@ func procGetFD(p *Process, fd int) FileDesc {
 
 // procAllocFD finds the lowest free slot, installs desc, and
 // returns the index. Returns (-1, fdErrBad) if the table is
-// full.
+// full. Does NOT bump pipe refcounts — the caller (sysPipe,
+// sysOpen) is responsible because newPipe already starts at
+// refcount 1 which represents this first Stash.
 func procAllocFD(p *Process, desc FileDesc) (int, fdErr) {
 	if p == nil {
 		return -1, fdErrBad
@@ -248,6 +250,18 @@ func procAllocFD(p *Process, desc FileDesc) (int, fdErr) {
 		}
 	}
 	return -1, fdErrBad
+}
+
+// fdAddRef bumps the pipe-end refcount when a *pipeReader or
+// *pipeWriter is copied into an additional fd slot (dup2 or
+// Process.fds inheritance). No-op for non-pipe FileDescs.
+func fdAddRef(desc FileDesc) {
+	switch d := desc.(type) {
+	case *pipeReader:
+		pipeReaderAddRef(d)
+	case *pipeWriter:
+		pipeWriterAddRef(d)
+	}
 }
 
 // procClose calls Close on the slot's FileDesc and clears it.
@@ -265,7 +279,9 @@ func procClose(p *Process, fd int) fdErr {
 }
 
 // procDup2 duplicates oldfd onto newfd. If newfd is in use,
-// it is closed first. Returns newfd on success.
+// it is closed first. Returns newfd on success. Bumps pipe
+// refcounts so the writer/reader survives until the new slot
+// is eventually closed.
 func procDup2(p *Process, oldfd, newfd int) (int, fdErr) {
 	if p == nil || oldfd < 0 || oldfd >= procMaxFDs ||
 		newfd < 0 || newfd >= procMaxFDs {
@@ -275,10 +291,14 @@ func procDup2(p *Process, oldfd, newfd int) (int, fdErr) {
 	if desc == nil {
 		return -1, fdErrBad
 	}
-	if oldfd != newfd && p.fds[newfd] != nil {
+	if oldfd == newfd {
+		return newfd, fdErrOK
+	}
+	if p.fds[newfd] != nil {
 		p.fds[newfd].Close()
 	}
 	p.fds[newfd] = desc
+	fdAddRef(desc)
 	return newfd, fdErrOK
 }
 

@@ -31,67 +31,121 @@ func main() {
 	}
 }
 
-// executePipeline runs a parsed pipeline. Single-stage falls
-// through to the existing redirect-aware path. Two-stage uses
-// the sequential-pipe variant from src/pipe.go: stage 1's
-// stdout is dup2'd onto a pipe write end; stage 1 runs to
-// completion buffering its output; stage 2's stdin is dup2'd
-// onto the pipe read end; stage 2 reads the buffered data.
-//
-// Three+ stage pipelines are not supported by the sequential
-// variant — phase 5's concurrent pipe handles them.
+// executePipeline runs a parsed pipeline. Single-stage uses
+// the existing redirect-aware path. Multi-stage uses
+// concurrent pipes: every adjacent pair is connected by a
+// kernel chan-byte pipe (sys_pipe); each stage is Spawn'd
+// concurrently; the shell Wait's on the tail.
 func executePipeline(p pipeline) {
-	switch len(p.stages) {
-	case 0:
+	if len(p.stages) == 0 {
 		return
-	case 1:
+	}
+	if len(p.stages) == 1 {
 		executeCmdLine(p.stages[0])
 		return
-	case 2:
-		executeTwoStagePipe(p.stages[0], p.stages[1])
+	}
+	executeConcurrentPipe(p.stages)
+}
+
+// executeConcurrentPipe spawns N stages connected by N-1
+// pipes. POSIX hygiene: every pipe end has at most two
+// holders at any moment (the shell's original slot + the
+// just-dup'd stdin/stdout slot), and the shell drops its
+// ORIGINAL slot reference right after the child that
+// inherits that end is spawned. That way the final holder
+// is the child, and its processExit closes the last ref.
+func executeConcurrentPipe(stages []cmdLine) {
+	n := len(stages)
+	pids := make([]int, n)
+
+	// Pre-allocate all pipes. pipes[i] connects stage i
+	// (writer) → stage i+1 (reader).
+	type pipeFds struct{ r, w int }
+	pipes := make([]pipeFds, n-1)
+	for i := 0; i < n-1; i++ {
+		r, w, perr := gooos.Pipe()
+		if perr < 0 {
+			gooos.Println("sh: pipe failed")
+			return
+		}
+		pipes[i] = pipeFds{r: r, w: w}
+	}
+
+	if gooos.Dup2(gooos.Stdin, savedStdinFD) < 0 ||
+		gooos.Dup2(gooos.Stdout, savedStdoutFD) < 0 {
+		gooos.Println("sh: out of fd slots")
 		return
-	default:
-		gooos.Println("sh: multi-stage pipelines (>2) not supported in this round (phase 5)")
-		return
+	}
+
+	for i := 0; i < n; i++ {
+		// stdin
+		if i == 0 {
+			gooos.Dup2(savedStdinFD, gooos.Stdin)
+		} else {
+			gooos.Dup2(pipes[i-1].r, gooos.Stdin)
+		}
+		// stdout
+		if i == n-1 {
+			gooos.Dup2(savedStdoutFD, gooos.Stdout)
+		} else {
+			gooos.Dup2(pipes[i].w, gooos.Stdout)
+		}
+
+		if isBuiltin(stages[i].argv[0]) {
+			executeCmdLine(stages[i])
+			pids[i] = -1
+		} else {
+			pid, serr := gooos.Spawn(stages[i].argv[0]+".elf", joinArgs(stages[i].argv))
+			if serr < 0 {
+				gooos.Println("sh: spawn failed: " + stages[i].argv[0])
+				pids[i] = -1
+			} else {
+				pids[i] = pid
+			}
+		}
+
+		// Drop the shell's ORIGINAL-slot references for the
+		// pipe ends this stage just took possession of. Stage i:
+		//   - read end: pipes[i-1].r (if i > 0) — stage i
+		//     inherited it; shell doesn't need it anymore.
+		//   - write end: pipes[i].w (if i < n-1) — stage i
+		//     inherited it; shell doesn't need it.
+		// Without these closes, the shell would keep extra
+		// references and the child ends up racing on them via
+		// its own inherited copies of the shell's original
+		// slots.
+		if i > 0 {
+			gooos.Close(pipes[i-1].r)
+		}
+		if i < n-1 {
+			gooos.Close(pipes[i].w)
+		}
+	}
+
+	// Restore shell stdio. The originals were already saved
+	// (and are still at savedStdinFD / savedStdoutFD).
+	gooos.Dup2(savedStdinFD, gooos.Stdin)
+	gooos.Close(savedStdinFD)
+	gooos.Dup2(savedStdoutFD, gooos.Stdout)
+	gooos.Close(savedStdoutFD)
+
+	// Wait on each spawned stage. Built-ins ran synchronously
+	// above with pid==-1.
+	for i := 0; i < n; i++ {
+		if pids[i] >= 0 {
+			gooos.Wait(pids[i])
+		}
 	}
 }
 
-func executeTwoStagePipe(stage1, stage2 cmdLine) {
-	rfd, wfd, err := gooos.Pipe()
-	if err < 0 {
-		gooos.Println("sh: pipe failed")
-		return
+// isBuiltin returns true iff cmd is a shell built-in (handled
+// in-process rather than exec'd).
+func isBuiltin(cmd string) bool {
+	switch cmd {
+	case "help", "echo", "clear", "exit":
+		return true
 	}
-
-	// Stage 1: dup the write end onto stdout, exec, then
-	// restore. Closing wfd happens AFTER exec returns (and
-	// after restoring stdout) so the *seqPipeWriter is not
-	// marked closed prematurely. Stage 1's processExit
-	// closes its inherited fd 1 — that is harmless because
-	// our seqPipe Close is idempotent.
-	if gooos.Dup2(gooos.Stdout, savedStdoutFD) < 0 {
-		gooos.Close(rfd)
-		gooos.Close(wfd)
-		gooos.Println("sh: out of fd slots")
-		return
-	}
-	gooos.Dup2(wfd, gooos.Stdout)
-	executeCmdLine(stage1)
-	gooos.Dup2(savedStdoutFD, gooos.Stdout)
-	gooos.Close(savedStdoutFD)
-	gooos.Close(wfd) // mark writer done after stage 1 has filled the buffer
-
-	// Stage 2: dup the read end onto stdin, exec, restore.
-	if gooos.Dup2(gooos.Stdin, savedStdinFD) < 0 {
-		gooos.Close(rfd)
-		gooos.Println("sh: out of fd slots")
-		return
-	}
-	gooos.Dup2(rfd, gooos.Stdin)
-	executeCmdLine(stage2)
-	gooos.Dup2(savedStdinFD, gooos.Stdin)
-	gooos.Close(savedStdinFD)
-	gooos.Close(rfd)
+	return false
 }
 
 // executeCmdLine applies any redirection in c, dispatches to
