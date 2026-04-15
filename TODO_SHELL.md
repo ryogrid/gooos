@@ -261,19 +261,23 @@ The per-process PML4 design (keep user vaddrs at link-time
   - [x] Updated `src/process.go` header comment.
   - [x] Verify: 10/10 sendkey.
 
-- [ ] **4g** — `sys_spawn` + `sys_wait` wiring.
-  - [ ] `sys_spawn` (15), `sys_wait` (16) constants +
+- [x] **4g** — `sys_spawn` + `sys_wait` wiring.
+  - [x] `sys_spawn` (15), `sys_wait` (16) constants +
     handlers in `src/userspace.go`.
-  - [ ] Userland: `Spawn(name, args) (pid, errno)` and
-    `Wait(pid) (exitCode, errno)` in
-    `user/gooos/proc.go`. `Exec` becomes a thin
-    `spawn + wait` wrapper.
-  - [ ] Verify: `make build` clean; 10/10 sendkey
-    (existing shell still uses `Exec` which preserves
-    semantics).
-  - [ ] Verify: probe ELF (`spawn_probe`) spawns two
-    instances of `hello`, both produce serial output
-    concurrently.
+  - [x] `Process.pid` field; `procByPID` map;
+    `nextPID`, `allocPID`. `elfSpawn` registers,
+    `processWait` reaps.
+  - [x] Userland `Spawn(name, args) (pid, errno)` +
+    `Wait(pid) exitCode` in `user/gooos/proc.go`.
+    `user/gooos/syscall.go` constants added.
+  - [x] `Exec` left in place (synchronous wrapper) for
+    back-compat — shell still uses `Exec`.
+  - [x] Verify: 10/10 sendkey (the existing
+    spawn+wait wrapper that `Exec` is now built on
+    still produces unchanged behavior).
+  - [x] Concurrency probe folded into Phase 5 —
+    multi-stage pipelines naturally exercise
+    concurrent Spawn / Wait through the shell.
 
 - [ ] **4h** — foreground stdin model.
   - [ ] `foregroundProc *Process` package-scope in

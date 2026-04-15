@@ -48,6 +48,11 @@ type Process struct {
 	// gooosOnResume hook only swaps CR3 when pml4 != 0.
 	// See impldoc/shell_io_multiprocess.md.
 	pml4 uintptr
+
+	// pid is the process identifier returned to userspace by
+	// sys_spawn. Zero for the boot shell (which is launched
+	// via elfLoad rather than elfSpawn).
+	pid uint32
 }
 
 var (
@@ -55,7 +60,24 @@ var (
 	// *Process. Populated by ring3Wrapper; consulted by any syscall
 	// handler or kernel helper that needs the current process.
 	procByTask = make(map[uintptr]*Process)
+
+	// procByPID maps a PID to its *Process. Populated by elfSpawn,
+	// removed by processWait (after the parent has reaped). Lets
+	// sys_wait(pid) find the right child.
+	procByPID = make(map[uint32]*Process)
+
+	// nextPID is the monotonic PID allocator. Wraps at 2^32 which
+	// is irrelevant for shell workloads. PID 0 is reserved as
+	// "invalid".
+	nextPID uint32 = 1
 )
+
+// allocPID returns a fresh PID and bumps the counter.
+func allocPID() uint32 {
+	pid := nextPID
+	nextPID++
+	return pid
+}
 
 // Argument page virtual address: kernel writes arg string here
 // before exec.
@@ -174,8 +196,10 @@ func elfSpawn(filename, args string, parent *Process) (*Process, bool) {
 		parent:  parent,
 		exitCh:  make(chan uintptr, 1),
 		poolIdx: -1,
+		pid:     allocPID(),
 	}
 	child.pml4 = newProcPML4()
+	procByPID[child.pid] = child
 
 	// fd inheritance — shallow copy of parent's table.
 	for i := 0; i < procMaxFDs; i++ {
@@ -248,9 +272,11 @@ func elfSpawn(filename, args string, parent *Process) (*Process, bool) {
 }
 
 // processWait blocks the caller until proc exits and returns
-// the child's exit code.
+// the child's exit code. Reaps the entry from procByPID so a
+// future sys_wait(pid) can't find it again.
 func processWait(proc *Process) uintptr {
 	exitCode := <-proc.exitCh
+	delete(procByPID, proc.pid)
 	if !firstExecAudited {
 		firstExecAudited = true
 		stackSizeAudit()

@@ -61,6 +61,8 @@ const (
 	sysOpen     = 12
 	sysClose    = 13
 	sysDup2     = 14
+	sysSpawn    = 15
+	sysWait     = 16
 	sysPipe     = 17
 )
 
@@ -106,6 +108,10 @@ func syscallDispatch(frame *SyscallFrame) {
 		sysDup2Handler(frame)
 	case sysPipe:
 		sysPipeHandler(frame)
+	case sysSpawn:
+		sysSpawnHandler(frame)
+	case sysWait:
+		sysWaitHandler(frame)
 	default:
 		frame.RAX = 0xFFFFFFFFFFFFFFFF // -1 for invalid syscall
 	}
@@ -525,6 +531,64 @@ func sysPipeHandler(frame *SyscallFrame) {
 	out[0] = uint64(rdFd)
 	out[1] = uint64(wrFd)
 	frame.RAX = 0
+}
+
+// --- Syscall 15: sys_spawn ---
+// RDI = path_ptr, RSI = path_len, RDX = arg_ptr, R10 = arg_len
+// Non-blocking: returns the child's PID, or -fdErr on failure.
+
+func sysSpawnHandler(frame *SyscallFrame) {
+	parent := currentProc()
+	if parent == nil {
+		frame.RAX = sysFail(fdErrBad)
+		return
+	}
+	pathLen := frame.RSI
+	if pathLen > 256 {
+		pathLen = 256
+	}
+	var pathBuf [256]byte
+	for i := uintptr(0); i < pathLen; i++ {
+		pathBuf[i] = *(*byte)(unsafe.Pointer(frame.RDI + i))
+	}
+	filename := string(pathBuf[:pathLen])
+
+	argLen := frame.R10
+	if argLen > 256 {
+		argLen = 256
+	}
+	var argBuf [256]byte
+	for i := uintptr(0); i < argLen; i++ {
+		argBuf[i] = *(*byte)(unsafe.Pointer(frame.RDX + i))
+	}
+	args := string(argBuf[:argLen])
+
+	child, ok := elfSpawn(filename, args, parent)
+	if !ok {
+		frame.RAX = sysFail(fdErrBad)
+		return
+	}
+	frame.RAX = uintptr(child.pid)
+}
+
+// --- Syscall 16: sys_wait ---
+// RDI = pid
+// Blocks until the named child exits; returns its exit code or
+// -fdErr if the pid is not a child of the caller.
+
+func sysWaitHandler(frame *SyscallFrame) {
+	parent := currentProc()
+	if parent == nil {
+		frame.RAX = sysFail(fdErrBad)
+		return
+	}
+	pid := uint32(frame.RDI)
+	child := procByPID[pid]
+	if child == nil || child.parent != parent {
+		frame.RAX = sysFail(fdErrBad)
+		return
+	}
+	frame.RAX = processWait(child)
 }
 
 // --- Shell bootstrap ---
