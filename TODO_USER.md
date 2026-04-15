@@ -41,13 +41,19 @@ One git commit per top-level item. Check off when that commit lands.
   - [x] `make build` clean; every user ELF links.
   - [x] `nm user/build/hello.elf | grep '\bmain\b'` shows `T main`
         at `0x40100496`.
-  - [ ] Baseline harnesses (`test_sendkey.sh 1`) — deferred to
-        TODO 4, because the post-flip ELF sizes (50–58 KiB)
-        exceed the current `maxFileData = 40960` FS slot cap.
+  - [x] Baseline harnesses (`test_sendkey.sh 1`) — PASS after
+        TODO 4 lands the FS cap bump + heap-region fix
+        (`trial=1 pf=0 exit=3 cat=1`).
 
-- [ ] **4. Bump `maxFileData` to 96 KiB**
-  - [ ] `src/fs.go:12` 40960 → 98304; update comment.
-  - [ ] `make build` clean.
+- [x] **4. Bump `maxFileData` to 96 KiB**
+  - [x] `src/fs.go:12` 40960 → 98304; update comment.
+  - [x] Follow-up to TODO 3's linker_user.ld: nest the
+        256 KiB heap reservation INSIDE .bss so ld.lld
+        extends PT_LOAD memsz and the kernel elfLoader maps
+        the pages. Without this, `_heap_start` pointed at
+        unmapped virtual space and every user process
+        page-faulted on first heap touch.
+  - [x] `make build` clean; `test_sendkey.sh 1` PASS.
 
 - [ ] **5. `user/cmd/goprobe/main.go`**
   - [ ] New probe with 4 sub-tests (go+chan, select,

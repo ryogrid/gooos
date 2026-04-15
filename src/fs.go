@@ -9,7 +9,7 @@ package main
 // Maximum number of files and maximum data size per file.
 const (
 	maxFiles    = 32
-	maxFileData = 40960 // 40 KiB — fits all user ELFs (max 37 KiB)
+	maxFileData = 98304 // 96 KiB — headroom over the tasks-scheduler user ELFs (post-flip peak ~58 KiB at sh.elf). FS footprint: 32 × 96 KiB = 3 MiB.
 )
 
 // FileEntry represents a single file in the filesystem.
