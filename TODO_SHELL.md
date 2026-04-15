@@ -324,13 +324,13 @@ The per-process PML4 design (keep user vaddrs at link-time
 
 ## Phase C — reviewer pass
 
-- [ ] Launch general-purpose reviewer subagent.
-  - [ ] CRITICAL findings addressed inline.
-  - [ ] MAJOR findings addressed inline.
-  - [ ] MINOR findings: fixed or recorded in
-    `## Reviewer follow-ups (MINOR)` below with rationale.
-  - [ ] Second pass if first surfaces > 3 design-level
-    issues.
+- [x] Launch general-purpose reviewer subagent.
+  - [x] Verdict PASS — no CRITICAL or MAJOR.
+  - [x] Six MINOR items recorded in
+    `## Reviewer follow-ups (MINOR)` below with
+    rationale for leaving each as-is.
+  - [x] No second pass needed (MINORs are below the
+    3-design-issue threshold).
 
 ## Phase D — Final reconciliation
 
@@ -357,8 +357,38 @@ The per-process PML4 design (keep user vaddrs at link-time
 
 ## Reviewer follow-ups (MINOR)
 
-(empty — populated by Phase C if any minor issues are
-deferred rather than fixed)
+Reviewer pass returned **PASS** — no CRITICAL or MAJOR
+findings. Six MINOR items recorded, all left as-is with
+documented rationale:
+
+1. `tmp/test_pipe.sh` contains exploratory commentary that
+   predates the final harness. **Left as-is**: cosmetic
+   only, actual logic below it is correct and PASSes.
+2. `processExit` sends `proc.exitCh <- exitCode` before
+   `writeCR3(bootPML4) + freeProcPML4`. **Left as-is**:
+   correct under single-CPU cooperative scheduling; an SMP
+   parent that wakes on another CPU would need a fence.
+   Documented in the multi-process design doc's §15 risk
+   delta (`R-cr3-swap-cost` and implicit SMP v2 assumption).
+3. `procCloseAll` runs after `exitCh` send; a parent
+   pipe-reader only observes EOF after the child's
+   `procCloseAll` drops the last `wrRefs`. **Left as-is**:
+   same single-CPU reasoning as item 2.
+4. `pipe.Read` fills `buf` fully before returning rather
+   than POSIX's "return as soon as any data arrives".
+   **Left as-is**: functionally OK because kernel
+   `sysReadHandler` dispatches via a 256-byte scratch and
+   Close-driven EOF wakes partial returns; no existing
+   test exercises a slow producer.
+5. `elfSpawn` calls `fdAddRef(parent.fds[i])` even for nil
+   slots. **Left as-is**: nil-safe because the type switch
+   in `fdAddRef` doesn't match a nil `FileDesc`
+   (`src/fd.go`).
+6. Pipeline built-in stages run inline in the shell
+   goroutine. **Left as-is**: works because the shell is
+   foreground at the head of the pipeline and the 4 KiB
+   chan buffer dwarfs typical built-in output (`echo` etc.).
+   Documented by implication in the shell source.
 
 ## Further deferred
 
