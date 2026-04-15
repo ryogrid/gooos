@@ -32,12 +32,13 @@ func pitInit() {
 	outb(pitCh0Data, uint8((pitDivisor>>8)&0xFF))
 }
 
-// handleTimer is the IRQ0 handler (vector 32). Increments the global
-// tick counter, sends EOI to the PIC, and triggers the scheduler for
-// preemptive task switching.
+// handleTimer is the IRQ0 handler (vector 32). Under Phase B the
+// timer no longer drives the hand-written scheduler; kernel
+// goroutines yield cooperatively via Gosched / channel ops, and
+// Ring-3 preemption happens naturally through iretq return paths.
+//
+//go:nosplit
 func handleTimer(vector uint64) {
 	pitTicks++
-	sleepQueueWakeExpired(pitTicks)
 	picSendEOI(0)
-	schedule()
 }

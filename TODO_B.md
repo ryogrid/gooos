@@ -20,14 +20,13 @@ Completed items remain here as audit trail — do not delete rows.
   `scripts/patch_tinygo_runtime.sh`): `state.stackTop` field
   in `internal/task/task_stack.go`, `gooosOnResume` hook in
   `internal/task/task_stack_amd64.go` `resume()`.
-- [ ] B6 — fatal handlers (deferred: basic system works; can
-  land independently)
-- [ ] B11 — SMP AP idle loop (deferred: 1-line change,
-  independent)
-- [ ] B8 — delete `src/scheduler.go`, strip `*TaskAddr` stubs in
-  `src/switch.S`, update `handleTimer` to drop `schedule()`
-- [ ] B10 — delete `src/channel.go`; consider removing
-  `src/switch.S` entirely
+- [ ] B6 — fatal handlers still allocate; not critical since
+  happy-path sendkey doesn't trigger them. **Deferred**.
+- [x] B11 — SMP AP idle loop `sti + hlt` applied.
+- [x] B8 — `src/scheduler.go` deleted; `src/switch.S` stripped
+  to two surviving symbols; `handleTimer` no longer calls
+  `schedule()`.
+- [x] B10 — `src/channel.go` deleted.
 
 ## Verification gates (after all items)
 

@@ -8,7 +8,11 @@
 
 package main
 
-import "unsafe"
+import (
+	"runtime"
+	"time"
+	"unsafe"
+)
 
 // SyscallFrame matches the register layout pushed by isr_common in isr.S.
 // Fields are ordered from lowest stack address (R15, pushed last) to
@@ -324,17 +328,17 @@ func sysFsListHandler(frame *SyscallFrame) {
 // --- Syscall 7: sys_yield ---
 
 func sysYieldHandler(frame *SyscallFrame) {
-	yield()
+	runtime.Gosched()
 	frame.RAX = 0
 }
 
 // --- Syscall 8: sys_sleep ---
-// RDI = ticks
+// RDI = ticks (10 ms each at 100 Hz PIT)
 
 func sysSleepHandler(frame *SyscallFrame) {
 	ticks := uint64(frame.RDI)
 	if ticks > 0 {
-		taskSleep(ticks)
+		time.Sleep(time.Duration(ticks) * 10 * time.Millisecond)
 	}
 	frame.RAX = 0
 }

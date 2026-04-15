@@ -206,7 +206,10 @@ func apEntry(apIndex uint64) {
 	serialPutChar('\r')
 	serialPutChar('\n')
 
-	// Halt forever (interrupts disabled on AP).
+	// Idle: enable interrupts and halt until an IPI arrives. v1 does
+	// not send IPIs; SMP v2 will use them for cross-CPU goroutine
+	// wakeups.
+	sti()
 	for {
 		hlt()
 	}

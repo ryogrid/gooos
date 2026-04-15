@@ -359,10 +359,8 @@ func main() {
 	fsCreate("hello.txt")
 	fsWrite("hello.txt", []byte("Hello from the gooos filesystem!\nThis is a test file.\n"))
 
-	// Enable preemptive scheduling.
-	schedReady = true
-	vgaWriteLine(14, "Scheduler: running")
-	serialPrintln("Scheduler: running (round-robin, PIT preemption)")
+	vgaWriteLine(14, "Scheduler: TinyGo goroutines active")
+	serialPrintln("Scheduler: TinyGo goroutines active")
 
 	// Load shell and jump to Ring 3. Does not return.
 	setupUserspace()
