@@ -140,52 +140,60 @@ func ring3Wrapper(proc *Process) {
 	// Allow Ring 3 to trigger int 0x80 each time a Ring-3 goroutine
 	// enters; safe to call repeatedly.
 	setGateDPL3(0x80)
+	// Switch into this process's PML4 before entering Ring 3.
+	// gooosOnResume covers every subsequent goroutine resume, but
+	// the very first scheduler dispatch fired before we registered
+	// ourselves in gInfoByTask, so the hook short-circuited and the
+	// boot PML4 is still active. Install the per-process PML4 now.
+	if proc.pml4 != 0 {
+		writeCR3(proc.pml4)
+	}
 	jumpToRing3(proc.EntryPoint, proc.StackTop)
 	// unreachable
 }
 
-// elfExec loads an ELF binary, maps its segments, spawns a
-// ring3Wrapper goroutine for it, and blocks until the child exits.
-// Returns the child's exit code and true on success.
-func elfExec(filename, args string, parent *Process) (uintptr, bool) {
+// elfSpawn loads an ELF binary, allocates a fresh PML4,
+// populates the child's user pages via paddr-only writes, and
+// spawns a ring3Wrapper goroutine for it. Returns the *Process
+// immediately; the caller invokes processWait to block on the
+// child's exit code.
+//
+// Per impldoc/shell_io_multiprocess.md §3, the kernel does NOT
+// touch the parent's address space here. With per-process PML4
+// the parent and child are in separate address spaces; no
+// save/restore dance is needed.
+//
+// Hard rule: the kernel writes child page contents through the
+// physical address returned by allocPage (identity-mapped in
+// the boot kernel half). It never dereferences a vaddr that is
+// only mapped in the child's PML4.
+func elfSpawn(filename, args string, parent *Process) (*Process, bool) {
 	data := fsSendRead(filename)
 	if data == nil {
-		serialPrintln("elfExec: file not found: " + filename)
-		return 0, false
+		serialPrintln("elfSpawn: file not found: " + filename)
+		return nil, false
 	}
 
 	entry, phdrs, ok := elfParse(data)
 	if !ok {
-		serialPrintln("elfExec: invalid ELF: " + filename)
-		return 0, false
-	}
-
-	// Save the parent's user page mappings.
-	savedParent.Count = parent.UserPageCnt
-	for i := 0; i < parent.UserPageCnt; i++ {
-		savedParent.Vaddrs[i] = parent.UserPages[i]
-		savedParent.Paddrs[i] = parent.UserPaddrs[i]
-	}
-
-	// Unmap parent's user pages (physical pages survive — they will
-	// be re-mapped on processExit).
-	for i := 0; i < parent.UserPageCnt; i++ {
-		unmapPage(parent.UserPages[i])
+		serialPrintln("elfSpawn: invalid ELF: " + filename)
+		return nil, false
 	}
 
 	child := &Process{
 		parent:  parent,
 		exitCh:  make(chan uintptr, 1),
-		poolIdx: -1, // populated by ring3Wrapper from ring3StackPool
+		poolIdx: -1,
 	}
-	// fd inheritance: shallow copy of parent's table so the child
-	// sees the same console / file / pipe ends. POSIX semantics —
-	// see impldoc/shell_io_fd_table.md §6.
+	child.pml4 = newProcPML4()
+
+	// fd inheritance — shallow copy of parent's table.
 	for i := 0; i < procMaxFDs; i++ {
 		child.fds[i] = parent.fds[i]
 	}
 
-	// Copy arguments.
+	// Copy arguments into the Process struct (not user vaddrs
+	// yet — that page-write happens via paddr below).
 	child.ArgLen = len(args)
 	if child.ArgLen > 256 {
 		child.ArgLen = 256
@@ -196,38 +204,43 @@ func elfExec(filename, args string, parent *Process) (uintptr, bool) {
 
 	userFlags := uintptr(pagePresent | pageWrite | pageUser)
 
-	// Map and load each PT_LOAD segment.
+	// Map and load each PT_LOAD segment into the child's PML4.
+	// Page contents are written through the paddr (identity-
+	// mapped in the kernel half), never via the child vaddr.
 	for i := 0; i < len(phdrs); i++ {
 		ph := &phdrs[i]
 		startPage := ph.Vaddr &^ (pageSize - 1)
 		endAddr := ph.Vaddr + uintptr(ph.Memsz)
 
 		for addr := startPage; addr < endAddr; addr += pageSize {
-			if walkAndGetPaddr(addr) != 0 {
-				continue
+			if walkAndGetPaddrIn(child.pml4, addr) != 0 {
+				continue // already mapped by an earlier segment
 			}
 			paddr := allocPage()
-			mapPage(addr, paddr, userFlags)
+			mapPageInto(child.pml4, addr, paddr, userFlags)
 			processRecordPage(child, addr, paddr)
 		}
 
 		for j := uint64(0); j < ph.Filesz; j++ {
-			*(*byte)(unsafe.Pointer(ph.Vaddr + uintptr(j))) = data[ph.Offset+j]
+			vaddr := ph.Vaddr + uintptr(j)
+			paddr := walkAndGetPaddrIn(child.pml4, vaddr)
+			off := paddr + (vaddr & (pageSize - 1))
+			*(*byte)(unsafe.Pointer(off)) = data[ph.Offset+j]
 		}
 	}
 
 	// Argument page.
 	argPaddr := allocPage()
-	mapPage(argPageVaddr, argPaddr, userFlags)
+	mapPageInto(child.pml4, argPageVaddr, argPaddr, userFlags)
 	processRecordPage(child, argPageVaddr, argPaddr)
 	for i := 0; i < child.ArgLen; i++ {
-		*(*byte)(unsafe.Pointer(argPageVaddr + uintptr(i))) = child.ArgString[i]
+		*(*byte)(unsafe.Pointer(argPaddr + uintptr(i))) = child.ArgString[i]
 	}
 
 	// User stack (2 pages).
 	for i := uintptr(0); i < 2; i++ {
 		paddr := allocPage()
-		mapPage(userStackBase+i*pageSize, paddr, userFlags)
+		mapPageInto(child.pml4, userStackBase+i*pageSize, paddr, userFlags)
 		processRecordPage(child, userStackBase+i*pageSize, paddr)
 	}
 
@@ -239,16 +252,31 @@ func elfExec(filename, args string, parent *Process) (uintptr, bool) {
 		child.HeapBreak = (lastPh.Vaddr + uintptr(lastPh.Memsz) + pageSize - 1) &^ (pageSize - 1)
 	}
 
-	serialPrintln("elfExec: loaded " + filename)
-
-	// Spawn the Ring-3 goroutine and wait for it to send on exitCh.
+	serialPrintln("elfSpawn: loaded " + filename)
 	go ring3Wrapper(child)
-	exitCode := <-child.exitCh
+	return child, true
+}
+
+// processWait blocks the caller until proc exits and returns
+// the child's exit code.
+func processWait(proc *Process) uintptr {
+	exitCode := <-proc.exitCh
 	if !firstExecAudited {
 		firstExecAudited = true
 		stackSizeAudit()
 	}
-	return exitCode, true
+	return exitCode
+}
+
+// elfExec is preserved as a thin spawn+wait wrapper so existing
+// callers (sysExecHandler, the boot shell launcher) keep their
+// synchronous semantics without change.
+func elfExec(filename, args string, parent *Process) (uintptr, bool) {
+	child, ok := elfSpawn(filename, args, parent)
+	if !ok {
+		return 0, false
+	}
+	return processWait(child), true
 }
 
 // firstExecAudited gates the post-exec stack-size audit so it
@@ -267,28 +295,34 @@ func processExit(exitCode uintptr) {
 		}
 	}
 
+	// Free the user physical pages. With per-process PML4 the
+	// child's mappings live only in proc.pml4, so we don't have
+	// to unmap from the active PML4 (which is also proc.pml4 at
+	// this moment — about to be swapped + freed below).
 	for i := 0; i < proc.UserPageCnt; i++ {
-		unmapPage(proc.UserPages[i])
 		freePage(proc.UserPaddrs[i])
 	}
 	proc.UserPageCnt = 0
 	proc.ExitCode = exitCode
 
 	if proc.parent != nil {
-		userFlags := uintptr(pagePresent | pageWrite | pageUser)
-		for i := 0; i < savedParent.Count; i++ {
-			mapPage(savedParent.Vaddrs[i], savedParent.Paddrs[i], userFlags)
-		}
-		proc.parent.UserPageCnt = savedParent.Count
-		for i := 0; i < savedParent.Count; i++ {
-			proc.parent.UserPages[i] = savedParent.Vaddrs[i]
-			proc.parent.UserPaddrs[i] = savedParent.Paddrs[i]
-		}
 		serialPrintln("processExit: child exit code " + utoa(uint64(exitCode)) +
 			", resuming parent")
 		proc.exitCh <- exitCode
 	} else {
 		serialPrintln("processExit: no parent, halting")
+	}
+
+	// Switch CR3 back to the boot PML4 before freeing the
+	// per-process PML4 — otherwise the kernel would be running
+	// on freed pages once freeProcPML4 returned them to the
+	// allocator. The kernel half is identity-mapped in both
+	// PML4s so this swap is observationally a no-op for kernel
+	// code, but it makes the freed pages safe to reuse.
+	if proc.pml4 != 0 && bootPML4 != 0 {
+		writeCR3(bootPML4)
+		freeProcPML4(proc.pml4)
+		proc.pml4 = 0
 	}
 
 	// Clear this goroutine's mapping and park forever. processExit

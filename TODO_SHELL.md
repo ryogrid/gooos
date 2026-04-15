@@ -212,26 +212,42 @@ The per-process PML4 design (keep user vaddrs at link-time
     (Process.pml4 is always 0 in this commit; pipe
     harness PASS unchanged).
 
-- [ ] **4e** — `elfSpawn` + `processWait` split.
-  - [ ] Split `elfExec` into `elfSpawn(name, args, parent)
-    → (*Process, fdErr)` + `processWait(*Process)
-    → (uintptr, fdErr)`. `elfExec` becomes
-    `spawn + wait`.
-  - [ ] Add `Process.pml4`, `Process.pid`, `procByPID
-    map[uint32]*Process`, `nextPID uint32 = 1`,
-    `allocPID`.
-  - [ ] `registerProc(*Process)` / `unregisterProc(*Process)`
-    helpers update both `procByTask` and `procByPID`
-    (resolves multiprocess.md §14 Q3).
-  - [ ] `elfSpawn` allocates `child.pml4 = newProcPML4()`,
-    populates user mappings via `mapPageInto`, writes
-    PT_LOAD bytes via paddr only.
-  - [ ] `ring3Wrapper` calls `writeCR3(proc.pml4)` after
-    `tssSetRSP0ForCurrentG`, before `jumpToRing3`.
-  - [ ] `processExit` calls `freeProcPML4(proc.pml4)`
-    after page free.
-  - [ ] Verify: `make build` clean; 10/10 sendkey (single
-    process exec via the new path; no concurrency yet).
+- [x] **4e** — `elfSpawn` + `processWait` split.
+  - [x] Split `elfExec` into `elfSpawn(name, args, parent)
+    → (*Process, bool)` + `processWait(*Process) uintptr`.
+    `elfExec` becomes `spawn + wait` thin wrapper.
+  - [x] `Process.pml4` populated via `newProcPML4`.
+  - [x] `elfSpawn` populates user mappings via
+    `mapPageInto`; writes PT_LOAD bytes through paddr
+    (no kernel deref of child-only vaddr).
+  - [x] `ring3Wrapper` calls `writeCR3(proc.pml4)` after
+    `tssSetRSP0ForCurrentG`, before `jumpToRing3` (covers
+    the first scheduler dispatch where gooosOnResume
+    short-circuits because gInfoByTask isn't populated
+    yet).
+  - [x] `processExit` switches CR3 back to `bootPML4`
+    BEFORE calling `freeProcPML4(proc.pml4)` — otherwise
+    the kernel would be running on freed pages once the
+    PT/PD/PDP/PML4 pages went back to the allocator.
+  - [x] **Critical PML4 design fix**: original
+    `newProcPML4` shared the boot PDP itself via
+    `pml4SharedKernelPDP` (single physical page). That
+    caused per-process mappings under PDP[1+] to leak
+    into bootPML4 because both PML4s pointed at the same
+    PDP. Fix: each per-process PML4 gets its OWN PDP,
+    and only that per-process PDP's [0] entry copies
+    the boot PD pointer (verbatim PDP[0] entry — `pml4
+    SharedKernelPDP0`). Caught by the first PF-after-
+    exit on the regression run.
+  - [x] `procByPID` / `sys_spawn`/`sys_wait` deferred to
+    4g (this commit keeps the `procByTask` registry
+    only).
+  - [x] `savedParent` left in place but no longer
+    written/read; cleanup in 4f.
+  - [x] Verify: `make build` clean; 10/10 sendkey
+    (every shell command runs via the new
+    elfSpawn → processWait path on its own per-proc PML4);
+    test_redirect, test_pipe, test_fd_probe all PASS.
 
 - [ ] **4f** — `savedParent` removal.
   - [ ] Drop the global `savedParent SavedMapping` in

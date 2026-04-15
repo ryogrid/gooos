@@ -194,6 +194,11 @@ func main() {
 	// process gets one slot via ring3Wrapper; the slot returns to
 	// the pool on processExit. Bounds the per-exec heap leak.
 	ring3StackPoolInit()
+
+	// Capture the boot PML4 phys addr. processExit (per-process
+	// PML4 path) writes CR3 back to this before freeing a child's
+	// PML4. See impldoc/shell_io_multiprocess.md §3.
+	captureBootPML4()
 	testVaddr := uintptr(0x40000000) // 1 GiB — outside the boot-time identity map
 	testPaddr := allocPage()         // allocate a physical page from free memory
 	mapPage(testVaddr, testPaddr, pagePresent|pageWrite)
