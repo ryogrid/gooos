@@ -268,6 +268,87 @@ func walkAndGetPaddr(vaddr uintptr) uintptr {
 	return uintptr(*entry) &^ 0xFFF
 }
 
+// --- Per-process PML4 variants ---------------------------------------------
+//
+// The *In / *From helpers take an explicit PML4 physical
+// address instead of reading CR3. Used by impldoc/
+// shell_io_multiprocess.md §3 to populate a child process's
+// page tables before the kernel ever switches to that PML4.
+
+// mapPageInto is mapPage with an explicit PML4. The kernel
+// runs on its own boot PML4 throughout the call; the per-
+// process PML4 only becomes active when gooosOnResume swaps
+// CR3 (phase 4d).
+func mapPageInto(pml4, vaddr, paddr, flags uintptr) {
+	pml4Idx := (vaddr >> 39) & 0x1FF
+	pdpIdx := (vaddr >> 30) & 0x1FF
+	pdIdx := (vaddr >> 21) & 0x1FF
+	ptIdx := (vaddr >> 12) & 0x1FF
+
+	pdp := walkOrCreate(pml4, pml4Idx, flags)
+	pd := walkOrCreate(pdp, pdpIdx, flags)
+	pt := walkOrCreate(pd, pdIdx, flags)
+
+	entry := (*uint64)(unsafe.Pointer(pt + ptIdx*8))
+	*entry = uint64(paddr&^0xFFF) | uint64(flags)
+}
+
+// unmapPageFrom is unmapPage with an explicit PML4. Does NOT
+// invlpg — the caller is not running on `pml4`, so its TLB
+// entry can't be present. When the caller eventually loads
+// `pml4` into CR3, the swap flushes the TLB anyway.
+func unmapPageFrom(pml4, vaddr uintptr) {
+	pml4Idx := (vaddr >> 39) & 0x1FF
+	pdpIdx := (vaddr >> 30) & 0x1FF
+	pdIdx := (vaddr >> 21) & 0x1FF
+	ptIdx := (vaddr >> 12) & 0x1FF
+
+	pdp := walkExisting(pml4, pml4Idx)
+	if pdp == 0 {
+		return
+	}
+	pd := walkExisting(pdp, pdpIdx)
+	if pd == 0 {
+		return
+	}
+	pt := walkExisting(pd, pdIdx)
+	if pt == 0 {
+		return
+	}
+	entry := (*uint64)(unsafe.Pointer(pt + ptIdx*8))
+	*entry = 0
+}
+
+// walkAndGetPaddrIn is walkAndGetPaddr with an explicit PML4.
+// Used by elfSpawn (phase 4e) to find the physical page backing
+// a child's vaddr, so the kernel can populate the page through
+// the identity-mapped paddr without dereferencing the child's
+// vaddr.
+func walkAndGetPaddrIn(pml4, vaddr uintptr) uintptr {
+	pml4Idx := (vaddr >> 39) & 0x1FF
+	pdpIdx := (vaddr >> 30) & 0x1FF
+	pdIdx := (vaddr >> 21) & 0x1FF
+	ptIdx := (vaddr >> 12) & 0x1FF
+
+	pdp := walkExisting(pml4, pml4Idx)
+	if pdp == 0 {
+		return 0
+	}
+	pd := walkExisting(pdp, pdpIdx)
+	if pd == 0 {
+		return 0
+	}
+	pt := walkExisting(pd, pdIdx)
+	if pt == 0 {
+		return 0
+	}
+	entry := (*uint64)(unsafe.Pointer(pt + ptIdx*8))
+	if *entry&uint64(pagePresent) == 0 {
+		return 0
+	}
+	return uintptr(*entry) &^ 0xFFF
+}
+
 // handlePageFault displays the faulting address and error code on VGA
 // and serial, then halts. Page faults are fatal in this kernel.
 //

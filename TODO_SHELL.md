@@ -168,15 +168,17 @@ The per-process PML4 design (keep user vaddrs at link-time
     (writeCR3 not yet called from anywhere — ISR-lint
     sees no caller; future 4d wires it).
 
-- [ ] **4b** — variant page-table helpers.
-  - [ ] `mapPageInto(pml4, vaddr, paddr, flags)` in
+- [x] **4b** — variant page-table helpers.
+  - [x] `mapPageInto(pml4, vaddr, paddr, flags)` in
     `src/vm.go`.
-  - [ ] `unmapPageFrom(pml4, vaddr)`.
-  - [ ] `walkAndGetPaddrIn(pml4, vaddr) uintptr`.
-  - [ ] Existing helpers refactored to thin wrappers
-    over the *In variants (or kept as-is — pick whichever
-    minimizes diff).
-  - [ ] Verify: `make build` clean; 10/10 sendkey.
+  - [x] `unmapPageFrom(pml4, vaddr)` (no `invlpg` —
+    caller's TLB doesn't have the entry; CR3 swap will
+    flush when the proc actually runs).
+  - [x] `walkAndGetPaddrIn(pml4, vaddr) uintptr`.
+  - [x] Existing CR3-reading helpers kept as-is to
+    minimize diff (kernel paths still use them).
+  - [x] Verify: `make build` clean; 10/10 sendkey
+    (helpers unused so far; lint sees them as unused).
 
 - [ ] **4c** — `newProcPML4` / `freeProcPML4`.
   - [ ] Allocate fresh PML4 + per-process PDP page; set
