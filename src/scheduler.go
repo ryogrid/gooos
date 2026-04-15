@@ -58,8 +58,8 @@ func taskReturnHaltAddr() uintptr
 // Allocates a per-task kernel stack for task 0 (the shell).
 func initScheduler() {
 	// Allocate kernel stack for task 0 (2 pages = 8 KiB).
-	kernelStackBase := allocPage()
-	allocPage() // second contiguous page
+	// Must be physically contiguous — use allocPagesContig, not two allocPage calls.
+	kernelStackBase := allocPagesContig(2)
 	kernelStackTop := kernelStackBase + 2*pageSize
 
 	tasks[0] = Task{State: taskRunning, ID: 0, KernelStackTop: kernelStackTop}
@@ -114,9 +114,10 @@ func createTask(entryAddr uintptr) uint32 {
 	// Allocate a per-task kernel stack (8 KiB = 2 pages) for Ring 3→Ring 0
 	// transitions via TSS RSP0. Each task gets its own kernel stack so
 	// ISR frames from different tasks do not overwrite each other.
+	// Must be physically contiguous — use allocPagesContig (bump), not allocPage
+	// (which may return non-contiguous pages from the LIFO free stack).
 	const kernelStackPages = 2
-	kernelStackBase := allocPage()
-	allocPage() // second contiguous page (bump allocator)
+	kernelStackBase := allocPagesContig(kernelStackPages)
 	kernelStackTop := kernelStackBase + kernelStackPages*pageSize
 
 	sp := stackTop

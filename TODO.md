@@ -64,7 +64,6 @@
 ### Workarounds (should be properly fixed)
 - **Kernel GC set to `leaking`**: `src/target.json` `"gc": "leaking"` (was `"conservative"`). Conservative GC's metadata memset corrupts page tables during mark phase. Proper fix: restructure memory layout so GC metadata region does not overlap page table memory, then restore `"gc": "conservative"`.
 - **GC demo disabled**: `src/main.go` — `runtime.GC()` call and GC demo code commented out. Restore when conservative GC is re-enabled.
-- **Page allocator is bump-only (no free list)**: `src/vm.go` `freePage()` is a no-op. Free list was disabled because freed pages' next-pointers corrupted page table entries when pages were reused. Proper fix: implement a safe free list that zeroes the next-pointer field before returning a page, or use a bitmap allocator.
 - **Schedule switch logging disabled**: `src/scheduler.go` — `serialPrint("Switch: ...")` commented out to avoid kernel heap allocation (`utoa` string concat) in ISR context, which could trigger GC.
 
 ### Functional limitations

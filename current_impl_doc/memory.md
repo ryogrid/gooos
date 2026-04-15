@@ -2,26 +2,55 @@
 
 ## Page Allocator (`src/vm.go`)
 
-**Bump-only allocator** — no free list. `freePage()` is intentionally a no-op.
+**Bump + LIFO free stack.** Freed pages are pushed onto an external stack in `.bss` and reused by the next `allocPage()`; when the stack is empty, `allocPage()` falls back to bumping `nextFreePage`.
 
 ```go
-var nextFreePage uintptr  // initialized by vmInit() from _alloc_start
+const freeStackCap = 4096 // 32 KiB metadata in .bss
+
+var (
+    nextFreePage uintptr
+    freeStack    [freeStackCap]uintptr
+    freeStackLen int
+)
 
 func allocPage() uintptr {
-    page := nextFreePage
-    nextFreePage += pageSize  // 4096
-    // Zero the entire page (required for page table entries)
-    return page
+    // cli/sti guarded via readFlags/restoreFlags
+    if freeStackLen > 0 {
+        freeStackLen--
+        page := freeStack[freeStackLen]
+        // zero, then return
+    } else {
+        page := nextFreePage
+        nextFreePage += pageSize
+        // zero, then return
+    }
 }
 
 func freePage(paddr uintptr) {
-    // No-op: pages are leaked to avoid free list corruption
+    // zero the page, then push onto freeStack
+    // if stack full, leak (bump has ~950 MiB headroom)
 }
 ```
 
-**Why no free list**: The previous free list implementation stored a next-pointer in the first 8 bytes of each freed page. When these pages were reallocated as page table entries or user data, the stale next-pointer data caused page table corruption and crashes on the second external command execution.
+**Safety notes**:
 
-**Address space**: `nextFreePage` starts at `_alloc_start` (after `.pagetables` section, typically `0x6D5000`+). The 1 GiB identity map provides ~950 MiB of allocatable space, sufficient for short-lived shell sessions.
+- Metadata lives OUTSIDE freed pages — unlike the previous free-list-in-freed-pages design, there is no stale next-pointer to be misread as PTE bits when a freed page is later reused as an intermediate page table.
+- `freePage` zeros the page before pushing; `allocPage` zeros again on pop. A reused page reads as all-zeros from the moment it is handed back.
+- `cli`/`readFlags`/`restoreFlags` bracket the stack push/pop so a timer ISR cannot observe a half-updated `freeStackLen`.
+
+### Contiguous multi-page allocation
+
+`allocPage` does **not** guarantee physical contiguity across successive calls (the free stack is LIFO, not linear). For multi-page structures accessed as a single flat region via the identity map — primarily **per-task kernel stacks** in `scheduler.go` — use `allocPagesContig(n)`, which always bumps and never pops from the free stack.
+
+```go
+// scheduler.go — 2-page (8 KiB) kernel stack per task, must be contiguous
+kernelStackBase := allocPagesContig(2)
+kernelStackTop := kernelStackBase + 2*pageSize
+```
+
+User-space multi-page regions (ELF segments, user stack, sbrk heap) are mapped one page at a time via `mapPage(vaddr+i*pageSize, allocPage(), ...)`, so each individual page is free to come from the LIFO stack.
+
+**Address space**: `nextFreePage` starts at `_alloc_start` (after `.pagetables` section, typically `0x6DD000`+). The 1 GiB identity map provides ~950 MiB of bump-allocatable space; plus the LIFO stack reuses pages freed by `processExit`, so a shell running repeated commands no longer exhausts memory.
 
 ## Virtual Memory (4-Level Page Tables)
 

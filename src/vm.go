@@ -64,9 +64,18 @@ func invlpg(addr uintptr)
 // nextFreePage is the bump allocator's next available physical address.
 var nextFreePage uintptr
 
-// freeListHead was used for the singly-linked free page list.
-// Disabled: bump-only allocator for correctness (no free list corruption).
-// var freeListHead uintptr
+// freeStackCap bounds the external free stack. 4096 entries × 8 bytes =
+// 32 KiB of .bss metadata, enough to hold ~16 MiB of reclaimable pages.
+const freeStackCap = 4096
+
+// freeStack is a LIFO of freed physical page addresses. Storing the
+// metadata OUTSIDE the freed pages avoids the old corruption bug where
+// a next-pointer stored in a freed page was misread as PTE bits when
+// the page was later reused as an intermediate page table.
+var (
+	freeStack    [freeStackCap]uintptr
+	freeStackLen int
+)
 
 // vmInit initializes the page frame allocator.
 // Must be called before mapPage or allocPage.
@@ -77,27 +86,65 @@ func vmInit() {
 }
 
 // allocPage returns the physical address of a zeroed 4 KiB page.
-// Uses a bump allocator (nextFreePage++). Free list is disabled.
+// Prefers the LIFO free stack; falls back to the bump allocator.
 func allocPage() uintptr {
-	page := nextFreePage
-	nextFreePage += pageSize
-	// Zero the page (required for new page table entries).
+	flags := readFlags()
+	cli()
+
+	var page uintptr
+	if freeStackLen > 0 {
+		freeStackLen--
+		page = freeStack[freeStackLen]
+	} else {
+		page = nextFreePage
+		nextFreePage += pageSize
+	}
+
+	restoreFlags(flags)
+
 	for i := uintptr(0); i < pageSize; i += 8 {
 		*(*uint64)(unsafe.Pointer(page + i)) = 0
 	}
 	return page
 }
 
-// freePage is a no-op: pages are not recycled to avoid free list
-// corruption issues. The bump allocator has sufficient address space
-// within the 1 GiB identity map for short-lived shell sessions.
+// allocPagesContig returns the physical address of n physically contiguous
+// zeroed 4 KiB pages. Bypasses the LIFO free stack (which does not guarantee
+// contiguity) and always bump-allocates. Used for kernel stacks and other
+// multi-page structures accessed as a single flat region via the identity map.
+func allocPagesContig(n int) uintptr {
+	flags := readFlags()
+	cli()
+	base := nextFreePage
+	nextFreePage += uintptr(n) * pageSize
+	restoreFlags(flags)
+
+	total := uintptr(n) * pageSize
+	for i := uintptr(0); i < total; i += 8 {
+		*(*uint64)(unsafe.Pointer(base + i)) = 0
+	}
+	return base
+}
+
+// freePage returns a physical page to the allocator. The page is zeroed
+// before being pushed so that if walkOrCreate reuses it as an intermediate
+// page table, every PTE slot reads as non-present. If the free stack is
+// full the page is leaked (bump allocator has ~950 MiB of headroom).
 func freePage(paddr uintptr) {
-	// Intentionally empty — pages are leaked.
-	// This trades memory for correctness: the bump allocator
-	// (nextFreePage) never revisits freed pages, eliminating
-	// the class of bugs where free list links are corrupted
-	// by stale TLB entries or double-free.
-	_ = paddr
+	if paddr == 0 {
+		return
+	}
+	for i := uintptr(0); i < pageSize; i += 8 {
+		*(*uint64)(unsafe.Pointer(paddr + i)) = 0
+	}
+
+	flags := readFlags()
+	cli()
+	if freeStackLen < freeStackCap {
+		freeStack[freeStackLen] = paddr
+		freeStackLen++
+	}
+	restoreFlags(flags)
 }
 
 // mapPage maps a 4 KiB virtual page to a physical page.

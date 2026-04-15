@@ -13,14 +13,7 @@
 - **File**: `src/main.go` — GC demo code commented out
 - **Impact**: The boot-time GC test (`runtime.GC()`, `ReadMemStats`) is skipped. Restore when conservative GC is re-enabled.
 
-### 3. Page Allocator is Bump-Only (No Free List)
-- **File**: `src/vm.go` — `freePage()` is a no-op
-- **Symptom**: The previous free list stored a next-pointer in the first 8 bytes of freed pages. When these pages were reallocated (e.g., as page table entries), the stale next-pointer data was interpreted as PTE entries, causing page table corruption. The second external command always crashed with `PF: addr=0x40200000`.
-- **Workaround**: `freePage()` does nothing; `allocPage()` only bumps `nextFreePage`.
-- **Proper fix**: Implement a safe allocator (bitmap-based, or zero the next-pointer field in allocPage after popping from free list before any other use).
-- **Impact**: Pages are never reclaimed. Each `sys_exec` leaks ~261 pages (5 PT_LOAD + arg + stack + 256 sbrk). With ~950 MiB available in the identity map, this supports ~3700 external command executions before exhaustion.
-
-### 4. Schedule Switch Logging Disabled
+### 3. Schedule Switch Logging Disabled
 - **File**: `src/scheduler.go` — `serialPrint("Switch: ...")` commented out
 - **Reason**: `utoa()` for task ID formatting allocates on the kernel Go heap (string concatenation). In ISR context (timer handler), this could trigger the GC (when enabled), causing reentrancy issues or metadata corruption.
 - **Impact**: No serial log of task switches. Uncomment for debugging, but be aware of heap allocation side effects.
@@ -41,7 +34,6 @@
 - **Single address space**: All user processes share the same page table (CR3). Parent pages are unmapped during child exec and restored on exit. Concurrent user processes are not supported.
 
 ### Shell
-- **Free list test stale**: `main.go` still has a free-list allocator test (`allocPage → freePage → allocPage`) that prints "FAIL" at boot because `freePage` is now a no-op. The test should be removed or updated.
 - **echo is built-in only**: `echo` runs as a shell function, not a separate ELF binary.
 - **wc command untested**: Built and embedded but not verified via automated tests.
 

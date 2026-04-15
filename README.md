@@ -12,7 +12,7 @@ An experimental x86_64 operating system written in **Go (TinyGo) + GNU assembly*
 | IDT + interrupt handlers | Done | 256-entry IDT, ISR assembly stubs with Go dispatcher, PIC 8259A remap (IRQs → vectors 32-47) |
 | PIT / timer | Done | PIT channel 0 at 100 Hz, global tick counter, preemption-ready |
 | PS/2 keyboard driver | Done | IRQ1 handler, scancode set 1 → ASCII (lowercase + punctuation), VGA echo |
-| Virtual memory management | Done | Page fault handler, `mapPage`/`unmapPage` with 4 KiB granularity, bump-only page allocator |
+| Virtual memory management | Done | Page fault handler, `mapPage`/`unmapPage` with 4 KiB granularity, bump + LIFO free stack with `allocPagesContig` for kernel stacks |
 | Scheduler | Done | Preemptive round-robin, per-task kernel stacks, PIT-driven task switching, TSS RSP0 update on context switch |
 | Userspace | Done | Ring 3 execution via `iretq`, TSS for privilege transitions, `int 0x80` syscall interface (12 syscalls) |
 | Filesystem | Done | In-memory flat filesystem: `Create`/`Write`/`Read`/`List`/`Delete` (32 entries, 40 KiB each) |
