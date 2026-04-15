@@ -182,7 +182,20 @@ func gooosOnResume() {
 		return
 	}
 	tssSetRSP0(gi.stackTop)
-	if gi.proc != nil && gi.proc.pml4 != 0 {
-		writeCR3(gi.proc.pml4)
+	// Install the correct PML4 for this Ring-3 goroutine. A
+	// non-zero proc.pml4 is a per-process PML4 from newProcPML4
+	// (elfSpawn path). The boot shell (launched via elfLoad
+	// before per-process PML4 landed) has pml4=0; fall back to
+	// bootPML4 in that case so CR3 doesn't stay pointing at
+	// some OTHER process's PML4 that the scheduler just
+	// switched out of.
+	if gi.proc != nil {
+		pml4 := gi.proc.pml4
+		if pml4 == 0 {
+			pml4 = bootPML4
+		}
+		if pml4 != 0 {
+			writeCR3(pml4)
+		}
 	}
 }
