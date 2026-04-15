@@ -17,9 +17,11 @@ One git commit per top-level item. Check off when that commit lands.
   - [x] Re-apply patch; `make build` clean (kernel).
   - [x] `bash tmp/test_sendkey.sh 1` PASS (`trial=1 pf=0 exit=3 cat=1`).
 
-- [ ] **2. `user/gooos/runtime_hooks.go`**
-  - [ ] Add Go file with `gooosOnResume` (no-op) +
+- [x] **2. `user/gooos/runtime_hooks.go`**
+  - [x] Add Go file with `gooosOnResume` (no-op) +
         `gooosStackOverflow` (sys_write + sys_exit).
+        Dead code until TODO 3 flips scheduler=tasks, but
+        `make build` stays clean.
 
 - [ ] **3. Flip `user/target.json` to tasks scheduler**
   - [ ] `scheduler=tasks`, `default-stack-size=8192`,
