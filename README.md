@@ -321,6 +321,17 @@ $ hello
 Hello, World from gooos userspace!
 ```
 
+## Known limitations
+
+- **Sleep granularity is 10 ms.** `time.Sleep` (and the local
+  `afterTicks` replacement in `src/afterticks.go`) build on
+  the PIT counter at 100 Hz, so any requested duration rounds
+  up to the next 10 ms tick. No kernel goroutine currently
+  needs sub-10-ms sleep; if a future caller does, retrofit
+  `~/.local/tinygo/src/runtime/runtime_gooos.go:sleepTicks`
+  to use the LAPIC timer in one-shot mode (see
+  `impldoc/deferred_hygiene.md §6` for the design sketch).
+
 ## Documentation
 
 See `current_impl_doc/` for detailed implementation documentation:

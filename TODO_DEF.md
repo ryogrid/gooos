@@ -166,9 +166,12 @@ verification step pass. One commit per top-level item.
 
 ### `deferred_hygiene.md §6` (item 11, doc-only)
 
-- [ ] **Item 11** — 10 ms PIT sleep floor accepted as a
+- [x] **Item 11** — 10 ms PIT sleep floor accepted as a
   documented limitation.
-  - [ ] Note the floor in `README.md`.
+  - [x] `README.md` "Known limitations" section now records
+    the 10 ms floor and points at
+    `impldoc/deferred_hygiene.md §6` for the LAPIC-one-shot
+    follow-up if a sub-10-ms caller ever appears.
 
 ### `deferred_smp_v2.md` — SMP v2 (items 1–5)
 
