@@ -18,9 +18,13 @@ An experimental x86_64 operating system written in **Go (TinyGo) + GNU assembly*
 | Filesystem | Done | In-memory flat filesystem: `Create`/`Write`/`Read`/`List`/`Delete` (32 entries, 40 KiB each); served by `fsTask` goroutine over native `chan *fsRequest` |
 | SMP | Done (v1) | ACPI MADT AP discovery, 16-bit real-mode trampoline, INIT-SIPI-SIPI. APs idle at `sti; hlt`; BSP runs all goroutines. SMP v2 (per-CPU runqueues + work stealing + LAPIC IPI) is deferred; see `impldoc/deferred_smp_v2.md` and `TODO_DEF.md` "Further deferred" — needs a TinyGo runtime fork |
 | Channel IPC + select | Done | **Native Go `chan` and `select`** in Ring 0. `fsReqCh`, `keyboardCh`, per-process `exitCh` are all `make(chan ...)` constructed by the TinyGo runtime |
-| Syscall ABI | Done | 12-syscall register-based dispatch: `sys_exit`, `sys_write`, `sys_read`, `sys_exec`, `sys_fs_read/write/list`, `sys_yield`, `sys_sleep`, `sys_getargs`, `sys_sbrk`, `sys_vga_clear` |
+| Syscall ABI | Done | 18-syscall register-based dispatch (all numbered; see `impldoc/shell_io_fd_table.md §5.1` for the canonical table): `sys_exit`, `sys_write(fd,buf,len)`, `sys_read(fd,buf,max)`, `sys_exec`, `sys_fs_read/write/list`, `sys_yield`, `sys_sleep`, `sys_getargs`, `sys_sbrk`, `sys_vga_clear`, `sys_open`, `sys_close`, `sys_dup2`, `sys_spawn`, `sys_wait`, `sys_pipe` |
 | ELF64 loader | Done | Parse ELF64 headers, map PT_LOAD segments, per-process page tracking, parent page save/restore for exec |
-| BusyBox-style shell | Done | Interactive shell (`sh.elf`) with built-in commands (help, echo, clear, exit) and external ELF commands (ls, cat, wc, hello) compiled with TinyGo |
+| BusyBox-style shell | Done | Interactive shell (`sh.elf`) with built-in commands (help, echo, clear, exit) and external ELF commands (ls, cat, wc, hello, fdprobe) compiled with TinyGo; supports `<`/`>`/`>>` redirection and N-stage `\|` pipes |
+| File descriptor table | Done | Per-process `Process.fds [16]` of `FileDesc`; `consoleStdin` / `consoleStdout` / `fileFd` / `pipeReader` / `pipeWriter` impls; inheritance on exec; refcounted close on pipe ends |
+| Shell redirection | Done | `cmd > file`, `cmd >> file`, `cmd < file` via shell-side `Open` + `Dup2` + `Close` dance; parser in `user/cmd/sh/parse.go` |
+| Concurrent pipes | Done | `cmd1 \| cmd2 \| ...` — N-stage pipelines; kernel `pipe` backed by a 4 KiB `chan byte`; writer-close → reader-EOF, reader-close → writer-EPIPE; stages run on their own per-process PML4s |
+| Multi-process | Done | Per-process PML4 sharing kernel PDP[0] with boot; CR3 swap on every goroutine resume via `gooosOnResume` (cached `gInfo.proc` for nosplit safety); `sys_spawn` + `sys_wait` for async exec; foreground-only stdin |
 | ISR-safety lint | Done | `make lint` — AST walker (`scripts/lint_isr.go`) flags string-concat, channel ops, `go` statements, and runtime allocations inside ISR-reachable functions; runs as a `make build` prereq |
 | Global-layout verification | Done | `make verify-globals` — asserts every TinyGo runtime queue (`runqueue`, `sleepQueue`, `timerQueue`) lands inside `_globals_start..end` so `findGlobals` covers it; `make build` prereq |
 | Ring-3 stack pool | Done | Each Ring-3 process draws an 8 KiB kernel stack from `ring3StackPool` (`src/ring3_pool.go`); slot returns on `processExit` so per-exec heap leak shrinks from ~8 KiB to ~1 KiB |
@@ -39,7 +43,7 @@ Go cannot express certain CPU-level operations. These remain in assembly:
 - **TinyGo runtime longjmp** (`runtime_asm_amd64.S`): `tinygo_longjmp` — same reason as above
 - **Ring 3 trampolines** (`switch.S`): `taskReturnHalt` safety net + `elfExecTrampolineAddr` legacy hook (both shrinking targets)
 - **AP trampoline** (`trampoline.S`): 16-bit real-mode → 32-bit → 64-bit mode transition for SMP
-- **Port I/O & CPU control** (`stubs.S`): `outb`/`inb`, `cli`/`sti`/`hlt`, `lidt`/`lgdt`/`ltr`, `invlpg`, CR2/CR3 access, `memcpy`/`memmove`/`memset`, `jumpToRing3`, `readFlags`/`restoreFlags`, `tinygo_scanCurrentStack`
+- **Port I/O & CPU control** (`stubs.S`): `outb`/`inb`, `cli`/`sti`/`hlt`, `lidt`/`lgdt`/`ltr`, `invlpg`, CR2 read / CR3 read+write (`readCR3`, `writeCR3`), `memcpy`/`memmove`/`memset`, `jumpToRing3`, `readFlags`/`restoreFlags`, `tinygo_scanCurrentStack`
 - **Synthetic ELF header** (`stubs.S`): Fake `__ehdr_start` in `.rodata` for GC's `findGlobals()`
 - **Keyboard IRQ ring** (`isr.S`, `keyboard_irq.go`): `.bss` head/tail/slot storage is assembled as 32-bit naturally-aligned mov's; x86-TSO makes the writes visible to `keyboardPump` without fences
 - **User startup** (`user/rt0.S`): `_start`, syscall wrappers (`syscall0`-`syscall4`), TinyGo runtime stubs (`mmap`, `write`, `abort`, `memcpy`, `memset`)
@@ -320,6 +324,12 @@ External commands:
   cat FILE   Display file contents
   wc FILE    Count lines, words, bytes
   hello      Print greeting
+  fdprobe    Verify the fd-table syscalls
+
+Redirection:
+  cmd > file       stdout to file (truncate)
+  cmd >> file      stdout to file (append)
+  cmd < file       stdin from file
 
 $ ls
 hello.txt
@@ -328,6 +338,14 @@ hello.elf
 ls.elf
 cat.elf
 wc.elf
+fdprobe.elf
+
+$ echo hello > out.txt
+$ cat out.txt
+hello
+
+$ echo world | cat | cat
+world
 
 $ cat hello.txt
 Hello from the gooos filesystem!
@@ -347,6 +365,16 @@ Hello, World from gooos userspace!
   `~/.local/tinygo/src/runtime/runtime_gooos.go:sleepTicks`
   to use the LAPIC timer in one-shot mode (see
   `impldoc/deferred_hygiene.md §6` for the design sketch).
+- **Shell does not support job control.** No `&` background
+  jobs, no `jobs` / `fg` / `bg` built-ins, no signals
+  (SIGINT, SIGPIPE). Foreground process is always the most
+  recently-spawned non-pipe-driven stage (or the shell
+  itself at the prompt). See
+  `impldoc/shell_io_overview.md §7` for the scope fences.
+- **No shell-level stderr redirection.** `2>` / `&>` / `>&`
+  are not parsed. Writing to fd 2 goes to serial only (no
+  VGA mirror); programs have no way to redirect fd 2
+  separately.
 
 ## Documentation
 
