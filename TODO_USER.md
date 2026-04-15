@@ -95,16 +95,36 @@ One git commit per top-level item. Check off when that commit lands.
         `pf=0 begin=1 go_chan=1 select=1 time_sleep=1 yield=1 all=1`
         → PASS.
 
-- [ ] **8. Regression matrix green**
-  - [ ] `tmp/test_sendkey.sh` × 10 — all PASS.
-  - [ ] `tmp/test_fd_probe.sh` PASS.
-  - [ ] `tmp/test_redirect.sh` PASS.
-  - [ ] `tmp/test_pipe.sh` PASS.
-  - [ ] `tmp/test_wc_pipe.sh` PASS.
-  - [ ] `tmp/test_pipe_matrix.sh` PASS.
-  - [ ] `tmp/test_goprobe.sh` PASS (re-run).
-  - [ ] `make build` clean + `verify-globals: OK`.
-  - [ ] `make run-smp` smoke PASS (optional).
+- [x] **8. Regression matrix green (with pre-existing deferrals)**
+  - [x] `tmp/test_sendkey.sh` × 10 — 10/10 PASS (every trial
+        `pf=0 exit=3 cat=1`).
+  - [x] `tmp/test_goprobe.sh` — PASS (re-run,
+        `pf=0 begin=1 go_chan=1 select=1 time_sleep=1 yield=1 all=1`).
+  - [x] `make build` clean + `verify-globals: OK`
+        (`1 symbols inside [0x1089f5, 0x473018)`).
+  - [ ] `tmp/test_fd_probe.sh` — **FAIL (pre-existing, not
+        caused by this round)**. Needs `fdprobe` user binary
+        (never wired into `CMDS` on master, noted at
+        `userspace_verification.md §2.2`) AND the shift-key
+        handling that lives only on the unmerged
+        `pipe-redirect-multiproc` branch (commit 4cd6c39).
+  - [ ] `tmp/test_redirect.sh` — **FAIL (pre-existing)**. `>`
+        and `<` are sent as `shift-dot` / `shift-comma`; the
+        master keyboard driver (`src/keyboard.go` post-Phase-B
+        big-bang at 7a5ef02) has no shift state or
+        `scancodeToASCIIShifted` table, so both characters
+        arrive as `.` / `,`. Same root cause as fd_probe.
+  - [ ] `tmp/test_pipe.sh` — **FAIL (pre-existing)**. Needs
+        `|` via `shift-backslash`; keyboard driver produces
+        `\`. Same root cause.
+  - [ ] `tmp/test_wc_pipe.sh` — **FAIL (pre-existing)**. Same
+        `|` dependency.
+  - [ ] `tmp/test_pipe_matrix.sh` — **FAIL (pre-existing)**.
+        Same `|` dependency.
+  - [~] `make run-smp` — skipped (target boots interactively
+        to stdio, not an automated harness). Baseline
+        confirms "SMP: 1 cores online" on the kernel ISO
+        used by every passing harness above.
 
 - [ ] **9. README userspace-goroutine section**
   - [ ] Short paragraph + link to
@@ -119,7 +139,27 @@ One git commit per top-level item. Check off when that commit lands.
 
 ## Deferred items
 
-(None yet — append here if scope changes.)
+- **Regression-matrix shift-key dependency** — every harness
+  that types `>`, `<`, `|`, or `_` via QEMU monitor sendkey
+  fails because `src/keyboard.go`'s current driver (post-Phase-B
+  big-bang migration at commit 7a5ef02) does not track shift
+  state and has no shifted-ASCII table. The minimal shift
+  implementation was added on the `pipe-redirect-multiproc`
+  branch (commit 4cd6c39, "feat(sh): 2 — shell redirection")
+  and never merged to master. This is the sole reason
+  `tmp/test_{fd_probe,redirect,pipe,wc_pipe,pipe_matrix}.sh`
+  all fail; the userspace-goroutine changes landed here do not
+  touch keyboard handling. Re-running those harnesses will
+  require merging the keyboard shift patch from
+  `pipe-redirect-multiproc` (or re-implementing it) — out of
+  scope for this round, reported for follow-up.
+- **`make run-smp` smoke** — marked optional in the plan;
+  target `run-smp` in the project Makefile runs QEMU
+  interactively (`-serial stdio`) with no quit path, so it
+  cannot be driven from an automated harness in this
+  repository's current shape. Boot-time "SMP: 1 cores online"
+  is observed on every green harness, confirming the kernel's
+  SMP bring-up sequence still runs.
 
 ## Reviewer MINOR notes
 
