@@ -114,17 +114,23 @@ verification step pass. One commit per top-level item.
 
 ### `deferred_gc_and_stacks.md §3` (item 7 mitigation)
 
-- [ ] **Item 7 (mitigation)** — stack-overflow diagnosis.
-  - [ ] Extend `src/panic.go` with
-    `serialPanicStackOverflow(t *task.Task)`.
-  - [ ] Patch
-    `~/.local/tinygo/src/internal/task/task_stack.go` —
-    call diagnostic from `Pause()` on canary mismatch.
-  - [ ] Extend `scripts/tinygo_runtime.patch` so the change
-    re-applies cleanly.
-  - [ ] Verify: deliberate 12 KiB recursive overflow emits
-    diagnostic. Revert trigger.
-  - [ ] Verify: 10/10 `bash tmp/test_sendkey.sh`.
+- [x] **Item 7 (mitigation)** — stack-overflow diagnosis.
+  - [x] Extend `src/panic.go` with
+    `gooosStackOverflow(t uintptr)` (no-alloc, `//go:nosplit`).
+    Prints `STACK OVERFLOW: task=... top=... canaryPtr=...`
+    on serial + VGA, then halts.
+  - [x] Patch `~/.local/tinygo/src/internal/task/task_stack.go`
+    `Pause()` to call the gooos hook (instead of falling
+    straight into `runtimePanic`) on canary mismatch.
+  - [x] Extend `scripts/tinygo_runtime.patch` with the new
+    hunk (state struct comment, linkname declaration,
+    Pause() body change). Verified by reverting +
+    re-applying cleanly via `scripts/patch_tinygo_runtime.sh`.
+  - [x] Verify: dev trigger that corrupts the canary
+    directly (more deterministic than recursion-based
+    overflow, which the auto-stack-size estimator absorbs)
+    fires the diagnostic on next yield. Trigger removed.
+  - [x] Verify: 10/10 `bash tmp/test_sendkey.sh`.
 
 ### `deferred_stack_reclaim.md` (item 9)
 

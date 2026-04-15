@@ -53,3 +53,38 @@ func appendHex(buf []byte, off int, v uint64) int {
 func bytesToString(b []byte) string {
 	return *(*string)(unsafe.Pointer(&b))
 }
+
+// gooosStackOverflow is invoked from the patched
+// internal/task.Pause() when a goroutine's stack canary check
+// fails. Prints the offending Task pointer plus its stackTop /
+// canary addresses on serial, then halts.
+//
+// The corrupted goroutine's stack is unreliable here, so the
+// helper allocates nothing, takes no parameters by value-copy of
+// any complex type, and is //go:nosplit.
+//
+// Linkname target matches the patched runtime side
+// (~/.local/tinygo/src/internal/task/task_stack.go).
+//
+//go:linkname gooosStackOverflow runtime.gooosStackOverflow
+//go:nosplit
+func gooosStackOverflow(t uintptr) {
+	off := 0
+	off = appendStr(panicHexBuf[:], off, "STACK OVERFLOW: task=")
+	off = appendHex(panicHexBuf[:], off, uint64(t))
+	if t != 0 {
+		top := *(*uintptr)(unsafe.Pointer(t + stackTopOffset))
+		canary := *(*uintptr)(unsafe.Pointer(t + stackTopOffset - 8))
+		off = appendStr(panicHexBuf[:], off, " top=")
+		off = appendHex(panicHexBuf[:], off, uint64(top))
+		off = appendStr(panicHexBuf[:], off, " canaryPtr=")
+		off = appendHex(panicHexBuf[:], off, uint64(canary))
+	}
+	vgaWriteLine(15, bytesToString(panicHexBuf[:off]))
+	serialPrintBytes(panicHexBuf[:off])
+	serialPutChar('\r')
+	serialPutChar('\n')
+	for {
+		hlt()
+	}
+}

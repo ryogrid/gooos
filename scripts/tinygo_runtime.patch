@@ -141,14 +141,35 @@
 +	// Ring-3 resume. See impldoc/phase_b_ring3_and_exec.md.
 +	stackTop uintptr // gooos
  }
- 
+
  // currentTask is the current running task, or nil if currently in the scheduler.
-@@ -80,6 +85,7 @@
+@@ -40,12 +45,19 @@
+ 	return currentTask
+ }
+
++//go:linkname gooosStackOverflow runtime.gooosStackOverflow
++func gooosStackOverflow(t uintptr)
++
+ // Pause suspends the current task and returns to the scheduler.
+ // This function may only be called when running on a goroutine stack, not when running on the system stack or in an interrupt.
+ func Pause() {
+ 	// Check whether the canary (the lowest address of the stack) is still
+-	// valid. If it is not, a stack overflow has occurred.
++	// valid. If it is not, a stack overflow has occurred. Call into gooos
++	// for a no-alloc diagnostic that survives the corrupted stack; the
++	// helper halts. Fall through to runtimePanic only as a defensive
++	// secondary if the gooos hook ever returns.
+ 	if *currentTask.state.canaryPtr != stackCanary {
++		gooosStackOverflow(uintptr(unsafe.Pointer(currentTask))) // gooos
+ 		runtimePanic("goroutine stack overflow")
+ 	}
+ 	if interrupt.In() {
+@@ -80,6 +92,7 @@
  	// the next stack switch, there was a stack overflow.
  	s.canaryPtr = (*uintptr)(stack)
  	*s.canaryPtr = stackCanary
 +	s.stackTop = uintptr(stack) + stackSize // gooos
- 
+
  	// Get a pointer to the top of the stack, where the initial register values
  	// are stored. They will be popped off the stack on the first stack switch
 --- a/src/internal/task/task_stack_amd64.go
