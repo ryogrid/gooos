@@ -1,25 +1,31 @@
 #!/usr/bin/env bash
-# Patch the TinyGo runtime with gooos-specific files required for
-# `scheduler=tasks` + bare-metal x86_64.
+# Apply scripts/tinygo_runtime.patch to the TinyGo tree rooted at
+# $TINYGO_SRC (default: $HOME/.local/tinygo/src).
 #
-# Required because `goos=linux` pulls in `runtime_unix.go` (libc
-# calls) and the `interrupt` package has no amd64-baremetal backend.
-# TinyGo has no overlay flag, and Go's package system does not allow
-# gooos's ./src to shadow runtime package files.
+# The patch installs four gooos-specific artifacts into TinyGo's
+# runtime — see scripts/tinygo_runtime.patch for the full unified
+# diff, and README.md § "User-writable TinyGo copy + runtime
+# patches" for what each artifact does:
 #
-# gooos's Makefile points TINYGOROOT at $HOME/.local/tinygo (a
-# user-writable copy of the system TinyGo tree). This script writes
-# the two gooos-specific files into that tree.
+#   src/runtime/runtime_gooos.go             (new file)
+#   src/runtime/interrupt/interrupt_gooos.go (new file)
+#   src/internal/task/task_stack.go          (adds state.stackTop)
+#   src/internal/task/task_stack_amd64.go    (gooosOnResume hook)
 #
-# Usage:
-#   bash scripts/patch_tinygo_runtime.sh
-#
-# Idempotent: re-running overwrites. Remove the two created files to
-# revert. Override TINYGO_SRC for a non-default TinyGo root.
+# Idempotent: re-running on an already-patched tree is a no-op.
+# A sentinel line in runtime_gooos.go is used to decide whether
+# the patch has been applied already; `patch --forward --batch`
+# is applied otherwise.
 
 set -euo pipefail
 
 TINYGO_SRC="${TINYGO_SRC:-$HOME/.local/tinygo/src}"
+PATCH_FILE="$(cd "$(dirname "$0")" && pwd)/tinygo_runtime.patch"
+
+if [[ ! -f "$PATCH_FILE" ]]; then
+    echo "error: patch file not found at $PATCH_FILE" >&2
+    exit 1
+fi
 
 if [[ ! -d "$TINYGO_SRC/runtime" ]]; then
     echo "error: TinyGo runtime not found at $TINYGO_SRC/runtime" >&2
@@ -27,213 +33,43 @@ if [[ ! -d "$TINYGO_SRC/runtime" ]]; then
     exit 1
 fi
 
-# --- runtime/runtime_gooos.go ---------------------------------------------
-cat > "$TINYGO_SRC/runtime/runtime_gooos.go" <<'GOOOS_RUNTIME'
-//go:build gooos && baremetal
+TINYGO_ROOT="$(dirname "$TINYGO_SRC")"
+SENTINEL_FILE="$TINYGO_SRC/runtime/runtime_gooos.go"
+SENTINEL_TEXT="gooos-local runtime bodies"
 
-// gooos-local runtime bodies for bare-metal x86_64 Ring 0.
-// Replaces the parts of runtime_unix.go incompatible with kernel
-// mode. The kernel defines putchar, pitTicks, and the cli/sti/hlt
-// primitives these stubs rely on.
-
-package runtime
-
-type timeUnit int64
-
-//go:linkname gooos_pitTicks main.pitTicks
-var gooos_pitTicks uint64
-
-// The kernel's assembly stubs in src/stubs.S use unqualified names
-// (no package prefix), so we link directly to those symbols.
-
-//go:linkname gooos_cli cli
-func gooos_cli()
-
-//go:linkname gooos_sti sti
-func gooos_sti()
-
-//go:linkname gooos_hlt hlt
-func gooos_hlt()
-
-// sleepTicks idles on the PIT counter until `d` ticks have elapsed.
-// The kernel's timer ISR increments gooos_pitTicks at 100 Hz.
-func sleepTicks(d timeUnit) {
-	deadline := gooos_pitTicks + uint64(d)
-	for gooos_pitTicks < deadline {
-		gooos_sti()
-		gooos_hlt()
-		gooos_cli()
-	}
-}
-
-func ticks() timeUnit { return timeUnit(gooos_pitTicks) }
-
-// 100 Hz PIT: one tick = 10 ms = 10_000_000 ns.
-func ticksToNanoseconds(t timeUnit) int64  { return int64(t) * 10_000_000 }
-func nanosecondsToTicks(ns int64) timeUnit { return timeUnit(ns / 10_000_000) }
-
-// tinygo_register_fatal_signals is provided by src/stubs.S (the
-// kernel has had this stub since before goroutine support). No Go
-// body needed here.
-
-// putchar writes a single byte to COM1. Used by runtime.printstring.
-//
-//go:linkname gooos_outb outb
-func gooos_outb(port uint16, value uint8)
-
-func putchar(c byte) { gooos_outb(0x3F8, c) }
-
-// buffered is a no-op on bare metal — no line-buffered stdio.
-func buffered() int { return 0 }
-
-// getchar is not used by gooos; return 0 to avoid pulling in stdin.
-func getchar() byte { return 0 }
-
-// exit / abort: kernel panic paths. No process to exit; halt forever.
-func exit(code int) {
-	for {
-		gooos_hlt()
-	}
-}
-
-func abort() {
-	for {
-		gooos_hlt()
-	}
-}
-
-// preinit is called by the runtime before initAll(). gooos's main.go
-// performs all hardware init in user main(), so preinit is a no-op.
-func preinit() {}
-
-// main is the C-ABI entry point called from boot.S after the
-// 32->64-bit bootstrap. run() initializes the heap, runs package
-// init functions, and invokes the user-written main in main.go.
-// If run() returns, halt forever.
-//
-//export main
-func main() {
-	preinit()
-	run()
-	exit(0)
-}
-
-// waitForEvents provided by wait_other.go (fallback). No override
-// needed — that fallback body is a no-op, acceptable here.
-GOOOS_RUNTIME
-
-# --- runtime/interrupt/interrupt_gooos.go ---------------------------------
-cat > "$TINYGO_SRC/runtime/interrupt/interrupt_gooos.go" <<'GOOOS_INTERRUPT'
-//go:build gooos && baremetal
-
-package interrupt
-
-//go:linkname gooos_readFlags readFlags
-func gooos_readFlags() uintptr
-
-//go:linkname gooos_restoreFlags restoreFlags
-func gooos_restoreFlags(flags uintptr)
-
-//go:linkname gooos_cli cli
-func gooos_cli()
-
-// Counter bumped by the gooos common ISR prologue / epilogue
-// (src/isr.S), defined as a .bss symbol there to avoid TinyGo's
-// dead-code elimination of Go-level vars only referenced from
-// assembly. Linkname target: unqualified "gooos_in_interrupt_depth".
-//
-//go:linkname gooos_inInterruptDepth gooos_in_interrupt_depth
-var gooos_inInterruptDepth uint32
-
-// State holds RFLAGS at the moment of Disable() so Restore() can
-// decide whether to re-enable interrupts.
-type State uintptr
-
-func Disable() State {
-	flags := gooos_readFlags()
-	gooos_cli()
-	return State(flags)
-}
-
-func Restore(state State) { gooos_restoreFlags(uintptr(state)) }
-
-func In() bool { return gooos_inInterruptDepth != 0 }
-GOOOS_INTERRUPT
-
-# --- internal/task/task_stack.go -----------------------------------------
-# Add `stackTop uintptr` field to the state struct and populate it in
-# initialize(). Required by Phase B's TSS.RSP0 per-Ring-3-goroutine
-# hook (see impldoc/phase_b_ring3_and_exec.md §4.1). Idempotent via a
-# grep-sentinel check.
-
-TASK_STACK="$TINYGO_SRC/internal/task/task_stack.go"
-
-if ! grep -q "stackTop uintptr // gooos" "$TASK_STACK"; then
-    # Insert the field after canaryPtr.
-    sed -i '/canaryPtr \*uintptr/a\
-\
-\t// stackTop is the high address of the goroutine stack (canaryPtr +\
-\t// stackSize at initialize time). Used by gooos to set TSS.RSP0 on\
-\t// Ring-3 resume. See impldoc/phase_b_ring3_and_exec.md.\
-\tstackTop uintptr // gooos' "$TASK_STACK"
-
-    # Set the field at the end of initialize(): append after the
-    # s.canaryPtr = (*uintptr)(stack) / *s.canaryPtr = stackCanary pair.
-    sed -i '/\*s.canaryPtr = stackCanary/a\
-\ts.stackTop = uintptr(stack) + stackSize // gooos' "$TASK_STACK"
-
-    echo "patched: $TASK_STACK"
-else
-    echo "already-patched: $TASK_STACK"
+if [[ -f "$SENTINEL_FILE" ]] && grep -q "$SENTINEL_TEXT" "$SENTINEL_FILE"; then
+    echo "already-applied: tinygo runtime patch present at $TINYGO_SRC"
+    echo "(delete $SENTINEL_FILE and the in-place changes to re-run)"
+    exit 0
 fi
 
-# --- internal/task/task_stack_amd64.go -----------------------------------
-# Patch resume() to call runtime.gooosOnResume(t) before swapTask so
-# TSS.RSP0 is updated to the resumed goroutine's stack top (see
-# impldoc/phase_b_ring3_and_exec.md §4.3).
+# Fresh apply. --forward --batch keeps this non-interactive; any
+# conflict means the tree is not pristine and the user must
+# investigate.
+patch -p1 -d "$TINYGO_ROOT" --forward --batch < "$PATCH_FILE"
 
-TASK_AMD64="$TINYGO_SRC/internal/task/task_stack_amd64.go"
-
-if ! grep -q "gooosOnResume" "$TASK_AMD64"; then
-    # Replace the body of resume() to insert the hook call. Match the
-    # exact two lines that make up the current body.
-    python3 - "$TASK_AMD64" <<'PY'
-import sys
-path = sys.argv[1]
-src = open(path).read()
-old = "func (s *state) resume() {\n\tswapTask(s.sp, &systemStack)\n}"
-new = (
-    "//go:linkname gooosOnResume runtime.gooosOnResume\n"
-    "func gooosOnResume()\n\n"
-    "func (s *state) resume() {\n"
-    "\tgooosOnResume() // gooos — update TSS.RSP0 for resumed goroutine\n"
-    "\tswapTask(s.sp, &systemStack)\n"
-    "}"
-)
-if old not in src:
-    sys.stderr.write("error: resume() body did not match expected form\n")
-    sys.exit(1)
-open(path, "w").write(src.replace(old, new, 1))
-PY
-    # Ensure //go:linkname's unsafe import exists (runtime/unsafe linkname
-    # requires an _ "unsafe" import to be in scope).
-    if ! grep -q '"unsafe"' "$TASK_AMD64"; then
-        sed -i 's|^package task$|package task\n\nimport _ "unsafe"|' "$TASK_AMD64"
-    fi
-    echo "patched: $TASK_AMD64"
-else
-    echo "already-patched: $TASK_AMD64"
-fi
-
-echo "patched: $TINYGO_SRC/runtime/runtime_gooos.go"
-echo "patched: $TINYGO_SRC/runtime/interrupt/interrupt_gooos.go"
 echo
-echo "These files expect the following kernel-side symbols, which are"
-echo "already provided by the current gooos tree:"
-echo "  src/target.json              \"baremetal\" in build-tags"
-echo "  src/isr.S                    gooos_in_interrupt_depth (.bss symbol)"
-echo "  src/stubs.S                  cli, sti, hlt, outb, readFlags, restoreFlags"
-echo "  src/pit.go                   main.pitTicks"
-echo "  src/goroutine_irq.go         Go-side linkname binding for the counter"
+echo "tinygo runtime patched at $TINYGO_SRC"
 echo
-echo "Re-run after TinyGo upgrades or whenever \$HOME/.local/tinygo is refreshed."
+cat <<'EOF'
+The patch installs:
+  runtime_gooos.go             — sleepTicks/ticks/deadlock/main/exit etc.
+  interrupt/interrupt_gooos.go — Disable/Restore/In + State
+  task_stack.go                — adds state.stackTop field
+  task_stack_amd64.go          — calls gooosOnResume() in resume()
+
+Kernel-side symbols these files expect (already provided by gooos):
+  src/target.json                 "baremetal" in build-tags
+  src/isr.S                       gooos_in_interrupt_depth (.bss)
+  src/stubs.S                     cli, sti, hlt, outb, readFlags,
+                                  restoreFlags
+  src/pit.go                      main.pitTicks
+  src/goroutine_irq.go            Go-side linkname binding
+  src/goroutine_tss.go            gooosOnResume body
+
+Re-run after TinyGo upgrades or whenever $HOME/.local/tinygo is
+refreshed. To revert manually:
+  rm $TINYGO_SRC/runtime/runtime_gooos.go
+  rm $TINYGO_SRC/runtime/interrupt/interrupt_gooos.go
+  patch -R -p1 -d $TINYGO_ROOT < scripts/tinygo_runtime.patch
+EOF

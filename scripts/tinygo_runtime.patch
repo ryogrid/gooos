@@ -1,0 +1,167 @@
+--- a/src/runtime/runtime_gooos.go
++++ b/src/runtime/runtime_gooos.go
+@@ -0,0 +1,91 @@
++//go:build gooos && baremetal
++
++// gooos-local runtime bodies for bare-metal x86_64 Ring 0.
++// Replaces the parts of runtime_unix.go incompatible with kernel
++// mode. The kernel defines putchar, pitTicks, and the cli/sti/hlt
++// primitives these stubs rely on.
++
++package runtime
++
++type timeUnit int64
++
++//go:linkname gooos_pitTicks main.pitTicks
++var gooos_pitTicks uint64
++
++// The kernel's assembly stubs in src/stubs.S use unqualified names
++// (no package prefix), so we link directly to those symbols.
++
++//go:linkname gooos_cli cli
++func gooos_cli()
++
++//go:linkname gooos_sti sti
++func gooos_sti()
++
++//go:linkname gooos_hlt hlt
++func gooos_hlt()
++
++// sleepTicks idles on the PIT counter until `d` ticks have elapsed.
++// The kernel's timer ISR increments gooos_pitTicks at 100 Hz.
++func sleepTicks(d timeUnit) {
++	deadline := gooos_pitTicks + uint64(d)
++	for gooos_pitTicks < deadline {
++		gooos_sti()
++		gooos_hlt()
++		gooos_cli()
++	}
++}
++
++func ticks() timeUnit { return timeUnit(gooos_pitTicks) }
++
++// 100 Hz PIT: one tick = 10 ms = 10_000_000 ns.
++func ticksToNanoseconds(t timeUnit) int64  { return int64(t) * 10_000_000 }
++func nanosecondsToTicks(ns int64) timeUnit { return timeUnit(ns / 10_000_000) }
++
++// tinygo_register_fatal_signals is provided by src/stubs.S (the
++// kernel has had this stub since before goroutine support). No Go
++// body needed here.
++
++// putchar writes a single byte to COM1. Used by runtime.printstring.
++//
++//go:linkname gooos_outb outb
++func gooos_outb(port uint16, value uint8)
++
++func putchar(c byte) { gooos_outb(0x3F8, c) }
++
++// buffered is a no-op on bare metal — no line-buffered stdio.
++func buffered() int { return 0 }
++
++// getchar is not used by gooos; return 0 to avoid pulling in stdin.
++func getchar() byte { return 0 }
++
++// exit / abort: kernel panic paths. No process to exit; halt forever.
++func exit(code int) {
++	for {
++		gooos_hlt()
++	}
++}
++
++func abort() {
++	for {
++		gooos_hlt()
++	}
++}
++
++// preinit is called by the runtime before initAll(). gooos's main.go
++// performs all hardware init in user main(), so preinit is a no-op.
++func preinit() {}
++
++// main is the C-ABI entry point called from boot.S after the
++// 32->64-bit bootstrap. run() initializes the heap, runs package
++// init functions, and invokes the user-written main in main.go.
++// If run() returns, halt forever.
++//
++//export main
++func main() {
++	preinit()
++	run()
++	exit(0)
++}
++
++// waitForEvents provided by wait_other.go (fallback). No override
++// needed — that fallback body is a no-op, acceptable here.
+--- a/src/runtime/interrupt/interrupt_gooos.go
++++ b/src/runtime/interrupt/interrupt_gooos.go
+@@ -0,0 +1,34 @@
++//go:build gooos && baremetal
++
++package interrupt
++
++//go:linkname gooos_readFlags readFlags
++func gooos_readFlags() uintptr
++
++//go:linkname gooos_restoreFlags restoreFlags
++func gooos_restoreFlags(flags uintptr)
++
++//go:linkname gooos_cli cli
++func gooos_cli()
++
++// Counter bumped by the gooos common ISR prologue / epilogue
++// (src/isr.S), defined as a .bss symbol there to avoid TinyGo's
++// dead-code elimination of Go-level vars only referenced from
++// assembly. Linkname target: unqualified "gooos_in_interrupt_depth".
++//
++//go:linkname gooos_inInterruptDepth gooos_in_interrupt_depth
++var gooos_inInterruptDepth uint32
++
++// State holds RFLAGS at the moment of Disable() so Restore() can
++// decide whether to re-enable interrupts.
++type State uintptr
++
++func Disable() State {
++	flags := gooos_readFlags()
++	gooos_cli()
++	return State(flags)
++}
++
++func Restore(state State) { gooos_restoreFlags(uintptr(state)) }
++
++func In() bool { return gooos_inInterruptDepth != 0 }
+--- a/src/internal/task/task_stack.go
++++ b/src/internal/task/task_stack.go
+@@ -30,6 +30,11 @@
+ 	// When initializing the goroutine, the stackCanary constant is stored there.
+ 	// If the stack overflowed, the word will likely no longer equal stackCanary.
+ 	canaryPtr *uintptr
++
++	// stackTop is the high address of the goroutine stack (canaryPtr +
++	// stackSize at initialize time). Used by gooos to set TSS.RSP0 on
++	// Ring-3 resume. See impldoc/phase_b_ring3_and_exec.md.
++	stackTop uintptr // gooos
+ }
+ 
+ // currentTask is the current running task, or nil if currently in the scheduler.
+@@ -80,6 +85,7 @@
+ 	// the next stack switch, there was a stack overflow.
+ 	s.canaryPtr = (*uintptr)(stack)
+ 	*s.canaryPtr = stackCanary
++	s.stackTop = uintptr(stack) + stackSize // gooos
+ 
+ 	// Get a pointer to the top of the stack, where the initial register values
+ 	// are stored. They will be popped off the stack on the first stack switch
+--- a/src/internal/task/task_stack_amd64.go
++++ b/src/internal/task/task_stack_amd64.go
+@@ -44,7 +44,11 @@
+ 	r.r13 = uintptr(args)
+ }
+ 
++//go:linkname gooosOnResume runtime.gooosOnResume
++func gooosOnResume()
++
+ func (s *state) resume() {
++	gooosOnResume() // gooos — update TSS.RSP0 for resumed goroutine
+ 	swapTask(s.sp, &systemStack)
+ }
+ 
