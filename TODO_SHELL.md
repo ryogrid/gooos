@@ -52,23 +52,32 @@ The per-process PML4 design (keep user vaddrs at link-time
   - [x] Verify: `make build` clean.
   - [x] Verify: 10/10 sendkey.
 
-- [ ] **1c** — syscall ABI extension + user-binary rebuild.
-  - [ ] `sys_open` (12), `sys_close` (13), `sys_dup2` (14)
+- [x] **1c** — syscall ABI extension + user-binary rebuild.
+  - [x] `sys_open` (12), `sys_close` (13), `sys_dup2` (14)
     constants + handlers in `src/userspace.go`.
-  - [ ] `sysReadHandler` / `sysWriteHandler` rewritten to
-    dispatch through `Process.fds`.
-  - [ ] `sysFail(fdErr) uintptr` helper.
-  - [ ] `user/gooos/syscall.go` constants for new syscalls.
-  - [ ] `user/gooos/io.go`: `Print` passes `Stdout`;
-    `ReadLine` passes `Stdin` (3-arg syscall); add
-    `Open` / `Close` / `Dup2` / `Read(fd,…)` /
-    `Write(fd,…)` first-class wrappers.
-  - [ ] `make embed-user` re-emits all five user ELFs.
-  - [ ] **Single commit** containing kernel + userland
-    + regenerated `src/user_binaries.go`.
-  - [ ] Verify: `make build` clean.
-  - [ ] Verify: 10/10 sendkey (existing shell + binaries
-    work end-to-end through the new fd path).
+  - [x] `sysReadHandler` / `sysWriteHandler` rewritten to
+    dispatch through `Process.fds` (via 256-byte kernel
+    scratch buffer per chunk).
+  - [x] `sysFail(fdErr) uintptr` helper (`src/fd.go`).
+  - [x] `user/gooos/syscall.go` constants for new syscalls.
+  - [x] `user/gooos/io.go` rewritten: POSIX `Stdin`/`Stdout`
+    /`Stderr` consts; `Open`/`Close`/`Dup2`/`Read`/`Write`
+    first-class; `Print` passes `Stdout`; `ReadLine` passes
+    `Stdin` (3-arg).
+  - [x] `user/rt0.S` `write` stub simplified — the new
+    kernel ABI matches C's `write(fd, buf, count)`
+    directly so the register shuffle is removed.
+  - [x] **fd inheritance fix**: `elfExec` shallow-copies
+    `parent.fds` into `child.fds` (caught by sendkey
+    regression: `cat hello.txt` was silently failing
+    because the child had nil fds). Per
+    `shell_io_fd_table.md §6`.
+  - [x] `make embed-user` re-emitted all five user ELFs.
+  - [x] Single commit covers kernel + userland.
+  - [x] Verify: `make build` clean (lint + verify-globals
+    green).
+  - [x] Verify: 10/10 sendkey (`pf=0 exit=3 cat=1` — full
+    end-to-end through new fd path).
 
 - [ ] **1d** — `fd_probe` ELF.
   - [ ] `user/cmd/fd_probe/main.go`: opens `hello.txt`,

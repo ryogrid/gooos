@@ -91,16 +91,13 @@ raise:
 tinygo_register_fatal_signals:
     ret                      /* no-op */
 
-    /* write(fd, buf, count) → sys_write(buf, count, fd) */
+    /* write(fd, buf, count) → sys_write(fd, buf, count) — direct.
+     * Since the 1c ABI shift, kernel sys_write takes (fd, buf, count)
+     * in RDI/RSI/RDX, matching the C/Go calling convention exactly,
+     * so no register shuffle is needed. */
     .global write
 write:
-    /* Go/C: RDI=fd, RSI=buf, RDX=count */
-    /* Kernel: RAX=1, RDI=buf, RSI=count, RDX=fd */
-    movq    %rdi, %rcx       /* save fd */
     movq    $1, %rax         /* sys_write */
-    movq    %rsi, %rdi       /* buf */
-    movq    %rdx, %rsi       /* count */
-    movq    %rcx, %rdx       /* fd */
     int     $0x80
     ret
 

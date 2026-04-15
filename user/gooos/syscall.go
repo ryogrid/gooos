@@ -24,10 +24,11 @@ func syscall3(nr, a1, a2, a3 uintptr) uintptr
 func syscall4(nr, a1, a2, a3, a4 uintptr) uintptr
 
 // Syscall numbers matching the kernel dispatch table (src/userspace.go).
+// See impldoc/shell_io_fd_table.md §5.1 for the canonical table.
 const (
 	sysExit     = 0
-	sysWrite    = 1
-	sysRead     = 2
+	sysWrite    = 1 // (fd, buf, len) since 1c — sys_write fd repurposed POSIX
+	sysRead     = 2 // (fd, buf, max) since 1c — added fd first arg
 	sysExec     = 3
 	sysFsRead   = 4
 	sysFsWrite  = 5
@@ -37,4 +38,7 @@ const (
 	sysGetargs  = 9
 	sysSbrk     = 10
 	sysVgaClear = 11
+	sysOpen     = 12
+	sysClose    = 13
+	sysDup2     = 14
 )

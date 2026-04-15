@@ -172,6 +172,12 @@ func elfExec(filename, args string, parent *Process) (uintptr, bool) {
 		exitCh:  make(chan uintptr, 1),
 		poolIdx: -1, // populated by ring3Wrapper from ring3StackPool
 	}
+	// fd inheritance: shallow copy of parent's table so the child
+	// sees the same console / file / pipe ends. POSIX semantics —
+	// see impldoc/shell_io_fd_table.md §6.
+	for i := 0; i < procMaxFDs; i++ {
+		child.fds[i] = parent.fds[i]
+	}
 
 	// Copy arguments.
 	child.ArgLen = len(args)

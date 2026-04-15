@@ -42,7 +42,9 @@ type SyscallFrame struct {
 	SS        uintptr
 }
 
-// Syscall numbers.
+// Syscall numbers. See impldoc/shell_io_fd_table.md §5.1 for
+// the canonical table; numbers ≥ 12 land with the shell-IO
+// implementation.
 const (
 	sysExit     = 0
 	sysWrite    = 1
@@ -56,6 +58,9 @@ const (
 	sysGetargs  = 9
 	sysSbrk     = 10
 	sysVgaClear = 11
+	sysOpen     = 12
+	sysClose    = 13
+	sysDup2     = 14
 )
 
 // jumpToRing3 transitions the CPU to Ring 3 user mode via iretq.
@@ -92,6 +97,12 @@ func syscallDispatch(frame *SyscallFrame) {
 		sysSbrkHandler(frame)
 	case sysVgaClear:
 		sysVgaClearHandler(frame)
+	case sysOpen:
+		sysOpenHandler(frame)
+	case sysClose:
+		sysCloseHandler(frame)
+	case sysDup2:
+		sysDup2Handler(frame)
 	default:
 		frame.RAX = 0xFFFFFFFFFFFFFFFF // -1 for invalid syscall
 	}
@@ -104,86 +115,105 @@ func sysExitHandler(frame *SyscallFrame) {
 	// Does not return if parent exists; if no parent, halts in processExit.
 }
 
-// --- Syscall 1: sys_write ---
-// RDI = buf_ptr, RSI = buf_len, RDX = fd (0=VGA+serial, 1=serial only)
-
-func sysWriteHandler(frame *SyscallFrame) {
-	buf := frame.RDI
-	length := frame.RSI
-	fd := frame.RDX
-
-	if length > 4096 {
-		length = 4096
-	}
-
-	for i := uintptr(0); i < length; i++ {
-		ch := *(*byte)(unsafe.Pointer(buf + i))
-		if fd == 0 {
-			vgaConsolePutChar(ch)
-		}
-		serialPutChar(ch)
-	}
-	frame.RAX = length
-}
-
-// --- Syscall 2: sys_read ---
-// RDI = buf_ptr, RSI = buf_max
-// Blocking line-buffered keyboard input with kernel-side echo.
-
-// sysReadLineBuf is a kernel-side line buffer for sys_read.
+// sysReadLineBuf is the kernel-side line buffer used by
+// readKeyboardLine in src/fd.go (consoleStdin.Read). Lives here
+// because the linkage between kernel reader and userspace
+// sys_read predates the fd table; kept in this file to minimize
+// diff for 1c.
 var sysReadLineBuf [128]byte
 var sysReadLineLen int
 
-func sysReadHandler(frame *SyscallFrame) {
-	buf := frame.RDI
-	maxLen := frame.RSI
+// --- Syscall 1: sys_write ---
+// RDI = fd, RSI = buf_ptr, RDX = buf_len
+//
+// 1c ABI: same wire signature as before, but fd values now
+// follow POSIX semantics (0=stdin, 1=stdout, 2=stderr, 3+=open
+// fds). Existing user binaries are rebuilt in this commit so
+// they pass Stdout (1) instead of the legacy 0.
 
-	sysReadLineLen = 0
+func sysWriteHandler(frame *SyscallFrame) {
+	proc := currentProc()
+	if proc == nil {
+		frame.RAX = sysFail(fdErrBad)
+		return
+	}
+	fd := int(frame.RDI)
+	buf := frame.RSI
+	length := frame.RDX
+	if length > 4096 {
+		length = 4096
+	}
+	desc := procGetFD(proc, fd)
+	if desc == nil {
+		frame.RAX = sysFail(fdErrBad)
+		return
+	}
 
-	for {
-		// Block waiting for a keyboard event.
-		event := <-keyboardCh
-		scancode := uint8(event & 0xFF)
-		ascii := byte((event >> 8) & 0xFF)
-
-		if scancode == scEnter {
-			// Echo newline.
-			vgaConsolePutChar('\n')
-			serialPutChar('\r')
-			serialPutChar('\n')
+	// Loop in 256-byte chunks via a kernel scratch buffer so
+	// FileDesc impls stay backend-agnostic.
+	var scratch [256]byte
+	written := uintptr(0)
+	for written < length {
+		chunk := length - written
+		if chunk > 256 {
+			chunk = 256
+		}
+		for i := uintptr(0); i < chunk; i++ {
+			scratch[i] = *(*byte)(unsafe.Pointer(buf + written + i))
+		}
+		n, err := desc.Write(scratch[:chunk])
+		if err != fdErrOK {
+			if written == 0 {
+				frame.RAX = sysFail(err)
+				return
+			}
 			break
 		}
-
-		if scancode == scBackspace {
-			if sysReadLineLen > 0 {
-				sysReadLineLen--
-				// Echo backspace: move cursor back, overwrite with space, move back again.
-				vgaConsolePutChar('\b')
-				serialPutChar('\b')
-				serialPutChar(' ')
-				serialPutChar('\b')
-			}
-			continue
-		}
-
-		if ascii != 0 && sysReadLineLen < 128 {
-			sysReadLineBuf[sysReadLineLen] = ascii
-			sysReadLineLen++
-			// Echo character.
-			vgaConsolePutChar(ascii)
-			serialPutChar(ascii)
+		written += uintptr(n)
+		if uintptr(n) < chunk {
+			break
 		}
 	}
+	frame.RAX = written
+}
 
-	// Copy to user buffer.
-	n := uintptr(sysReadLineLen)
-	if n > maxLen {
-		n = maxLen
+// --- Syscall 2: sys_read ---
+// RDI = fd, RSI = buf_ptr, RDX = buf_max
+//
+// 1c ABI: BREAKING — adds fd as the first arg. Every shipped
+// user binary that calls sys_read is rebuilt in this commit
+// (only user/gooos/io.go ReadLine actually called sys_read).
+
+func sysReadHandler(frame *SyscallFrame) {
+	proc := currentProc()
+	if proc == nil {
+		frame.RAX = sysFail(fdErrBad)
+		return
 	}
-	for i := uintptr(0); i < n; i++ {
-		*(*byte)(unsafe.Pointer(buf + i)) = sysReadLineBuf[i]
+	fd := int(frame.RDI)
+	buf := frame.RSI
+	maxLen := frame.RDX
+	desc := procGetFD(proc, fd)
+	if desc == nil {
+		frame.RAX = sysFail(fdErrBad)
+		return
 	}
-	frame.RAX = n
+
+	// Single-shot read into a 256-byte scratch then copy out.
+	var scratch [256]byte
+	chunk := maxLen
+	if chunk > 256 {
+		chunk = 256
+	}
+	n, err := desc.Read(scratch[:chunk])
+	if err != fdErrOK && err != fdErrEOF {
+		frame.RAX = sysFail(err)
+		return
+	}
+	for i := 0; i < n; i++ {
+		*(*byte)(unsafe.Pointer(buf + uintptr(i))) = scratch[i]
+	}
+	frame.RAX = uintptr(n)
 }
 
 // --- Syscall 3: sys_exec ---
@@ -398,6 +428,73 @@ func sysSbrkHandler(frame *SyscallFrame) {
 func sysVgaClearHandler(frame *SyscallFrame) {
 	vgaConsoleClear()
 	frame.RAX = 0
+}
+
+// --- Syscall 12: sys_open ---
+// RDI = path_ptr, RSI = path_len, RDX = mode (1=read, 2=write, 3=append)
+
+func sysOpenHandler(frame *SyscallFrame) {
+	proc := currentProc()
+	if proc == nil {
+		frame.RAX = sysFail(fdErrBad)
+		return
+	}
+	pathLen := frame.RSI
+	if pathLen > 256 {
+		pathLen = 256
+	}
+	var pathBuf [256]byte
+	for i := uintptr(0); i < pathLen; i++ {
+		pathBuf[i] = *(*byte)(unsafe.Pointer(frame.RDI + i))
+	}
+	name := string(pathBuf[:pathLen])
+	mode := fileMode(frame.RDX)
+	desc, err := openFileFd(name, mode)
+	if err != fdErrOK {
+		frame.RAX = sysFail(err)
+		return
+	}
+	fd, allocErr := procAllocFD(proc, desc)
+	if allocErr != fdErrOK {
+		desc.Close()
+		frame.RAX = sysFail(allocErr)
+		return
+	}
+	frame.RAX = uintptr(fd)
+}
+
+// --- Syscall 13: sys_close ---
+// RDI = fd
+
+func sysCloseHandler(frame *SyscallFrame) {
+	proc := currentProc()
+	if proc == nil {
+		frame.RAX = sysFail(fdErrBad)
+		return
+	}
+	err := procClose(proc, int(frame.RDI))
+	if err != fdErrOK {
+		frame.RAX = sysFail(err)
+		return
+	}
+	frame.RAX = 0
+}
+
+// --- Syscall 14: sys_dup2 ---
+// RDI = oldfd, RSI = newfd
+
+func sysDup2Handler(frame *SyscallFrame) {
+	proc := currentProc()
+	if proc == nil {
+		frame.RAX = sysFail(fdErrBad)
+		return
+	}
+	newfd, err := procDup2(proc, int(frame.RDI), int(frame.RSI))
+	if err != fdErrOK {
+		frame.RAX = sysFail(err)
+		return
+	}
+	frame.RAX = uintptr(newfd)
 }
 
 // --- Shell bootstrap ---
