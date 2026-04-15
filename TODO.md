@@ -11,8 +11,12 @@ audit trail — do not delete.
   Makefile at it via `TINYGOROOT`, and running
   `bash scripts/patch_tinygo_runtime.sh`. Build clean with
   `scheduler=none` + `baremetal` tag; boot reaches shell prompt.
-- [ ] **Spike 2 — Link viability**: trivial `ch := make(chan int); go func(){ ch<-1 }(); <-ch`
-  links and boots to the shell banner under QEMU.
+- [x] **Spike 2 — Link viability**: `scheduler=tasks` enabled in
+  `src/target.json`; trivial `ch := make(chan int); go func(){ch<-42}(); <-ch`
+  probe in `src/main.go` prints `Spike2: goroutine+chan OK` on boot;
+  shell prompt reached; 3/3 sendkey trials pass. Required importing
+  two TinyGo-runtime asm files into gooos's link (`src/task_stack_amd64.S`,
+  `src/runtime_asm_amd64.S`) and adding `memmove` to `src/stubs.S`.
 - [ ] **Spike 3 — `interrupt.In()`**: `in_interrupt_depth` counter
   in `src/isr.S`, `interruptIn()` exposed via `//go:linkname`.
   Pass when `task.Pause()` outside ISR does not panic.

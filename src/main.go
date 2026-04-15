@@ -303,6 +303,20 @@ func main() {
 	vgaWriteLine(11, "Timer: "+tickStr+" ticks")
 	serialPrintln("Timer: " + tickStr + " ticks")
 
+	// Spike 2 probe — trivial TinyGo goroutine + channel round-trip.
+	// Proves scheduler=tasks + gooos runtime patch links and runs.
+	// Removed once the full migration lands.
+	{
+		ch := make(chan int, 1)
+		go func() { ch <- 42 }()
+		v := <-ch
+		if v == 42 {
+			serialPrintln("Spike2: goroutine+chan OK")
+		} else {
+			serialPrintln("Spike2: FAIL")
+		}
+	}
+
 	// Boot Application Processors via INIT-SIPI-SIPI.
 	smpInit()
 

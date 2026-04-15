@@ -6,7 +6,9 @@
     "goos": "linux",
     "goarch": "amd64",
     "gc": "conservative",
-    "scheduler": "none",
+    "scheduler": "tasks",
+    "default-stack-size": 8192,
+    "automatic-stack-size": true,
     "panic-strategy": "trap",
     "linker": "ld.lld",
     "rtlib": "compiler-rt"
