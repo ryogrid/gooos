@@ -36,19 +36,21 @@ verification step pass. One commit per top-level item.
 
 ### `deferred_gc_and_stacks.md` (items 6, 7, 13)
 
-- [ ] **Item 13** — boot-time stack-size audit.
-  - [ ] Add `src/stack_audit.go` with `stackSizeAudit()` over
+- [x] **Item 13** — boot-time stack-size audit.
+  - [x] Add `src/stack_audit.go` with `stackSizeAudit()` over
     captured task handles.
-  - [ ] Capture `fsTaskHandle`, `keyboardPumpHandle`,
+  - [x] Capture `fsTaskHandle`, `keyboardPumpHandle`,
     `ring3WrapperHandle` package-scope vars in their
     goroutines.
-  - [ ] Wire into `src/main.go` after `checkTaskOffset()`,
-    guarded by `const runStackAudit`.
-  - [ ] Run audit; record per-goroutine high-water marks.
-  - [ ] If any goroutine exceeds 75%, bump
-    `default-stack-size`; otherwise leave as-is.
-  - [ ] Disable `runStackAudit` before commit.
-  - [ ] Verify: 10/10 `bash tmp/test_sendkey.sh`.
+  - [x] Wire into `src/main.go` after `checkTaskOffset()` and
+    re-fire after the first `elfExec` returns, guarded by
+    `const runStackAudit`.
+  - [x] Ran audit. Results: main 6%, fsTask 3%,
+    keyboardPump 1%, ring3Wrapper 7% (recorded in
+    `impldoc/deferred_gc_and_stacks.md §4.5`).
+  - [x] All goroutines < 75%; no `default-stack-size` bump.
+  - [x] `runStackAudit` flipped back to `false` before commit.
+  - [x] Verify: 10/10 `bash tmp/test_sendkey.sh`.
 
 ### `deferred_hygiene.md` (items 10, 11, 12, 14, 15, 16)
 

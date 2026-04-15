@@ -63,6 +63,7 @@ func keyboardIRQRecv() (uint32, bool) {
 // keyboardPump forwards ring events into keyboardCh. It yields via
 // runtime.Gosched on empty; no need for sti+hlt parking in v1.
 func keyboardPump() {
+	keyboardPumpHandle = taskCurrent()
 	for {
 		ev, ok := keyboardIRQRecv()
 		if ok {

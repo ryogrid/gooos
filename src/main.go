@@ -346,6 +346,11 @@ func main() {
 	vgaWriteLine(13, "Services: fsTask + keyboardPump running")
 	serialPrintln("Services: fsTask + keyboardPump running")
 
+	// Run boot-time stack-size audit if enabled (compile-time
+	// const). Service goroutines have parked at least once after
+	// the runtime.Gosched above.
+	stackSizeAudit()
+
 	// Store user ELF binaries in the filesystem (direct calls, before
 	// scheduler starts so FS task is not needed yet).
 	serialPrintln("Storing user ELF binaries in filesystem...")

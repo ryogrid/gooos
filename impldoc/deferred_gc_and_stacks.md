@@ -255,7 +255,26 @@ disables it (use `//go:build audit` or similar).
 |---|---|
 | `src/stack_audit.go` | **new** — iterator + logger |
 | `src/main.go` | add calls (guarded by `runStackAudit` constant) |
-| `impldoc/deferred_gc_and_stacks.md` | this file; updated with measurement results after first run |
+| `impldoc/deferred_gc_and_stacks.md` | this file; updated with measurement results after first run (see §4.5) |
+
+### 4.5 Measured results (2026-04-15)
+
+Captured during sendkey trial (`bash tmp/test_sendkey.sh 99`)
+with `runStackAudit = true`:
+
+```
+stack-audit: main         size=8192  used=536  (6%)
+stack-audit: fsTask       size=8192  used=264  (3%)
+stack-audit: keyboardPump size=8192  used=152  (1%)
+stack-audit: ring3Wrapper size=8192  used=584  (7%)
+```
+
+All goroutines comfortably under the 75% warn threshold; no
+`default-stack-size` bump required. The `automatic-stack-size`
+estimator's defaults are preserved.
+
+`runStackAudit` flipped back to `false` before the commit so
+release builds carry zero overhead.
 
 ## 5. Dependencies
 

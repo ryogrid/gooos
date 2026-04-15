@@ -115,6 +115,7 @@ func elfExecTrampoline() {
 // to Ring 3. Never returns: the Ring-3 program exits via sys_exit →
 // processExit, which sends on proc.exitCh and halts this goroutine.
 func ring3Wrapper(proc *Process) {
+	ring3WrapperHandle = taskCurrent()
 	setCurrentProc(proc)
 	registerRing3G()
 	tssSetRSP0ForCurrentG()
@@ -218,8 +219,16 @@ func elfExec(filename, args string, parent *Process) (uintptr, bool) {
 	// Spawn the Ring-3 goroutine and wait for it to send on exitCh.
 	go ring3Wrapper(child)
 	exitCode := <-child.exitCh
+	if !firstExecAudited {
+		firstExecAudited = true
+		stackSizeAudit()
+	}
 	return exitCode, true
 }
+
+// firstExecAudited gates the post-exec stack-size audit so it
+// fires exactly once. See impldoc/deferred_gc_and_stacks.md §4.3.
+var firstExecAudited bool
 
 // processExit terminates the current Ring-3 goroutine. Unmaps the
 // child's pages, restores the parent's, wakes the parent via
