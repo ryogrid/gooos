@@ -160,6 +160,71 @@ func Restore(state State) { gooos_restoreFlags(uintptr(state)) }
 func In() bool { return gooos_inInterruptDepth != 0 }
 GOOOS_INTERRUPT
 
+# --- internal/task/task_stack.go -----------------------------------------
+# Add `stackTop uintptr` field to the state struct and populate it in
+# initialize(). Required by Phase B's TSS.RSP0 per-Ring-3-goroutine
+# hook (see impldoc/phase_b_ring3_and_exec.md §4.1). Idempotent via a
+# grep-sentinel check.
+
+TASK_STACK="$TINYGO_SRC/internal/task/task_stack.go"
+
+if ! grep -q "stackTop uintptr // gooos" "$TASK_STACK"; then
+    # Insert the field after canaryPtr.
+    sed -i '/canaryPtr \*uintptr/a\
+\
+\t// stackTop is the high address of the goroutine stack (canaryPtr +\
+\t// stackSize at initialize time). Used by gooos to set TSS.RSP0 on\
+\t// Ring-3 resume. See impldoc/phase_b_ring3_and_exec.md.\
+\tstackTop uintptr // gooos' "$TASK_STACK"
+
+    # Set the field at the end of initialize(): append after the
+    # s.canaryPtr = (*uintptr)(stack) / *s.canaryPtr = stackCanary pair.
+    sed -i '/\*s.canaryPtr = stackCanary/a\
+\ts.stackTop = uintptr(stack) + stackSize // gooos' "$TASK_STACK"
+
+    echo "patched: $TASK_STACK"
+else
+    echo "already-patched: $TASK_STACK"
+fi
+
+# --- internal/task/task_stack_amd64.go -----------------------------------
+# Patch resume() to call runtime.gooosOnResume(t) before swapTask so
+# TSS.RSP0 is updated to the resumed goroutine's stack top (see
+# impldoc/phase_b_ring3_and_exec.md §4.3).
+
+TASK_AMD64="$TINYGO_SRC/internal/task/task_stack_amd64.go"
+
+if ! grep -q "gooosOnResume" "$TASK_AMD64"; then
+    # Replace the body of resume() to insert the hook call. Match the
+    # exact two lines that make up the current body.
+    python3 - "$TASK_AMD64" <<'PY'
+import sys
+path = sys.argv[1]
+src = open(path).read()
+old = "func (s *state) resume() {\n\tswapTask(s.sp, &systemStack)\n}"
+new = (
+    "//go:linkname gooosOnResume runtime.gooosOnResume\n"
+    "func gooosOnResume()\n\n"
+    "func (s *state) resume() {\n"
+    "\tgooosOnResume() // gooos — update TSS.RSP0 for resumed goroutine\n"
+    "\tswapTask(s.sp, &systemStack)\n"
+    "}"
+)
+if old not in src:
+    sys.stderr.write("error: resume() body did not match expected form\n")
+    sys.exit(1)
+open(path, "w").write(src.replace(old, new, 1))
+PY
+    # Ensure //go:linkname's unsafe import exists (runtime/unsafe linkname
+    # requires an _ "unsafe" import to be in scope).
+    if ! grep -q '"unsafe"' "$TASK_AMD64"; then
+        sed -i 's|^package task$|package task\n\nimport _ "unsafe"|' "$TASK_AMD64"
+    fi
+    echo "patched: $TASK_AMD64"
+else
+    echo "already-patched: $TASK_AMD64"
+fi
+
 echo "patched: $TINYGO_SRC/runtime/runtime_gooos.go"
 echo "patched: $TINYGO_SRC/runtime/interrupt/interrupt_gooos.go"
 echo

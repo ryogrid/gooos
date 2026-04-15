@@ -6,8 +6,6 @@
 
 package main
 
-import "unsafe"
-
 // Maximum number of files and maximum data size per file.
 const (
 	maxFiles    = 32
@@ -109,210 +107,85 @@ func fsDelete(name string) bool {
 	return false
 }
 
-// ---------- Filesystem task (microkernel service) ----------
+// ---------- Filesystem task (goroutine + native channel) ----------
 
 // FS operation codes.
+type fsOp uint8
+
 const (
-	fsOpCreate = 0
-	fsOpWrite  = 1
-	fsOpRead   = 2
-	fsOpList   = 3
-	fsOpDelete = 4
+	fsOpCreate fsOp = iota + 1
+	fsOpWrite
+	fsOpRead
+	fsOpList
+	fsOpDelete
 )
 
-// FSRequest is sent to the filesystem task via fsRequestChannel.
-type FSRequest struct {
-	op      uint8
-	name    string
-	data    []byte
-	replyCh *Channel
+// fsRequest travels from any caller to the fsTask goroutine.
+type fsRequest struct {
+	op    fsOp
+	name  string
+	data  []byte
+	reply chan *fsResponse
 }
 
-// FSResponse is sent back on the request's replyCh.
-type FSResponse struct {
+// fsResponse is sent back on req.reply.
+type fsResponse struct {
 	ok    bool
 	data  []byte
 	names []string
 }
 
-// Pool size for FS requests and responses.
-const fsPoolSize = 8
+// fsReqCh serializes all FS access through the single fsTask goroutine.
+var fsReqCh = make(chan *fsRequest, 8)
 
-var (
-	fsRequestChannel *Channel                    // channel for FS requests (capacity 8)
-	fsReqPool        [fsPoolSize]FSRequest        // static pool for request structs
-	fsReqPoolNext    int                          // next pool slot (ring)
-	fsRespPool       [fsPoolSize]FSResponse       // static pool for response structs
-	fsRespPoolNext   int                          // next pool slot (ring)
-)
-
-// fsTaskEntryAddr returns the address of fsTaskEntry. Implemented in switch.S.
-//
-//go:linkname fsTaskEntryAddr fsTaskEntryAddr
-func fsTaskEntryAddr() uintptr
-
-// fsTaskEntry loops receiving FSRequest pointers from fsRequestChannel,
-// dispatches to the appropriate filesystem operation, and sends an FSResponse
-// back on the request's replyCh. Runs as a dedicated kernel task.
-//
-//export fsTaskEntry
-func fsTaskEntry() {
-	sti()
-	serialPrintln("FS task: started")
-	for {
-		val := chanRecv(fsRequestChannel)
-		req := (*FSRequest)(unsafe.Pointer(val))
-
-		// Allocate response from static pool.
-		ri := fsRespPoolNext
-		fsRespPoolNext = (fsRespPoolNext + 1) % fsPoolSize
-		resp := &fsRespPool[ri]
-
+// fsTask is the FS service goroutine. Spawned from main() via `go`.
+func fsTask() {
+	for req := range fsReqCh {
+		resp := &fsResponse{}
 		switch req.op {
 		case fsOpCreate:
 			resp.ok = fsCreate(req.name)
-			resp.data = nil
-			resp.names = nil
 		case fsOpWrite:
 			resp.ok = fsWrite(req.name, req.data)
-			resp.data = nil
-			resp.names = nil
 		case fsOpRead:
 			resp.data = fsRead(req.name)
 			resp.ok = resp.data != nil
-			resp.names = nil
 		case fsOpList:
 			resp.names = fsList()
 			resp.ok = true
-			resp.data = nil
 		case fsOpDelete:
 			resp.ok = fsDelete(req.name)
-			resp.data = nil
-			resp.names = nil
-		default:
-			resp.ok = false
-			resp.data = nil
-			resp.names = nil
 		}
-
-		chanSend(req.replyCh, uintptr(unsafe.Pointer(resp)))
+		req.reply <- resp
 	}
 }
 
-// fsSendCreate sends a create request to the FS task and blocks for the response.
 func fsSendCreate(name string) bool {
-	replyCh := chanCreate(1)
-	ri := fsReqPoolNext
-	fsReqPoolNext = (fsReqPoolNext + 1) % fsPoolSize
-	fsReqPool[ri] = FSRequest{op: fsOpCreate, name: name, replyCh: replyCh}
-	chanSend(fsRequestChannel, uintptr(unsafe.Pointer(&fsReqPool[ri])))
-	val := chanRecv(replyCh)
-	chanFree(replyCh)
-	resp := (*FSResponse)(unsafe.Pointer(val))
-	return resp.ok
+	reply := make(chan *fsResponse, 1)
+	fsReqCh <- &fsRequest{op: fsOpCreate, name: name, reply: reply}
+	return (<-reply).ok
 }
 
-// fsSendWrite sends a write request to the FS task and blocks for the response.
 func fsSendWrite(name string, data []byte) bool {
-	replyCh := chanCreate(1)
-	ri := fsReqPoolNext
-	fsReqPoolNext = (fsReqPoolNext + 1) % fsPoolSize
-	fsReqPool[ri] = FSRequest{op: fsOpWrite, name: name, data: data, replyCh: replyCh}
-	chanSend(fsRequestChannel, uintptr(unsafe.Pointer(&fsReqPool[ri])))
-	val := chanRecv(replyCh)
-	chanFree(replyCh)
-	resp := (*FSResponse)(unsafe.Pointer(val))
-	return resp.ok
+	reply := make(chan *fsResponse, 1)
+	fsReqCh <- &fsRequest{op: fsOpWrite, name: name, data: data, reply: reply}
+	return (<-reply).ok
 }
 
-// fsSendRead sends a read request to the FS task and blocks for the response.
 func fsSendRead(name string) []byte {
-	replyCh := chanCreate(1)
-	ri := fsReqPoolNext
-	fsReqPoolNext = (fsReqPoolNext + 1) % fsPoolSize
-	fsReqPool[ri] = FSRequest{op: fsOpRead, name: name, replyCh: replyCh}
-	chanSend(fsRequestChannel, uintptr(unsafe.Pointer(&fsReqPool[ri])))
-	val := chanRecv(replyCh)
-	chanFree(replyCh)
-	resp := (*FSResponse)(unsafe.Pointer(val))
-	return resp.data
+	reply := make(chan *fsResponse, 1)
+	fsReqCh <- &fsRequest{op: fsOpRead, name: name, reply: reply}
+	return (<-reply).data
 }
 
-// fsSendList sends a list request to the FS task and blocks for the response.
 func fsSendList() []string {
-	replyCh := chanCreate(1)
-	ri := fsReqPoolNext
-	fsReqPoolNext = (fsReqPoolNext + 1) % fsPoolSize
-	fsReqPool[ri] = FSRequest{op: fsOpList, replyCh: replyCh}
-	chanSend(fsRequestChannel, uintptr(unsafe.Pointer(&fsReqPool[ri])))
-	val := chanRecv(replyCh)
-	chanFree(replyCh)
-	resp := (*FSResponse)(unsafe.Pointer(val))
-	return resp.names
+	reply := make(chan *fsResponse, 1)
+	fsReqCh <- &fsRequest{op: fsOpList, reply: reply}
+	return (<-reply).names
 }
 
-// fsSendDelete sends a delete request to the FS task and blocks for the response.
 func fsSendDelete(name string) bool {
-	replyCh := chanCreate(1)
-	ri := fsReqPoolNext
-	fsReqPoolNext = (fsReqPoolNext + 1) % fsPoolSize
-	fsReqPool[ri] = FSRequest{op: fsOpDelete, name: name, replyCh: replyCh}
-	chanSend(fsRequestChannel, uintptr(unsafe.Pointer(&fsReqPool[ri])))
-	val := chanRecv(replyCh)
-	chanFree(replyCh)
-	resp := (*FSResponse)(unsafe.Pointer(val))
-	return resp.ok
-}
-
-// fsDemoTaskAddr returns the address of fsDemoTask. Implemented in switch.S.
-//
-//go:linkname fsDemoTaskAddr fsDemoTaskAddr
-func fsDemoTaskAddr() uintptr
-
-// fsDemoTask demonstrates the channel-based filesystem API.
-//
-//export fsDemoTask
-func fsDemoTask() {
-	sti()
-	serialPrintln("FS demo: starting channel-based demo")
-
-	// Create a file via FS task.
-	ok := fsSendCreate("chan.txt")
-	serialPrintln("FS demo: fsSendCreate('chan.txt') = " + boolStr(ok))
-
-	// Write data via FS task.
-	ok = fsSendWrite("chan.txt", []byte("channel IPC"))
-	serialPrintln("FS demo: fsSendWrite('chan.txt', 'channel IPC') = " + boolStr(ok))
-
-	// Read back via FS task.
-	data := fsSendRead("chan.txt")
-	serialPrintln("FS demo: fsSendRead('chan.txt') = '" + string(data) + "'")
-
-	// List files via FS task.
-	names := fsSendList()
-	listing := "FS demo: fsSendList ="
-	for _, name := range names {
-		listing += " " + name
-	}
-	serialPrintln(listing)
-
-	if string(data) == "channel IPC" {
-		serialPrintln("FS demo: channel-based FS PASS")
-		vgaWriteLine(10, "FS: channel IPC OK | "+listing)
-	} else {
-		serialPrintln("FS demo: channel-based FS FAIL")
-		vgaWriteLine(10, "FS: channel IPC FAIL")
-	}
-
-	for {
-		taskSleep(10000)
-	}
-}
-
-// boolStr returns "true" or "false" for a bool value.
-func boolStr(b bool) string {
-	if b {
-		return "true"
-	}
-	return "false"
+	reply := make(chan *fsResponse, 1)
+	fsReqCh <- &fsRequest{op: fsOpDelete, name: name, reply: reply}
+	return (<-reply).ok
 }

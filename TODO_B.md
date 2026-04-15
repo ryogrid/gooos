@@ -8,18 +8,22 @@ Completed items remain here as audit trail — do not delete rows.
 - [x] B1 — close-out note (no code change; subsumed by Phase A)
 - [x] B3 — retire `serialChannel` / `serialSend` / `serialTaskEntry`
   (dead code per `phase_b_channel_migrations.md §1.1`)
-- [ ] B4 — `fsRequestChannel` → native `chan *fsRequest`; drop
-  `fsReqPool` / `fsRespPool` static pools
-- [ ] B6 — fatal handlers use `serialPanicPrint` + non-allocating
-  hex helper (`phase_b_teardown.md §2`)
-- [ ] B5 — keyboard IRQ ring buffer + `keyboardPump` goroutine
-  (`phase_b_keyboard_irq.md`)
-- [ ] B7 — replace `createTask` in `main.go` with `go fsTask()` /
-  `go keyboardPump()`
-- [ ] B9 — `elfExec` → `ring3Wrapper` + `exitCh`; two TinyGo
-  runtime patches (`state.stackTop` field, `gooosOnResume`
-  hook) added to `scripts/patch_tinygo_runtime.sh`
-- [ ] B11 — SMP AP idle loop: `sti + hlt` in `apEntry`
+- [x] B4 + B5 + B7 + B9 — **big-bang commit**. The plan's
+  incremental ordering was infeasible: native-chan blocking
+  from a custom-scheduler task stack corrupts TinyGo's
+  current-goroutine state. Had to land together:
+  `fsRequestChannel` → `chan *fsRequest` (B4); keyboard IRQ
+  ring-buffer + `keyboardPump` goroutine (B5); `createTask` →
+  `go fsTask()` / `go keyboardPump()` (B7); `elfExec` →
+  `ring3Wrapper` + per-Process `exitCh` (B9). Required TinyGo
+  runtime patches (installed via
+  `scripts/patch_tinygo_runtime.sh`): `state.stackTop` field
+  in `internal/task/task_stack.go`, `gooosOnResume` hook in
+  `internal/task/task_stack_amd64.go` `resume()`.
+- [ ] B6 — fatal handlers (deferred: basic system works; can
+  land independently)
+- [ ] B11 — SMP AP idle loop (deferred: 1-line change,
+  independent)
 - [ ] B8 — delete `src/scheduler.go`, strip `*TaskAddr` stubs in
   `src/switch.S`, update `handleTimer` to drop `schedule()`
 - [ ] B10 — delete `src/channel.go`; consider removing

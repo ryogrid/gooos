@@ -47,95 +47,16 @@ taskReturnHalt:
     jmp     1b
 
     /* ---- Address helpers for Go task entry functions --------------------- */
-    /* These return the address of //export Go functions so the scheduler    */
-    /* can place them on the initial stack as the return address.            */
-
-    .global demoTaskAAddr
-demoTaskAAddr:
-    leaq    demoTaskA(%rip), %rax
-    ret
-
-    .global demoTaskBAddr
-demoTaskBAddr:
-    leaq    demoTaskB(%rip), %rax
-    ret
-
-    .global demoTaskCAddr
-demoTaskCAddr:
-    leaq    demoTaskC(%rip), %rax
-    ret
+    /* Phase B retired every *TaskAddr stub except the two still
+     * referenced from Go: taskReturnHaltAddr (safety-net return for
+     * ring3Wrapper's eventual exit path) and elfExecTrampolineAddr
+     * (still referenced from process.go's ring3Wrapper path). All
+     * others were for dead goroutines and have been deleted. */
 
     .global taskReturnHaltAddr
 taskReturnHaltAddr:
     leaq    taskReturnHalt(%rip), %rax
     ret
-
-    /* ---- Channel test task address helpers ------------------------------- */
-
-    .global chanProducerTaskAddr
-chanProducerTaskAddr:
-    leaq    chanProducerTask(%rip), %rax
-    ret
-
-    .global chanConsumerTaskAddr
-chanConsumerTaskAddr:
-    leaq    chanConsumerTask(%rip), %rax
-    ret
-
-    .global chanRendezvousAAddr
-chanRendezvousAAddr:
-    leaq    chanRendezvousA(%rip), %rax
-    ret
-
-    .global chanRendezvousBAddr
-chanRendezvousBAddr:
-    leaq    chanRendezvousB(%rip), %rax
-    ret
-
-    /* ---- Select test task address helpers ---------------------------------- */
-
-    .global selectTestTaskAddr
-selectTestTaskAddr:
-    leaq    selectTestTask(%rip), %rax
-    ret
-
-    .global selectProducerAAddr
-selectProducerAAddr:
-    leaq    selectProducerA(%rip), %rax
-    ret
-
-    .global selectProducerBAddr
-selectProducerBAddr:
-    leaq    selectProducerB(%rip), %rax
-    ret
-
-    /* ---- Keyboard consumer task address helper ------------------------------ */
-
-    .global keyboardConsumerTaskAddr
-keyboardConsumerTaskAddr:
-    leaq    keyboardConsumerTask(%rip), %rax
-    ret
-
-    /* ---- FS task address helpers ------------------------------------------- */
-
-    .global fsTaskEntryAddr
-fsTaskEntryAddr:
-    leaq    fsTaskEntry(%rip), %rax
-    ret
-
-    .global fsDemoTaskAddr
-fsDemoTaskAddr:
-    leaq    fsDemoTask(%rip), %rax
-    ret
-
-    /* ---- User print task address helper ---------------------------------------- */
-
-    .global userPrintTaskAddr
-userPrintTaskAddr:
-    leaq    userPrintTask(%rip), %rax
-    ret
-
-    /* ---- elfExec trampoline address helper ------------------------------------- */
 
     .global elfExecTrampolineAddr
 elfExecTrampolineAddr:

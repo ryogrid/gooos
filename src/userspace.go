@@ -138,7 +138,7 @@ func sysReadHandler(frame *SyscallFrame) {
 
 	for {
 		// Block waiting for a keyboard event.
-		event := chanRecv(userKeyboardChannel)
+		event := <-keyboardCh
 		scancode := uint8(event & 0xFF)
 		ascii := byte((event >> 8) & 0xFF)
 
@@ -186,9 +186,15 @@ func sysReadHandler(frame *SyscallFrame) {
 // RDI = path_ptr, RSI = path_len, RDX = arg_ptr, R10 = arg_len
 
 func sysExecHandler(frame *SyscallFrame) {
+	parent := currentProc()
+	if parent == nil {
+		frame.RAX = 0xFFFFFFFFFFFFFFFF
+		return
+	}
+
 	// Reject nested exec: only one level of exec nesting is supported
 	// because savedParent is a single global.
-	if processes[currentTask].ParentTaskID != noParent {
+	if parent.parent != nil {
 		frame.RAX = 0xFFFFFFFFFFFFFFFF
 		return
 	}
@@ -215,19 +221,15 @@ func sysExecHandler(frame *SyscallFrame) {
 	}
 	args := string(argBuf[:argLen])
 
-	childID, ok := elfExec(filename, args, uint32(currentTask))
+	exitCode, ok := elfExec(filename, args, parent)
 	if !ok {
 		frame.RAX = 0xFFFFFFFFFFFFFFFF
 		return
 	}
 
-	// The parent is now blocked inside elfExec (schedule was called).
-	// When processExit unblocks us, we resume here.
-	// The exit code was written directly to our frame.RAX by processExit
-	// via the parent process — but processExit sets tasks[parent].State = taskReady
-	// and we resume after schedule() returns.
-	// We need to retrieve the exit code from the child process.
-	frame.RAX = processes[childID].ExitCode
+	// elfExec blocked until the child exited; the parent's pages are
+	// already restored by processExit.
+	frame.RAX = exitCode
 }
 
 // --- Syscall 4: sys_fs_read ---
@@ -341,7 +343,7 @@ func sysSleepHandler(frame *SyscallFrame) {
 // RDI = buf_ptr, RSI = buf_max
 
 func sysGetargsHandler(frame *SyscallFrame) {
-	proc := &processes[currentTask]
+	proc := currentProc()
 	buf := frame.RDI
 	maxLen := frame.RSI
 
@@ -359,7 +361,7 @@ func sysGetargsHandler(frame *SyscallFrame) {
 // RDI = increment
 
 func sysSbrkHandler(frame *SyscallFrame) {
-	proc := &processes[currentTask]
+	proc := currentProc()
 	increment := frame.RDI
 
 	if increment == 0 {
@@ -396,20 +398,18 @@ func sysVgaClearHandler(frame *SyscallFrame) {
 
 // --- Shell bootstrap ---
 
-// setupUserspace loads the shell ELF and enters Ring 3.
-// Called from main() after scheduler initialization.
+// setupUserspace loads the shell ELF and enters Ring 3 via a
+// ring3Wrapper goroutine. Blocks main's goroutine forever because
+// TinyGo's scheduler stops if main returns (`schedulerDone = true`).
 func setupUserspace() {
-	// Initialize the shell's process entry.
-	proc := &processes[0]
-	proc.TaskID = 0
-	proc.ParentTaskID = noParent
-	proc.Used = true
-	proc.ArgLen = 0
-
 	if !elfLoad("sh.elf") {
 		serialPrintln("Userspace: shell ELF load failed, halting")
 		for {
 			hlt()
 		}
+	}
+	// Unreachable: elfLoad blocks on the shell's exitCh.
+	for {
+		hlt()
 	}
 }

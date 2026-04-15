@@ -185,7 +185,9 @@ func elfLoad(name string) bool {
 	serialPrintln("ELF: loading " + name + ", entry=0x" + hextoa(uint64(entry)) +
 		", " + utoa(uint64(len(phdrs))) + " PT_LOAD segment(s)")
 
-	proc := &processes[currentTask]
+	// Phase B: allocate a fresh Process for the boot shell. No
+	// parent — processExit on this goroutine prints and halts.
+	proc := &Process{parent: nil, exitCh: make(chan uintptr, 1)}
 	userFlags := uintptr(pagePresent | pageWrite | pageUser)
 
 	// Map and load each PT_LOAD segment.
@@ -224,12 +226,17 @@ func elfLoad(name string) bool {
 		proc.HeapBreak = (lastPh.Vaddr + uintptr(lastPh.Memsz) + pageSize - 1) &^ (pageSize - 1)
 	}
 
-	// Allow Ring 3 to trigger int 0x80 (DPL=3 in IDT gate).
-	setGateDPL3(0x80)
+	proc.EntryPoint = entry
+	proc.StackTop = stackTop
 
-	serialPrintln("ELF: jumping to Ring 3 at 0x" + hextoa(uint64(entry)))
+	serialPrintln("ELF: spawning boot shell goroutine at 0x" + hextoa(uint64(entry)))
 
-	// Jump to user mode — does not return.
-	jumpToRing3(entry, stackTop)
-	return true // unreachable
+	// Spawn the shell on its own goroutine. main() then blocks on
+	// proc.exitCh — if the shell ever exits, the kernel halts.
+	go ring3Wrapper(proc)
+	<-proc.exitCh
+	serialPrintln("ELF: boot shell exited, halting")
+	for {
+		hlt()
+	}
 }

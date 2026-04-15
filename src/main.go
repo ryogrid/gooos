@@ -325,22 +325,12 @@ func main() {
 	vgaWriteLine(12, "GDT: Ring 3 + TSS loaded")
 	serialPrintln("GDT: Ring 3 + TSS loaded")
 
-	// Initialize the scheduler: task 0 = this main/boot task.
-	initScheduler()
+	go fsTask()
+	go keyboardPump()
+	runtime.Gosched()
 
-	// Spawn essential kernel service tasks only (no demo tasks).
-	// B3: serial output path bypasses any task/channel — serialPrintln
-	// writes directly to COM1 via busy-wait on the UART TX bit.
-
-	// Filesystem task: handles FS requests via channel (B4 migrates).
-	fsRequestChannel = chanCreate(8)
-	createTask(fsTaskEntryAddr()) // Task 2 — filesystem
-
-	// Register keyboard channel for userspace access.
-	chanRegister(userKeyboardChannel) // ID 0 = keyboard input
-
-	vgaWriteLine(13, "Scheduler: service tasks created")
-	serialPrintln("Scheduler: 2 service tasks (serial + fs)")
+	vgaWriteLine(13, "Services: fsTask + keyboardPump running")
+	serialPrintln("Services: fsTask + keyboardPump running")
 
 	// Store user ELF binaries in the filesystem (direct calls, before
 	// scheduler starts so FS task is not needed yet).
