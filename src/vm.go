@@ -270,18 +270,30 @@ func walkAndGetPaddr(vaddr uintptr) uintptr {
 
 // handlePageFault displays the faulting address and error code on VGA
 // and serial, then halts. Page faults are fatal in this kernel.
+//
+// Allocation-free: formats into panicHexBuf so it is safe to call
+// from ISR context. See impldoc/deferred_fatal_handlers.md.
+//
+//go:nosplit
 func handlePageFault(vector uint64) {
 	faultAddr := readCR2()
 	errCode := lastErrorCode
-	// Read RIP from the saved frame (offset 17*8 = 136 bytes from frame base)
 	frame := (*SyscallFrame)(unsafe.Pointer(lastFramePtr))
 	faultRIP := frame.RIP
 
-	msg := "PF: addr=0x" + hextoa(uint64(faultAddr)) + " err=0x" + hextoa(errCode) + " rip=0x" + hextoa(uint64(faultRIP))
-	vgaWriteLine(12, msg)
-	serialPrintln(msg)
+	off := 0
+	off = appendStr(panicHexBuf[:], off, "PF: addr=")
+	off = appendHex(panicHexBuf[:], off, uint64(faultAddr))
+	off = appendStr(panicHexBuf[:], off, " err=")
+	off = appendHex(panicHexBuf[:], off, errCode)
+	off = appendStr(panicHexBuf[:], off, " rip=")
+	off = appendHex(panicHexBuf[:], off, uint64(faultRIP))
 
-	// Fatal: halt the CPU.
+	vgaWriteLine(12, bytesToString(panicHexBuf[:off]))
+	serialPrintBytes(panicHexBuf[:off])
+	serialPutChar('\r')
+	serialPutChar('\n')
+
 	for {
 		hlt()
 	}

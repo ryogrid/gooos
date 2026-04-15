@@ -11,27 +11,28 @@ verification step pass. One commit per top-level item.
 
 ## Phase A — Bootstrap
 
-- [ ] Bootstrap commit lands TODO_DEF.md + the six
-  `impldoc/deferred_*.md` design docs.
+- [x] Bootstrap commit lands TODO_DEF.md + the six
+  `impldoc/deferred_*.md` design docs. (commit `b7dc849`)
 
 ## Phase B — Implementation
 
 ### `deferred_fatal_handlers.md` (item 8)
 
-- [ ] **Item 8** — fatal-handler detail preservation.
-  - [ ] Add `src/panic.go`: `panicHexBuf [96]byte`,
+- [x] **Item 8** — fatal-handler detail preservation.
+  - [x] Add `src/panic.go`: `panicHexBuf [96]byte`,
     `appendHex`, `appendStr`, `bytesToString`.
-  - [ ] Add `serialPrintBytes` to `src/serial.go`.
-  - [ ] Rewrite `handlePageFault` in `src/vm.go:280` no-alloc
+  - [x] Add `serialPrintBytes` to `src/serial.go`.
+  - [x] Rewrite `handlePageFault` in `src/vm.go:280` no-alloc
     + `//go:nosplit`.
-  - [ ] Rewrite `handleDivisionError` in `src/main.go` no-alloc
+  - [x] Rewrite `handleDivisionError` in `src/main.go` no-alloc
     + `//go:nosplit`. Add `//go:nosplit` to `vgaWriteLine`.
-  - [ ] Verify: `make build` clean.
-  - [ ] Verify: dev `#PF` trigger emits
-    `PF addr=0x1 err=0x02 rip=0x...`. Remove trigger.
-  - [ ] Verify: `nm tmp/kernel.bin | grep handlePageFault` and
-    `objdump -d` confirm no `__tinygo_alloc` reachable.
-  - [ ] Verify: 10/10 `bash tmp/test_sendkey.sh`.
+  - [x] Verify: `make build` clean.
+  - [x] Verify: dev `#PF` trigger emits
+    `PF: addr=0xFFFF800000001000 err=0x... rip=0x...`. Trigger removed.
+  - [x] Verify: `objdump -d <main.handlePageFault>` reaches
+    only `appendStr`/`appendHex`/`vgaWriteLine`/`serialPrintBytes`/
+    `serialPutChar`/`hlt`; no `alloc` symbol.
+  - [x] Verify: 10/10 `bash tmp/test_sendkey.sh` (all pf=0).
 
 ### `deferred_gc_and_stacks.md` (items 6, 7, 13)
 

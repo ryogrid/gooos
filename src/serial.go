@@ -64,3 +64,14 @@ func serialPrintln(s string) {
 	serialPutChar('\n')
 }
 
+// serialPrintBytes is the allocation-free sibling of serialPrint.
+// Used by ISR-context panic helpers that format into a fixed
+// scratch buffer (see src/panic.go).
+//
+//go:nosplit
+func serialPrintBytes(b []byte) {
+	for i := 0; i < len(b); i++ {
+		serialPutChar(b[i])
+	}
+}
+

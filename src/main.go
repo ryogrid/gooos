@@ -30,6 +30,8 @@ const (
 )
 
 // vgaWriteLine writes a string to the given row of the VGA text buffer.
+//
+//go:nosplit
 func vgaWriteLine(row int, s string) {
 	vga := (*[vgaCells]uint16)(unsafe.Pointer(vgaAddr))
 	offset := row * vgaWidth
@@ -84,9 +86,17 @@ func allocateGarbage() *[256]byte {
 
 // handleDivisionError displays an exception message on VGA and serial
 // when vector 0 (#DE - Division Error) fires.
+//
+// Allocation-free for ISR safety; see src/panic.go.
+//
+//go:nosplit
 func handleDivisionError(vector uint64) {
-	vgaWriteLine(7, "Exception: #DE")
-	serialPrintln("Exception: #DE (Division Error)")
+	off := 0
+	off = appendStr(panicHexBuf[:], off, "#DE: division error")
+	vgaWriteLine(7, bytesToString(panicHexBuf[:off]))
+	serialPrintBytes(panicHexBuf[:off])
+	serialPutChar('\r')
+	serialPutChar('\n')
 }
 
 // handleDefaultIRQ handles any hardware IRQ (vectors 32-47) that does
