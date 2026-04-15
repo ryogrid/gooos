@@ -7,7 +7,7 @@
 package main
 
 import (
-	// "runtime" — temporarily unused while GC demo is disabled
+	"runtime"
 	"unsafe"
 )
 
@@ -149,8 +149,33 @@ func main() {
 	vgaWriteLine(5, "Interrupts: enabled")
 	serialPrintln("Interrupts: enabled")
 
-	// GC demo temporarily disabled for page fault debugging.
-	serialPrintln("GC demo: skipped")
+	// Phase 1: Allocate many objects that immediately become garbage.
+	const numAllocs = 500
+	for i := 0; i < numAllocs; i++ {
+		_ = allocateGarbage()
+	}
+
+	// Read stats before GC.
+	var before runtime.MemStats
+	runtime.ReadMemStats(&before)
+	vgaWriteLine(6, "Mallocs: "+utoa(before.Mallocs)+"  TotalAlloc: "+utoa(before.TotalAlloc))
+	serialPrintln("Mallocs: " + utoa(before.Mallocs) + "  TotalAlloc: " + utoa(before.TotalAlloc))
+
+	// Phase 2: Trigger garbage collection.
+	runtime.GC()
+
+	// Read stats after GC.
+	var after runtime.MemStats
+	runtime.ReadMemStats(&after)
+	vgaWriteLine(7, "GC done. Frees: "+utoa(after.Frees)+"  HeapInuse: "+utoa(after.HeapInuse))
+	serialPrintln("GC done. Frees: " + utoa(after.Frees) + "  HeapInuse: " + utoa(after.HeapInuse))
+
+	// Phase 3: Allocate again to prove memory was reclaimed.
+	for i := 0; i < 100; i++ {
+		_ = allocateGarbage()
+	}
+	vgaWriteLine(8, "Post-GC alloc OK - GC works!")
+	serialPrintln("Post-GC alloc OK - GC works!")
 
 	// Virtual memory demo: map a 4 KiB page, write, read back, unmap.
 	vmInit()

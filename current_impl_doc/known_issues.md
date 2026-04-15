@@ -2,18 +2,7 @@
 
 ## Active Workarounds (Should Be Properly Fixed)
 
-### 1. Kernel GC Set to `leaking`
-- **File**: `src/target.json` — `"gc": "leaking"` (was `"conservative"`)
-- **Symptom**: With `gc=conservative`, the GC mark phase calls `memset` to zero the metadata region (`metadataStart` to `_heap_end`). This corrupted boot-time page tables when they were in `.bss`, and corrupted dynamically allocated page tables when they overlapped with the metadata range.
-- **Workaround**: Use `gc=leaking` — no GC runs, memory is never freed.
-- **Proper fix**: Restructure memory layout so GC metadata region does not overlap any page table memory. The `.pagetables` section and guard gap are already in place but insufficient when GC allocations push `metadataStart` into new ranges.
-- **Impact**: Kernel leaks all heap allocations. For short shell sessions this is acceptable (~4 MiB heap), but long-running sessions may exhaust memory.
-
-### 2. GC Demo Disabled
-- **File**: `src/main.go` — GC demo code commented out
-- **Impact**: The boot-time GC test (`runtime.GC()`, `ReadMemStats`) is skipped. Restore when conservative GC is re-enabled.
-
-### 3. Schedule Switch Logging Disabled
+### 1. Schedule Switch Logging Disabled
 - **File**: `src/scheduler.go` — `serialPrint("Switch: ...")` commented out
 - **Reason**: `utoa()` for task ID formatting allocates on the kernel Go heap (string concatenation). In ISR context (timer handler), this could trigger the GC (when enabled), causing reentrancy issues or metadata corruption.
 - **Impact**: No serial log of task switches. Uncomment for debugging, but be aware of heap allocation side effects.

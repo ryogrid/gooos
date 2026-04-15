@@ -62,8 +62,6 @@
 ## Deferred Items
 
 ### Workarounds (should be properly fixed)
-- **Kernel GC set to `leaking`**: `src/target.json` `"gc": "leaking"` (was `"conservative"`). Conservative GC's metadata memset corrupts page tables during mark phase. Proper fix: restructure memory layout so GC metadata region does not overlap page table memory, then restore `"gc": "conservative"`.
-- **GC demo disabled**: `src/main.go` — `runtime.GC()` call and GC demo code commented out. Restore when conservative GC is re-enabled.
 - **Schedule switch logging disabled**: `src/scheduler.go` — `serialPrint("Switch: ...")` commented out to avoid kernel heap allocation (`utoa` string concat) in ISR context, which could trigger GC.
 
 ### Functional limitations
