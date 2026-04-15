@@ -13,7 +13,7 @@ TARGET   := target.json
 LDSCRIPT := linker_user.ld
 BUILD    := build
 
-CMDS := sh hello ls cat wc
+CMDS := sh hello ls cat wc goprobe
 ELFS := $(patsubst %,$(BUILD)/%.elf,$(CMDS))
 
 .PHONY: all clean
@@ -34,10 +34,17 @@ $(BUILD)/rt0.o: rt0.S | $(BUILD)
 $(BUILD)/task_stack_amd64.o: task_stack_amd64.S | $(BUILD)
 	$(AS) --64 task_stack_amd64.S -o $(BUILD)/task_stack_amd64.o
 
-# Pattern rule: compile Go command + link with rt0 + task stubs.
-$(BUILD)/%.elf: cmd/%/main.go gooos/*.go $(BUILD)/rt0.o $(BUILD)/task_stack_amd64.o $(LDSCRIPT) $(TARGET) | $(BUILD)
+# tinygo_longjmp — referenced by runtime._panic on amd64. TinyGo
+# ships the asm under runtime/asm_amd64.S which our `-o *.o` flow
+# does not assemble; mirrors src/runtime_asm_amd64.S on the kernel.
+$(BUILD)/runtime_asm_amd64.o: runtime_asm_amd64.S | $(BUILD)
+	$(AS) --64 runtime_asm_amd64.S -o $(BUILD)/runtime_asm_amd64.o
+
+# Pattern rule: compile Go command + link with rt0 + task stubs +
+# runtime asm.
+$(BUILD)/%.elf: cmd/%/main.go gooos/*.go $(BUILD)/rt0.o $(BUILD)/task_stack_amd64.o $(BUILD)/runtime_asm_amd64.o $(LDSCRIPT) $(TARGET) | $(BUILD)
 	$(TINYGO) build -target=$(TARGET) -o $(BUILD)/$*_go.o ./cmd/$*
-	$(LD) -m elf_x86_64 -n -T $(LDSCRIPT) -o $@ $(BUILD)/rt0.o $(BUILD)/task_stack_amd64.o $(BUILD)/$*_go.o
+	$(LD) -m elf_x86_64 -n -T $(LDSCRIPT) -o $@ $(BUILD)/rt0.o $(BUILD)/task_stack_amd64.o $(BUILD)/runtime_asm_amd64.o $(BUILD)/$*_go.o
 
 clean:
 	rm -rf $(BUILD)

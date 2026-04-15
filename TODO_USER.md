@@ -60,11 +60,16 @@ One git commit per top-level item. Check off when that commit lands.
         time.Sleep, yield-cycle). Standalone tinygo compile
         clean via the patched `/home/ryo/.local/tinygo/bin/tinygo`.
 
-- [ ] **6. Wire goprobe into build + preload**
-  - [ ] `user/Makefile` CMDS adds `goprobe`.
-  - [ ] `src/main.go` preloads `goprobe.elf`.
-  - [ ] `src/user_binaries.go` regenerated.
-  - [ ] Every user ELF under 96 KiB.
+- [x] **6. Wire goprobe into build + preload**
+  - [x] `user/Makefile` CMDS adds `goprobe`.
+  - [x] `src/main.go` preloads `goprobe.elf`.
+  - [x] `src/user_binaries.go` regenerated.
+  - [x] Add `user/runtime_asm_amd64.S` (tinygo_longjmp) — uncovered
+        by goprobe's `time` import pulling the panic path.
+        Mirrors kernel `src/runtime_asm_amd64.S`.
+  - [x] Every user ELF under 96 KiB (goprobe.elf 89.3 KiB — 7 KiB
+        headroom; watch if goprobe gains more tests).
+  - [x] Baseline `test_sendkey.sh 1` still PASS after wiring.
 
 - [ ] **7. `tmp/test_goprobe.sh` harness + PASS**
   - [ ] Script added (mirrors `test_fd_probe.sh` pattern),
