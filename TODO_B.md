@@ -44,9 +44,9 @@ Completed items remain here as audit trail — do not delete rows.
   decrements the ISR counter by 1 instead of forcing 0; Task
   struct layout guarded by boot-time `checkTaskOffset`;
   orphaned `switchContext` asm removed from `src/switch.S`).
-- [ ] `README.md` updated to reflect post-Phase-B state
+- [x] `README.md` updated to reflect post-Phase-B state
   (progress table, assembly section, architecture diagram,
-  `src/` layout, prerequisites)
+  `src/` layout).
 
 ## Deferred (populated during execution)
 

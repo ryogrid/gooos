@@ -1,6 +1,6 @@
 # gooos
 
-An experimental x86_64 operating system written in **Go (TinyGo) + GNU assembly**. The project explores how far Go can go as a kernel language — boot, memory management, interrupts, scheduling, channel-based IPC, microkernel services, userspace with ELF loading, and an interactive shell — with assembly used only where the hardware demands it.
+An experimental x86_64 operating system written in **Go (TinyGo) + GNU assembly**. The kernel runs on **TinyGo's native goroutine runtime** (`scheduler=tasks`, `gc=conservative`) — service loops are plain `go func()` goroutines, IPC is Go's built-in `chan`, and Ring 3 processes are goroutines that `iretq` into userspace. Assembly is used only where the CPU demands it.
 
 ## Progress
 
@@ -8,17 +8,16 @@ An experimental x86_64 operating system written in **Go (TinyGo) + GNU assembly*
 |---|---|---|
 | Boot to VGA output | Done | Multiboot 1 boot, 32→64-bit transition, VGA text output |
 | Heap allocation | Done | 4 MiB heap via linker-defined region, bump allocator, `make`/`append`/`new` working |
-| Serial output (COM1) | Done | `outb`/`inb` assembly stubs, COM1 at 115200 baud 8N1, `serialPrint()` logging |
+| Serial output (COM1) | Done | `outb`/`inb` assembly stubs, COM1 at 115200 baud 8N1, `serialPrintln()` direct-UART writes |
 | IDT + interrupt handlers | Done | 256-entry IDT, ISR assembly stubs with Go dispatcher, PIC 8259A remap (IRQs → vectors 32-47) |
-| PIT / timer | Done | PIT channel 0 at 100 Hz, global tick counter, preemption-ready |
-| PS/2 keyboard driver | Done | IRQ1 handler, scancode set 1 → ASCII (lowercase + punctuation), VGA echo |
+| PIT / timer | Done | PIT channel 0 at 100 Hz, global tick counter, drives `sleepTicks` for `time.Sleep` |
+| PS/2 keyboard driver | Done | IRQ1 handler, scancode set 1 → ASCII, lock-free SPSC ring buffer drained by `keyboardPump` goroutine |
 | Virtual memory management | Done | Page fault handler, `mapPage`/`unmapPage` with 4 KiB granularity, bump + LIFO free stack with `allocPagesContig` for kernel stacks |
-| Scheduler | Done | Preemptive round-robin, per-task kernel stacks, PIT-driven task switching, TSS RSP0 update on context switch |
-| Userspace | Done | Ring 3 execution via `iretq`, TSS for privilege transitions, `int 0x80` syscall interface (12 syscalls) |
-| Filesystem | Done | In-memory flat filesystem: `Create`/`Write`/`Read`/`List`/`Delete` (32 entries, 40 KiB each) |
-| SMP | Done | ACPI MADT AP discovery, 16-bit real-mode trampoline, INIT-SIPI-SIPI, multi-core boot |
-| Channel IPC + select | Done | Bounded/unbuffered typed message channels, blocking `chanSend`/`chanRecv`, non-blocking `chanTrySend`, `selectWait` multiplexer |
-| Microkernel services | Done | Serial and filesystem run as isolated kernel tasks communicating via channels |
+| Scheduler | Done | **TinyGo native goroutines** (`scheduler=tasks`). Cooperative; PIT IRQ drives `sleepTicks`. TSS.RSP0 updated per-Ring-3-goroutine via the `gooosOnResume` hook in the patched TinyGo runtime |
+| Userspace | Done | Ring 3 execution via `iretq`, TSS for privilege transitions, `int 0x80` syscall interface (12 syscalls); each user process is a `ring3Wrapper` goroutine |
+| Filesystem | Done | In-memory flat filesystem: `Create`/`Write`/`Read`/`List`/`Delete` (32 entries, 40 KiB each); served by `fsTask` goroutine over native `chan *fsRequest` |
+| SMP | Done | ACPI MADT AP discovery, 16-bit real-mode trampoline, INIT-SIPI-SIPI. APs idle at `sti; hlt` in v1; BSP runs all goroutines |
+| Channel IPC + select | Done | **Native Go `chan` and `select`** in Ring 0. `fsReqCh`, `keyboardCh`, per-process `exitCh` are all `make(chan ...)` constructed by the TinyGo runtime |
 | Syscall ABI | Done | 12-syscall register-based dispatch: `sys_exit`, `sys_write`, `sys_read`, `sys_exec`, `sys_fs_read/write/list`, `sys_yield`, `sys_sleep`, `sys_getargs`, `sys_sbrk`, `sys_vga_clear` |
 | ELF64 loader | Done | Parse ELF64 headers, map PT_LOAD segments, per-process page tracking, parent page save/restore for exec |
 | BusyBox-style shell | Done | Interactive shell (`sh.elf`) with built-in commands (help, echo, clear, exit) and external ELF commands (ls, cat, wc, hello) compiled with TinyGo |
@@ -28,11 +27,14 @@ An experimental x86_64 operating system written in **Go (TinyGo) + GNU assembly*
 Go cannot express certain CPU-level operations. These remain in assembly:
 
 - **Boot bootstrap** (`boot.S`): Multiboot header, 32→64-bit mode switch, page table setup, GDT load
-- **ISR stubs** (`isr.S`): 256 interrupt entry points — save registers, call Go dispatcher, `iretq`; passes register frame pointer for syscall argument access
-- **Context switch** (`switch.S`): Save/restore callee-saved registers + RSP for task switching; entry-point address stubs for service tasks and `elfExecTrampoline`
+- **ISR stubs** (`isr.S`): 256 interrupt entry points — save registers, bump `gooos_in_interrupt_depth`, call Go dispatcher, decrement, `iretq`
+- **TinyGo task context switch** (`task_stack_amd64.S`): `tinygo_startTask` / `tinygo_swapTask` — imported byte-equivalent from TinyGo's runtime because `tinygo build -o *.o` does not assemble `.S` itself
+- **TinyGo runtime longjmp** (`runtime_asm_amd64.S`): `tinygo_longjmp` — same reason as above
+- **Ring 3 trampolines** (`switch.S`): `taskReturnHalt` safety net + `elfExecTrampolineAddr` legacy hook (both shrinking targets)
 - **AP trampoline** (`trampoline.S`): 16-bit real-mode → 32-bit → 64-bit mode transition for SMP
-- **Port I/O & CPU control** (`stubs.S`): `outb`/`inb`, `cli`/`sti`/`hlt`, `lidt`/`lgdt`/`ltr`, `invlpg`, CR2/CR3 access, `memcpy`/`memset`, `jumpToRing3`, `readFlags`/`restoreFlags`
+- **Port I/O & CPU control** (`stubs.S`): `outb`/`inb`, `cli`/`sti`/`hlt`, `lidt`/`lgdt`/`ltr`, `invlpg`, CR2/CR3 access, `memcpy`/`memmove`/`memset`, `jumpToRing3`, `readFlags`/`restoreFlags`, `tinygo_scanCurrentStack`
 - **Synthetic ELF header** (`stubs.S`): Fake `__ehdr_start` in `.rodata` for GC's `findGlobals()`
+- **Keyboard IRQ ring** (`isr.S`, `keyboard_irq.go`): `.bss` head/tail/slot storage is assembled as 32-bit naturally-aligned mov's; x86-TSO makes the writes visible to `keyboardPump` without fences
 - **User startup** (`user/rt0.S`): `_start`, syscall wrappers (`syscall0`-`syscall4`), TinyGo runtime stubs (`mmap`, `write`, `abort`, `memcpy`, `memset`)
 
 ## Architecture
@@ -75,14 +77,14 @@ Go cannot express certain CPU-level operations. These remain in assembly:
                                                      |
                   +----------------------------------+----------------------------------+
                   |                                  |                                  |
-    Service Tasks (Ring 0)                 Shell (Ring 3)               External Commands (Ring 3)
+    Kernel goroutines (Ring 0)             Shell goroutine (Ring 3)    External Commands (Ring 3)
     ┌──────────────────────┐        ┌──────────────────┐          ┌──────────────────┐
-    │ Serial Output Task   │        │ sh.elf           │          │ ls.elf / cat.elf │
-    │  chanRecv → COM1 TX  │        │  $ prompt        │  exec    │ hello.elf / wc.elf│
-    ├──────────────────────┤        │  built-in: help, │ -------> │                  │
-    │ Filesystem Task      │        │   echo, clear    │          │  TinyGo compiled │
-    │  FSRequest/FSResponse│        │  external: ls,   │ <------- │  sys_exit returns │
-    │  via reply channels  │        │   cat, hello, wc │  exit    │  to shell         │
+    │ go fsTask()          │        │ go ring3Wrapper  │          │ ls.elf / cat.elf │
+    │  for req := range    │        │   (sh.elf)       │  exec    │ hello.elf / wc.elf│
+    │    fsReqCh {…}       │        │  $ prompt        │ -------> │  go ring3Wrapper │
+    ├──────────────────────┤        │  built-in: help, │          │   (cmd.elf)      │
+    │ go keyboardPump()    │        │   echo, clear    │ <------- │  sys_exit → proc │
+    │  ring → keyboardCh   │        │  external: ls,   │  exit    │  .exitCh delivers│
     └──────────────────────┘        └──────────────────┘          └──────────────────┘
 ```
 
@@ -131,29 +133,32 @@ gooos/
 │       └── wc/main.go                              # word/line/byte count
 └── src/                                            # kernel source
     ├── boot.S                                      # Multiboot 1 header + 32→64 bootstrap
-    ├── isr.S                                       # 256 ISR entry stubs (macro-generated)
-    ├── switch.S                                    # context switch + task entry stubs
+    ├── isr.S                                       # 256 ISR entry stubs + gooos_in_interrupt_depth .bss
+    ├── switch.S                                    # taskReturnHalt + elfExecTrampoline address helpers
+    ├── task_stack_amd64.S                          # imported TinyGo tinygo_startTask / tinygo_swapTask
+    ├── runtime_asm_amd64.S                         # imported TinyGo tinygo_longjmp
     ├── trampoline.S                                # AP trampoline (16-bit → 64-bit for SMP)
     ├── stubs.S                                     # port I/O, CPU control, GC support
     ├── linker.ld                                   # section layout, heap, .pagetables, _alloc_start
-    ├── target.json                                 # TinyGo target: gc=leaking, scheduler=none
-    ├── main.go                                     # kernel entry: init, task creation, shell launch
-    ├── serial.go                                   # COM1 serial output + serial task
+    ├── target.json                                 # TinyGo target: gc=conservative, scheduler=tasks
+    ├── main.go                                     # kernel entry: init + go fsTask / go keyboardPump
+    ├── serial.go                                   # COM1 serial output (direct UART writes)
     ├── idt.go                                      # IDT setup + lidt
     ├── interrupt.go                                # table-driven interrupt dispatcher + syscall dispatch
     ├── pic.go                                      # 8259A PIC remap + EOI
-    ├── pit.go                                      # PIT timer (100 Hz, IRQ0)
-    ├── keyboard.go                                 # PS/2 keyboard driver
-    ├── vm.go                                       # virtual memory: mapPage, unmapPage, bump allocator
+    ├── pit.go                                      # PIT timer (100 Hz, IRQ0) — drives sleepTicks
+    ├── keyboard.go                                 # PS/2 keyboard IRQ handler (ISR-safe)
+    ├── keyboard_irq.go                             # SPSC ring buffer + keyboardPump goroutine
+    ├── goroutine_tss.go                            # TSS.RSP0 side-table + gooosOnResume hook
+    ├── goroutine_irq.go                            # Go-side handle for gooos_in_interrupt_depth
+    ├── vm.go                                       # virtual memory: mapPage, unmapPage, bump + LIFO free
     ├── vga.go                                      # VGA console with cursor and scrolling
-    ├── scheduler.go                                # scheduler: WaitQueue, yield, taskSleep, round-robin
-    ├── channel.go                                  # channel IPC: send/recv, select, channel ID table
     ├── elf.go                                      # ELF64 parser and loader
-    ├── process.go                                  # process lifecycle: elfExec, processExit, page save/restore
-    ├── gdt.go                                      # runtime GDT + TSS, per-task RSP0 update
+    ├── process.go                                  # Process + ring3Wrapper + exitCh lifecycle
+    ├── gdt.go                                      # runtime GDT + TSS, tssSetRSP0
     ├── userspace.go                                # Ring 3 setup, 12-syscall ABI dispatch
-    ├── fs.go                                       # in-memory filesystem + FS task
-    ├── smp.go                                      # SMP: LAPIC, ACPI MADT, INIT-SIPI-SIPI
+    ├── fs.go                                       # in-memory FS + go fsTask() over native chan
+    ├── smp.go                                      # SMP: LAPIC, ACPI MADT, INIT-SIPI-SIPI, AP sti+hlt
     └── user_binaries.go                            # generated: embedded user ELF byte arrays
 ```
 
