@@ -137,10 +137,12 @@ func gooos_restoreFlags(flags uintptr)
 //go:linkname gooos_cli cli
 func gooos_cli()
 
-// Atomic counter bumped by the gooos common ISR prologue / epilogue
-// (src/isr.S). Exposed here so In() can report ISR context.
+// Counter bumped by the gooos common ISR prologue / epilogue
+// (src/isr.S), defined as a .bss symbol there to avoid TinyGo's
+// dead-code elimination of Go-level vars only referenced from
+// assembly. Linkname target: unqualified "gooos_in_interrupt_depth".
 //
-//go:linkname gooos_inInterruptDepth main.inInterruptDepth
+//go:linkname gooos_inInterruptDepth gooos_in_interrupt_depth
 var gooos_inInterruptDepth uint32
 
 // State holds RFLAGS at the moment of Disable() so Restore() can

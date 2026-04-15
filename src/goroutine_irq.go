@@ -1,16 +1,25 @@
-// src/goroutine_irq.go — ISR depth counter bridged into the TinyGo
-// runtime's interrupt package via //go:linkname (see
-// scripts/patch_tinygo_runtime.sh and
-// /home/ryo/.local/tinygo/src/runtime/interrupt/interrupt_gooos.go).
+// src/goroutine_irq.go — Go-side reference to the ISR-depth counter
+// defined as a .bss symbol in src/isr.S (`gooos_in_interrupt_depth`).
 //
-// inInterruptDepth is incremented by the common ISR prologue in
-// src/isr.S and decremented by the epilogue; interrupt.In() returns
-// (inInterruptDepth != 0). Required so TinyGo's task.Pause() can
-// refuse to park a goroutine from ISR context.
+// The TinyGo runtime's interrupt package (patched via
+// scripts/patch_tinygo_runtime.sh) reads this counter to implement
+// interrupt.In(). src/isr.S increments it in the common ISR prologue
+// and decrements in the epilogue. The symbol must be defined in
+// assembly because TinyGo's dead-code eliminator strips Go-defined
+// variables that are only referenced from assembly and across the
+// //go:linkname boundary.
 
 package main
 
-// inInterruptDepth is 0 in normal (non-ISR) execution. src/isr.S
-// increments it in the common prologue and decrements in the epilogue.
-// Linked from runtime/interrupt/interrupt_gooos.go via //go:linkname.
-var inInterruptDepth uint32
+// Declared here so Go callers have a handle; defined in src/isr.S.
+//
+//go:linkname gooosInInterruptDepth gooos_in_interrupt_depth
+var gooosInInterruptDepth uint32
+
+// Reference prevents the Go toolchain from dropping the linkname on
+// the var, which in turn keeps the cross-unit reference resolvable.
+//
+//go:noinline
+func readInInterruptDepth() uint32 { return gooosInInterruptDepth }
+
+var _ = readInInterruptDepth

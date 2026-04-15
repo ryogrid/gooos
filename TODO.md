@@ -17,9 +17,13 @@ audit trail — do not delete.
   shell prompt reached; 3/3 sendkey trials pass. Required importing
   two TinyGo-runtime asm files into gooos's link (`src/task_stack_amd64.S`,
   `src/runtime_asm_amd64.S`) and adding `memmove` to `src/stubs.S`.
-- [ ] **Spike 3 — `interrupt.In()`**: `in_interrupt_depth` counter
-  in `src/isr.S`, `interruptIn()` exposed via `//go:linkname`.
-  Pass when `task.Pause()` outside ISR does not panic.
+- [x] **Spike 3 — `interrupt.In()`**: `.bss` counter
+  `gooos_in_interrupt_depth` defined in `src/isr.S`, incremented in
+  the common ISR prologue and decremented in the epilogue. The
+  patched `runtime/interrupt/interrupt_gooos.go` links to it via
+  `//go:linkname` to implement `interrupt.In()`. `task.Pause()` from
+  the Spike 2 probe (non-ISR) does not panic; 3/3 sendkey trials
+  still pass with the counter actively bouncing on every timer IRQ.
 - [ ] **Spike 4 — Boot-goroutine stack**: identify a mechanism to
   give `main()`'s goroutine ≥16 KiB, or install a manual early-in-
   `main` stack swap. Pass when a canary at the stack boundary

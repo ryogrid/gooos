@@ -103,6 +103,12 @@ isr_common:
     pushq   %r14
     pushq   %r15
 
+    /* Bump gooos_in_interrupt_depth so interrupt.In() reports true for any
+     * TinyGo runtime code that runs on this stack. The counter is defined
+     * in .bss below and linkname-bridged into runtime/interrupt via
+     * src/goroutine_irq.go. */
+    incl    gooos_in_interrupt_depth(%rip)
+
     /* Vector number is at RSP + 15*8 = RSP + 120 */
     /* Error code  is at RSP + 15*8 + 8 = RSP + 128 */
     movq    120(%rsp), %rdi         /* first arg  = vector number */
@@ -117,6 +123,11 @@ isr_common:
     call    go_interrupt_handler
 
     movq    %rbx, %rsp              /* restore original RSP */
+
+    /* Leave ISR context — decrement before popping regs so pagefaults
+     * on the pop sequence (should never happen) would still see depth=0
+     * when the kernel halts. */
+    decl    gooos_in_interrupt_depth(%rip)
 
     /* Restore all general-purpose registers */
     popq    %r15
@@ -138,6 +149,20 @@ isr_common:
     addq    $16, %rsp               /* skip vector number + error code */
     iretq
 
+    /* ---- gooos_in_interrupt_depth: ISR-depth counter ------------------ */
+    /* Incremented by the ISR prologue, decremented by the epilogue.
+     * Bridged into runtime/interrupt.In() via //go:linkname in
+     * src/goroutine_irq.go. Defined here (not in a Go file) so TinyGo's
+     * dead-code eliminator cannot strip it when no Go code references
+     * it — the only accesses are from assembly and from the patched
+     * TinyGo runtime (interrupt_gooos.go). */
+    .section .bss
+    .global gooos_in_interrupt_depth
+    .align 4
+gooos_in_interrupt_depth:
+    .skip 4
+
+    .section .text
 /* ---- ISR address table ------------------------------------------------- */
 /* A table of 256 function pointers, one per ISR stub.                       */
 /* Go code reads this via isrTableAddr() to populate IDT entries.            */
