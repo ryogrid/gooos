@@ -206,8 +206,37 @@ below.
 
 ## Reviewer follow-ups (MINOR)
 
-(empty — populated by Phase C if any minor issues are
-deferred rather than fixed)
+Reviewer pass on commits `b7dc849..b71805b` returned PASS
+with no CRITICAL or MAJOR findings. The six MINOR items:
+
+1. `src/stack_audit.go:29-33` — irregular column alignment
+   in the var block. **Status:** left as-is. Not gofmt'd
+   because the kernel package is not a target for `gofmt`
+   today (TinyGo accepts the spacing); applying gofmt
+   would create churn unrelated to deferred items. Revisit
+   if the project ever adds a project-wide `make fmt`.
+2. `src/process.go:237-238` — `firstExecAudited` declared
+   *after* its first reference. **Status:** left as-is.
+   Legal Go, package-scope vars may be declared anywhere;
+   moving it would touch unrelated git blame.
+3. `src/process.go:229-232` — `firstExecAudited` flip runs
+   even when `runStackAudit=false`. **Status:** left as-is.
+   One bool write per exec is negligible; the audit
+   short-circuit inside `stackSizeAudit` already keeps the
+   serial-print cost zero. A guard at the call site would
+   leak the audit constant to a wider scope.
+4. `scripts/lint_isr.go:65-68` — struct field alignment
+   non-gofmt. **Status:** same rationale as item 1.
+5. `src/main.go:321-333` — Spike 2 probe comment claims
+   "Removed once the full migration lands". The full
+   migration is landed (Phase B done). **Status:** retained
+   as a passive smoke test; the comment is stale but the
+   probe still has signal value (catches scheduler/chan
+   regressions on every boot before the shell launches).
+   The stale-comment fix would itself add no signal.
+6. Self-referential nit: this `## Reviewer follow-ups`
+   section was empty when the reviewer ran. **Status:**
+   addressed by populating it now.
 
 ## Further deferred
 
