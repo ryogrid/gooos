@@ -5,9 +5,10 @@
 // src/goroutine_tss.go. The parent goroutine blocks on an `exitCh`
 // native channel until the child's processExit wakes it.
 //
-// Single-CPU v1 invariant: only one exec is in flight at a time, so
-// the global `savedParent` and `procByTask` map have one live entry
-// per process without locking.
+// Single-CPU v1 invariant: procByTask has one live entry per
+// goroutine, no locking. Per-process PML4 (4e) replaced the
+// previous savedParent global; each Process now owns its own
+// address space.
 
 package main
 
@@ -49,22 +50,11 @@ type Process struct {
 	pml4 uintptr
 }
 
-// SavedMapping caches a parent's page mappings during child exec.
-type SavedMapping struct {
-	Vaddrs [maxUserPages]uintptr
-	Paddrs [maxUserPages]uintptr
-	Count  int
-}
-
 var (
 	// procByTask maps a goroutine's *task.Task (as uintptr) to its
 	// *Process. Populated by ring3Wrapper; consulted by any syscall
 	// handler or kernel helper that needs the current process.
 	procByTask = make(map[uintptr]*Process)
-
-	// savedParent caches the parent's page mappings across exec.
-	// Single-global because v1 supports one level of exec nesting.
-	savedParent SavedMapping
 )
 
 // Argument page virtual address: kernel writes arg string here

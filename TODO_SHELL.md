@@ -249,16 +249,17 @@ The per-process PML4 design (keep user vaddrs at link-time
     elfSpawn → processWait path on its own per-proc PML4);
     test_redirect, test_pipe, test_fd_probe all PASS.
 
-- [ ] **4f** — `savedParent` removal.
-  - [ ] Drop the global `savedParent SavedMapping` in
-    `src/process.go`.
-  - [ ] Drop the save block in `elfExec`/`elfSpawn` and
-    the restore block in `processExit`.
-  - [ ] `SavedMapping` type can be removed if no other
-    references.
-  - [ ] Verify: 10/10 sendkey (each process now in its
-    own PML4 — sanity check the prior single-process
-    behavior is unaffected).
+- [x] **4f** — `savedParent` removal.
+  - [x] Dropped global `savedParent` and `SavedMapping`
+    type in `src/process.go`.
+  - [x] Save / restore code already absent from
+    `elfSpawn` (4e). `processExit`'s restore block was
+    already removed in 4e too.
+  - [x] Removed nested-exec rejection in
+    `sysExecHandler` (per-process PML4 makes nested
+    exec safe — no shared address space to collide).
+  - [x] Updated `src/process.go` header comment.
+  - [x] Verify: 10/10 sendkey.
 
 - [ ] **4g** — `sys_spawn` + `sys_wait` wiring.
   - [ ] `sys_spawn` (15), `sys_wait` (16) constants +

@@ -229,12 +229,9 @@ func sysExecHandler(frame *SyscallFrame) {
 		return
 	}
 
-	// Reject nested exec: only one level of exec nesting is supported
-	// because savedParent is a single global.
-	if parent.parent != nil {
-		frame.RAX = 0xFFFFFFFFFFFFFFFF
-		return
-	}
+	// Nested exec is now allowed: per-process PML4 (4e) gives
+	// each Process its own address space, so child + grandchild
+	// don't collide.
 
 	// Copy filename from user memory.
 	pathLen := frame.RSI
