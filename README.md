@@ -189,10 +189,13 @@ gooos needs four local changes to TinyGo's runtime for
 user-writable copy at `$HOME/.local/tinygo/` (overridable via
 the `TINYGOROOT` environment variable the Makefile exports).
 
-`scripts/patch_tinygo_runtime.sh` installs / edits:
+The full edit is captured as a unified diff at
+`scripts/tinygo_runtime.patch` (reviewable with
+`git apply --stat scripts/tinygo_runtime.patch` against a
+pristine TinyGo 0.33.0 tree). It touches four files:
 
-1. **`runtime/runtime_gooos.go`** (new, gooos+baremetal build tag) —
-   provides `sleepTicks`, `ticks`, `ticksToNanoseconds`,
+1. **`runtime/runtime_gooos.go`** (new, `gooos && baremetal` build
+   tag) — provides `sleepTicks`, `ticks`, `ticksToNanoseconds`,
    `nanosecondsToTicks`, `deadlock`, `putchar`, `preinit`, `exit`,
    `abort`, and the bare-metal `main` entry point that `boot.S`
    calls.
@@ -203,29 +206,49 @@ the `TINYGOROOT` environment variable the Makefile exports).
 3. **`internal/task/task_stack.go`** (patched in place) — adds a
    `stackTop uintptr` field to the `state` struct and assigns it
    to `canaryPtr + stackSize` in `initialize()`. Needed so
-   `gooos_tss.go`'s side table can resolve each goroutine's
-   kernel-stack top for TSS.RSP0.
+   `src/goroutine_tss.go`'s side table can resolve each
+   goroutine's kernel-stack top for TSS.RSP0.
 4. **`internal/task/task_stack_amd64.go`** (patched in place) —
-   inserts a `gooosOnResume(t)` call before `swapTask` in the
+   inserts a `gooosOnResume()` call before `swapTask` in the
    `state.resume()` body. This hook is how the gooos kernel
    updates `TSS.RSP0` every time TinyGo's scheduler resumes a
    Ring-3 goroutine.
 
-One-time setup after installing TinyGo:
+#### One-time setup after installing TinyGo
 
 ```bash
+# 1. Mirror the system TinyGo into a user-writable location.
 mkdir -p ~/.local/tinygo
 cp -a /usr/local/lib/tinygo/. ~/.local/tinygo/
+
+# 2. Apply scripts/tinygo_runtime.patch via the wrapper script.
+#    (Equivalent: patch -p1 -d ~/.local/tinygo < scripts/tinygo_runtime.patch)
 bash scripts/patch_tinygo_runtime.sh
 ```
 
-Re-run `patch_tinygo_runtime.sh` after updating TinyGo or any
-time `~/.local/tinygo/` is refreshed. The script is idempotent:
-the two "in place" edits (3, 4) are guarded by grep sentinels so
-they only apply once. See
-`impldoc/goroutine_design_scheduler.md §5.1` and
-`impldoc/phase_b_ring3_and_exec.md §4` for why these patches are
-necessary.
+The Makefile exports `TINYGOROOT=$HOME/.local/tinygo` and
+invokes `~/.local/tinygo/bin/tinygo`, so `make build` picks up
+the patched tree automatically.
+
+The wrapper is **idempotent**: it uses a sentinel check on
+`runtime_gooos.go` and skips with an `already-applied:` message
+if the patch is already present. Re-run any time after a TinyGo
+upgrade or after refreshing `~/.local/tinygo/`.
+
+#### Reverting
+
+```bash
+# 1. Delete the two new files (patch -R leaves them empty, not gone).
+rm ~/.local/tinygo/src/runtime/runtime_gooos.go
+rm ~/.local/tinygo/src/runtime/interrupt/interrupt_gooos.go
+
+# 2. Reverse the two in-place edits.
+patch -R -p1 -d ~/.local/tinygo < scripts/tinygo_runtime.patch
+```
+
+Rationale: `impldoc/goroutine_design_scheduler.md §5.1` explains
+why the runtime files are needed; `impldoc/phase_b_ring3_and_exec.md §4`
+explains `gooosOnResume` and the `stackTop` field.
 
 ## Build
 
