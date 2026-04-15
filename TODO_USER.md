@@ -168,4 +168,28 @@ One git commit per top-level item. Check off when that commit lands.
 
 ## Reviewer MINOR notes
 
-(None yet — append here as the reviewer pass flags them.)
+The `general-purpose` reviewer subagent ran against the final
+state (post TODO 9). CRITICAL=0, MAJOR=0; the five MINORs:
+
+1. **`src/fs.go:12` cap comment under-reports peak** — fixed
+   in this pass. Comment now correctly references goprobe.elf
+   at 89 KiB as the post-scheduler peak.
+2. **96 KiB cap tight (only ~7% clear over goprobe.elf)** —
+   fixed. Bumped to **128 KiB** (`maxFileData = 131072`) per
+   the "one doubling ahead of observed" policy in
+   `userspace_verification.md §5`. FS footprint grows from
+   3 MiB to 4 MiB of .bss (the FileSystem global lives in
+   .bss, not the kernel heap, so this does not affect the
+   4 MiB heap cap).
+3. **`user/gooos/runtime_hooks.go:29` nosplit + string
+   literal** — reviewer noted the `unsafe.StringData` use is
+   allocation-free because the literal lives in `.rodata`.
+   No action required; matches the design intent. Left as-is.
+4. **`scripts/tinygo_runtime.patch` trailing-whitespace diff
+   noise** — cosmetic; `patch --forward --batch` handles it
+   cleanly. Left as-is.
+5. **`impldoc/userspace_scheduler_integration.md §3.2` stale
+   quote** — fixed. The section previously showed the
+   original `time.Sleep`-based handler body; rewritten to
+   match the landed `afterTicks` behavior with a note on
+   why the switch was needed.

@@ -95,28 +95,31 @@ func sleepTicks(d timeUnit) {
 
 ### 3.2 Kernel side
 
-`sysSleepHandler` in `src/userspace.go:338-344` already
-does what we need:
+`sysSleepHandler` in `src/userspace.go` parks the calling
+ring3Wrapper on an `afterTicks` channel rather than calling
+`time.Sleep` directly:
 
 ```go
 func sysSleepHandler(frame *SyscallFrame) {
     ticks := uint64(frame.RDI)
     if ticks > 0 {
-        time.Sleep(time.Duration(ticks) * 10 * time.Millisecond)
+        <-afterTicks(ticks)
     }
     frame.RAX = 0
 }
 ```
 
-The kernel's `time.Sleep` runs on top of TinyGo's patched
-kernel runtime (see `src/runtime_gooos.go`'s `sleepTicks`
-→ `sti/hlt/cli` idle dance plus the runtime's `sleepQueue`
-wake-up logic). While this sleep is in flight, the calling
-`ring3Wrapper` goroutine is parked on the timer queue, so
-other kernel goroutines — `fsTask`, `keyboardPump`, and
-sibling Ring-3 processes' own ring3Wrappers — keep running.
-The sleeping user process resumes once the timer fires and
-the scheduler picks its goroutine back up.
+An earlier draft called `time.Sleep(…)` here. In practice
+that routed into the kernel's patched `sleepTicks`
+(`src/runtime_gooos.go` — a busy `sti/hlt/cli` loop used by
+the scheduler's idle path, NOT a parking primitive), which
+held the CPU without yielding to cooperative consumers; a
+user process issuing `sys_sleep` could freeze every other
+kernel goroutine. `afterTicks` (see `src/afterticks.go`)
+spawns a worker that Gosched-loops on `pitTicks`, so the
+caller parks on a channel receive and the scheduler keeps
+running other goroutines. The sleeping user process resumes
+when the worker delivers on the channel.
 
 ### 3.3 TinyGo idle path
 
