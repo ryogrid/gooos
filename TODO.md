@@ -6,12 +6,11 @@ audit trail — do not delete.
 
 ## Phase A — Prerequisite spikes
 
-- [~] **Spike 1 — Runtime collision**: investigation complete;
-  only viable path requires installing files into TinyGo's
-  runtime tree (root-owned). See **Deferred** below for findings
-  and the prepared `scripts/patch_tinygo_runtime.sh`. The spike
-  is not marked `[x]` because the user must run the sudo step
-  before a green build is possible.
+- [x] **Spike 1 — Runtime collision**: resolved by installing a
+  user-writable TinyGo copy at `~/.local/tinygo/`, pointing the
+  Makefile at it via `TINYGOROOT`, and running
+  `bash scripts/patch_tinygo_runtime.sh`. Build clean with
+  `scheduler=none` + `baremetal` tag; boot reaches shell prompt.
 - [ ] **Spike 2 — Link viability**: trivial `ch := make(chan int); go func(){ ch<-1 }(); <-ch`
   links and boots to the shell banner under QEMU.
 - [ ] **Spike 3 — `interrupt.In()`**: `in_interrupt_depth` counter
@@ -68,6 +67,17 @@ audit trail — do not delete.
   untracked paths.
 
 ## Deferred (out-of-scope for this session)
+
+Out-of-scope items already flagged by design review
+(`impldoc/goroutine_design_gc_and_smp.md §8a`): precise GC,
+ISR-safety lint enforcement, growable goroutine stacks, SMP v2,
+fatal-handler detail preservation.
+
+### Historical: Spike 1 sudo blocker (resolved)
+
+Original blocker notes retained for documentation. Resolution:
+user installed a writable TinyGo tree at `~/.local/tinygo/`,
+bypassing the sudo requirement.
 
 - **Spike 1 blocked — TinyGo runtime patch requires sudo**.
   `runtime_unix.go` (under `goos=linux` and `!baremetal`) defines

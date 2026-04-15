@@ -2,7 +2,7 @@
     "llvm-target": "x86_64-unknown-linux-elf",
     "cpu": "x86-64",
     "features": "-mmx,-sse,-sse2,-sse3,-ssse3,-sse4.1,-sse4.2,-avx,-avx2,-avx512f",
-    "build-tags": ["gooos"],
+    "build-tags": ["gooos", "baremetal"],
     "goos": "linux",
     "goarch": "amd64",
     "gc": "conservative",

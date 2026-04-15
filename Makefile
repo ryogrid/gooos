@@ -4,7 +4,15 @@
 # Targets: build (default), iso, run, run-kernel, clean, check-multiboot
 
 # Note: LD is overridden (not ?=) because make has a builtin LD=ld.
-TINYGO ?= tinygo
+#
+# TINYGOROOT points to a user-writable copy of the TinyGo tree so the
+# kernel build can install its own bare-metal runtime files
+# (runtime_gooos.go, interrupt_gooos.go) without sudo. The system
+# TinyGo at /usr/local/lib/tinygo is root-owned. See
+# scripts/patch_tinygo_runtime.sh and TODO.md "Deferred".
+TINYGOROOT ?= $(HOME)/.local/tinygo
+export TINYGOROOT
+TINYGO ?= $(TINYGOROOT)/bin/tinygo
 AS     ?= as
 LD     := ld.lld
 QEMU   ?= qemu-system-x86_64

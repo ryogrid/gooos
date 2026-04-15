@@ -79,6 +79,28 @@ memcpy:
     rep movsb
     ret
 
+    /* ---- memmove: overlap-safe copy (same ABI as memcpy) ------------ */
+    .global memmove
+memmove:
+    /* memmove(dest=rdi, src=rsi, n=rdx) -> rax = dest                  */
+    movq    %rdi, %rax              /* return value */
+    cmpq    %rsi, %rdi
+    je      .Lmemmove_done          /* dest == src: nothing to do */
+    jb      .Lmemmove_fwd           /* dest < src: forward copy */
+    /* dest > src: forward copy would overwrite; go backward */
+    movq    %rdx, %rcx
+    leaq    -1(%rdi,%rdx), %rdi
+    leaq    -1(%rsi,%rdx), %rsi
+    std
+    rep movsb
+    cld
+    ret
+.Lmemmove_fwd:
+    movq    %rdx, %rcx
+    rep movsb
+.Lmemmove_done:
+    ret
+
     /* ---- memset: fill memory with a byte value ---------------------- */
     /* memset(dest=rdi, c=esi, n=rdx) -> rax = dest                     */
     .global memset
