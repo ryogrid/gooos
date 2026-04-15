@@ -15,7 +15,7 @@ An experimental x86_64 operating system written in **Go (TinyGo) + GNU assembly*
 | Virtual memory management | Done | Page fault handler, `mapPage`/`unmapPage` with 4 KiB granularity, bump + LIFO free stack with `allocPagesContig` for kernel stacks |
 | Scheduler | Done | **TinyGo native goroutines** (`scheduler=tasks`). Cooperative; PIT IRQ drives `sleepTicks`. TSS.RSP0 updated per-Ring-3-goroutine via the `gooosOnResume` hook in the patched TinyGo runtime |
 | Userspace | Done | Ring 3 execution via `iretq`, TSS for privilege transitions, `int 0x80` syscall interface (12 syscalls); each user process is a `ring3Wrapper` goroutine |
-| Filesystem | Done | In-memory flat filesystem: `Create`/`Write`/`Read`/`List`/`Delete` (32 entries, 40 KiB each); served by `fsTask` goroutine over native `chan *fsRequest` |
+| Filesystem | Done | In-memory flat filesystem: `Create`/`Write`/`Read`/`List`/`Delete` (32 entries, 96 KiB each); served by `fsTask` goroutine over native `chan *fsRequest` |
 | SMP | Done (v1) | ACPI MADT AP discovery, 16-bit real-mode trampoline, INIT-SIPI-SIPI. APs idle at `sti; hlt`; BSP runs all goroutines. SMP v2 (per-CPU runqueues + work stealing + LAPIC IPI) is deferred; see `impldoc/deferred_smp_v2.md` and `TODO_DEF.md` "Further deferred" — needs a TinyGo runtime fork |
 | Channel IPC + select | Done | **Native Go `chan` and `select`** in Ring 0. `fsReqCh`, `keyboardCh`, per-process `exitCh` are all `make(chan ...)` constructed by the TinyGo runtime |
 | Syscall ABI | Done | 12-syscall register-based dispatch: `sys_exit`, `sys_write`, `sys_read`, `sys_exec`, `sys_fs_read/write/list`, `sys_yield`, `sys_sleep`, `sys_getargs`, `sys_sbrk`, `sys_vga_clear` |
@@ -28,6 +28,7 @@ An experimental x86_64 operating system written in **Go (TinyGo) + GNU assembly*
 | Stack-overflow diagnostic | Done | Patched `task.Pause()` calls `gooosStackOverflow(t)` on canary mismatch — prints task pointer + stack-top + canary address before halting, no allocation |
 | Boot stack-size audit | Done | `stackSizeAudit()` (gated by `const runStackAudit`) reports per-goroutine high-water-mark usage on serial; off in release builds |
 | `time.After` replacement | Done | `afterTicks(d uint64) <-chan struct{}` in `src/afterticks.go` — local stand-in because the TinyGo `time` package needs SSE we keep disabled |
+| Userspace goroutines & channels | Done | Ring-3 user binaries run on their own TinyGo `scheduler=tasks` runtime — native `go func()`, `chan`, `select`, and `time.Sleep` work inside a user process. Build-tag split (`kernelspace` on `src/target.json`) keeps the kernel and user runtime bodies disjoint; `user/gooos/runtime_hooks.go` supplies the Ring-3-safe `gooosOnResume` / `gooosStackOverflow`. `sys_sleep` routes through `afterTicks` on the kernel side so a sleeping user process no longer holds the CPU. Proven by `user/cmd/goprobe/main.go` + `tmp/test_goprobe.sh`; see `impldoc/userspace_goroutines_overview.md` for the design set |
 
 ### Where assembly is used
 
@@ -43,6 +44,7 @@ Go cannot express certain CPU-level operations. These remain in assembly:
 - **Synthetic ELF header** (`stubs.S`): Fake `__ehdr_start` in `.rodata` for GC's `findGlobals()`
 - **Keyboard IRQ ring** (`isr.S`, `keyboard_irq.go`): `.bss` head/tail/slot storage is assembled as 32-bit naturally-aligned mov's; x86-TSO makes the writes visible to `keyboardPump` without fences
 - **User startup** (`user/rt0.S`): `_start`, syscall wrappers (`syscall0`-`syscall4`), TinyGo runtime stubs (`mmap`, `write`, `abort`, `memcpy`, `memset`)
+- **User task context switch + longjmp** (`user/task_stack_amd64.S`, `user/runtime_asm_amd64.S`): `tinygo_startTask` / `tinygo_swapTask` / `tinygo_longjmp` — byte-equivalent imports of TinyGo runtime asm, needed once the user target flipped to `scheduler=tasks`. Same `tinygo build -o *.o` restriction as the kernel side
 
 ## Architecture
 

@@ -126,9 +126,14 @@ One git commit per top-level item. Check off when that commit lands.
         confirms "SMP: 1 cores online" on the kernel ISO
         used by every passing harness above.
 
-- [ ] **9. README userspace-goroutine section**
-  - [ ] Short paragraph + link to
+- [x] **9. README userspace-goroutine section**
+  - [x] New row in the progress table ("Userspace goroutines &
+        channels / Done"); link to
         `impldoc/userspace_goroutines_overview.md`.
+  - [x] Update Filesystem row (40 → 96 KiB per slot).
+  - [x] Add user-side `task_stack_amd64.S` /
+        `runtime_asm_amd64.S` to the "Where assembly is used"
+        section.
 
 ## Reviewer & completeness (after item 9)
 
