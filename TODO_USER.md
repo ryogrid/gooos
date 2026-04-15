@@ -55,9 +55,10 @@ One git commit per top-level item. Check off when that commit lands.
         page-faulted on first heap touch.
   - [x] `make build` clean; `test_sendkey.sh 1` PASS.
 
-- [ ] **5. `user/cmd/goprobe/main.go`**
-  - [ ] New probe with 4 sub-tests (go+chan, select,
-        time.Sleep, yield-cycle).
+- [x] **5. `user/cmd/goprobe/main.go`**
+  - [x] New probe with 4 sub-tests (go+chan, select,
+        time.Sleep, yield-cycle). Standalone tinygo compile
+        clean via the patched `/home/ryo/.local/tinygo/bin/tinygo`.
 
 - [ ] **6. Wire goprobe into build + preload**
   - [ ] `user/Makefile` CMDS adds `goprobe`.
