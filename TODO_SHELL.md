@@ -22,25 +22,25 @@ The per-process PML4 design (keep user vaddrs at link-time
 
 ## Phase 0 — Bootstrap
 
-- [ ] Bootstrap commit lands TODO_SHELL.md.
+- [x] Bootstrap commit lands TODO_SHELL.md (`7ababf9`).
 
 ## Phase 1 — fd table foundation
 
-- [ ] **1a** — `FileDesc` interface + `Process.fds`.
-  - [ ] New `src/fd.go`: `FileDesc` interface,
+- [x] **1a** — `FileDesc` interface + `Process.fds`.
+  - [x] New `src/fd.go`: `FileDesc` interface,
     `fdErr` enum (`OK`/`EOF`/`Pipe`/`Bad`), helpers
     `procGetFD` / `procAllocFD` / `procClose` / `procDup2`.
-  - [ ] Concrete impls `consoleStdin`, `consoleStdout`,
+  - [x] Concrete impls `consoleStdin`, `consoleStdout`,
     package-scope singletons (`stdinFD`, `stdoutFD`,
     `stderrFD`).
-  - [ ] `Process.fds [16]FileDesc` field added; Process
+  - [x] `Process.fds [16]FileDesc` field added; Process
     struct comment updated.
-  - [ ] `processExit` walks fds and calls `Close` before
-    pool release.
-  - [ ] Boot-shell stdio fds initialized in
-    `src/elf.go:elfLoad` (after Process allocation).
-  - [ ] Verify: `make build` clean.
-  - [ ] Verify: 10/10 `bash tmp/test_sendkey.sh`.
+  - [x] `processExit` calls `procCloseAll` before pool
+    release.
+  - [x] Boot-shell stdio fds initialized in
+    `src/elf.go:elfLoad` via `procInitStdio`.
+  - [x] Verify: `make build` clean.
+  - [x] Verify: 10/10 `bash tmp/test_sendkey.sh`.
 
 - [ ] **1b** — `fileFd` + `fsAppend`.
   - [ ] Add `fsAppend(name string, data []byte) int` to

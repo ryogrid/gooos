@@ -35,6 +35,12 @@ type Process struct {
 	parent  *Process     // nil for the boot shell
 	exitCh  chan uintptr // parent waits here; child sends exit code
 	poolIdx int          // ring3StackPool slot index, -1 if none
+
+	// fds is the per-process file descriptor table. nil entries
+	// are closed slots. Inherited shallow-copy on exec (each
+	// FileDesc instance is shared with the parent until one side
+	// closes). See impldoc/shell_io_fd_table.md.
+	fds [procMaxFDs]FileDesc
 }
 
 // SavedMapping caches a parent's page mappings during child exec.
@@ -281,6 +287,7 @@ func processExit(exitCode uintptr) {
 	// to the ISR epilogue or Ring 3 anyway.
 	unregisterRing3G()
 	clearCurrentProc()
+	procCloseAll(proc)
 	if proc.poolIdx >= 0 {
 		ring3StackRelease(proc.poolIdx)
 		proc.poolIdx = -1

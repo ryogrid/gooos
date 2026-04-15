@@ -188,6 +188,7 @@ func elfLoad(name string) bool {
 	// Phase B: allocate a fresh Process for the boot shell. No
 	// parent — processExit on this goroutine prints and halts.
 	proc := &Process{parent: nil, exitCh: make(chan uintptr, 1), poolIdx: -1}
+	procInitStdio(proc) // boot shell gets console fds 0,1,2
 	userFlags := uintptr(pagePresent | pageWrite | pageUser)
 
 	// Map and load each PT_LOAD segment.
