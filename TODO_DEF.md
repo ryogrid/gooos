@@ -54,15 +54,19 @@ verification step pass. One commit per top-level item.
 
 ### `deferred_hygiene.md` (items 10, 11, 12, 14, 15, 16)
 
-- [ ] **Item 15** — `make verify-globals`.
-  - [ ] Add `scripts/verify_globals.sh` (asserts
+- [x] **Item 15** — `make verify-globals`.
+  - [x] Add `scripts/verify_globals.sh` (asserts
     `runtime.sleepQueue|timerQueue|runqueue` lie in
     `[_globals_start, _globals_end)`).
-  - [ ] Add `verify-globals` Makefile target; wire as `build`
+  - [x] Add `verify-globals` Makefile target; wire as `build`
     prereq.
-  - [ ] Verify: passes on current binary.
-  - [ ] Verify: simulated misplaced global causes failure.
-  - [ ] Verify: `make build` still green.
+  - [x] Verify: passes on current binary (2 symbols
+    `runqueue` and `sleepQueue`; `timerQueue` DCE'd because
+    no caller uses timers yet — accepted).
+  - [x] Verify: fake-nm wrapper test triggers a clean
+    failure with `runtime.runqueue @ 0x... outside [...)`.
+  - [x] Verify: `make build` still green and runs the new
+    target as part of the normal build.
 
 - [ ] **Items 10 + 14** — ISR-safety lint.
   - [ ] Add `scripts/lint_isr.go` (AST walker; flags string

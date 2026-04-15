@@ -44,7 +44,7 @@ KERNEL_GO_O := $(TMP_DIR)/kernel_go.o
 KERNEL_BIN  := $(TMP_DIR)/kernel.bin
 KERNEL_ISO  := $(TMP_DIR)/kernel.iso
 
-.PHONY: all build user embed-user iso run run-kernel clean check-multiboot
+.PHONY: all build user embed-user iso run run-kernel clean check-multiboot verify-globals
 
 all: build
 
@@ -55,7 +55,15 @@ user:
 embed-user: user
 	bash scripts/embed_elfs.sh
 
-build: embed-user $(KERNEL_BIN)
+build: embed-user $(KERNEL_BIN) verify-globals
+
+# verify-globals asserts TinyGo runtime queue globals (sleepQueue,
+# timerQueue, runqueue) land inside [_globals_start, _globals_end)
+# so the conservative collector's findGlobals scan covers them.
+# A TinyGo upgrade can silently shift section layout; this guard
+# fails the build before the collector starts missing live tasks.
+verify-globals: $(KERNEL_BIN)
+	bash scripts/verify_globals.sh $(KERNEL_BIN)
 
 $(TMP_DIR):
 	mkdir -p $(TMP_DIR)
