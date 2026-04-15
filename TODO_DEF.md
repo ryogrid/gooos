@@ -85,15 +85,19 @@ verification step pass. One commit per top-level item.
   - [x] Verify: `make build` runs lint first, exit 0.
   - [x] Verify: 10/10 `bash tmp/test_sendkey.sh`.
 
-- [ ] **Item 12** — `time.After` spike.
-  - [ ] Add scratch spike to `src/main.go` behind
-    `const timeAfterSpike`.
-  - [ ] If link succeeds and spike prints "time.After: OK",
-    remove spike and close item.
-  - [ ] If link fails, add `src/afterticks.go`
-    (`afterTicks(ticks uint64) <-chan struct{}` using
-    `sleepTicks` via `//go:linkname`).
-  - [ ] Verify: 10/10 `bash tmp/test_sendkey.sh`.
+- [x] **Item 12** — `time.After` spike.
+  - [x] Spike with `import "time"` failed to link
+    (`reflect.Value.Complex` wants SSE; gooos build has SSE
+    disabled). Took the design's fallback path.
+  - [x] Added `src/afterticks.go` —
+    `afterTicks(d uint64) <-chan struct{}`. Uses
+    `runtime.Gosched` between `pitTicks` checks (NOT
+    `sleepTicks`, which deadlocks; rationale recorded in
+    `impldoc/deferred_hygiene.md §5.2`).
+  - [x] Boot-time self-test (background goroutine) prints
+    `afterTicks: OK` ~20 ms after spawn; observed in serial
+    log.
+  - [x] Verify: 10/10 `bash tmp/test_sendkey.sh`.
 
 - [ ] **Item 16** — keyboard-latency measurement.
   - [ ] Add `tmp/test_kbd_latency.sh` (burst 100 keys,

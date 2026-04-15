@@ -245,27 +245,33 @@ If it fails to link (missing symbols from the `time` package):
 // afterTicks returns a channel that becomes readable after
 // `ticks` PIT ticks (10 ms each at 100 Hz). A replacement for
 // time.After on targets where the time package does not link.
-//
-// Implementation uses TinyGo's sleepTicks (the same primitive
-// time.Sleep is built on, see scripts/tinygo_runtime.patch) so
-// the spawned goroutine parks on the runtime sleep queue
-// rather than spinning. A spin-and-Gosched loop would burn a
-// scheduler quantum per tick across every outstanding timeout.
 func afterTicks(ticks uint64) <-chan struct{} {
     ch := make(chan struct{}, 1)
     go func() {
-        sleepTicks(timeUnit(ticks)) // //go:linkname'd to runtime.sleepTicks
+        deadline := pitTicks + ticks
+        for pitTicks < deadline {
+            runtime.Gosched()
+        }
         ch <- struct{}{}
     }()
     return ch
 }
 ```
 
-`sleepTicks` and `timeUnit` are exported from the patched TinyGo
-runtime (see `~/.local/tinygo/src/runtime/runtime_gooos.go`); the
-gooos kernel reaches them via `//go:linkname`. If `sleepTicks`
-is not visible at the gooos package level today, add a one-line
-`//go:linkname` shim in `src/afterticks.go`.
+**Note (resolved during item-12 implementation, 2026-04-15):**
+the earlier draft of this section called `runtime.sleepTicks`
+via `//go:linkname` to avoid a Gosched busy-loop. That approach
+deadlocks the kernel: the gooos-patched `sleepTicks`
+(`~/.local/tinygo/src/runtime/runtime_gooos.go:29`) is the
+scheduler's idle path — a `sti / hlt / cli` loop that holds the
+CPU and never returns control to the scheduler. Calling it from
+a goroutine body therefore stops every other goroutine from
+running until the deadline elapses.
+
+`runtime.Gosched` between checks is the correct primitive: each
+yield re-enters the scheduler, allowing other goroutines to
+run; the PIT IRQ fires regardless and increments `pitTicks`,
+so the deadline check terminates after the requested duration.
 
 Use from any kernel goroutine that needs a timeout:
 

@@ -327,6 +327,14 @@ func main() {
 		}
 	}
 
+	// afterTicks self-test (item 12 fallback). Spawned in the
+	// background so a slow timer cannot stall boot. Logs to serial
+	// when the channel fires (~20 ms).
+	go func() {
+		<-afterTicks(2)
+		serialPrintln("afterTicks: OK")
+	}()
+
 	// Boot Application Processors via INIT-SIPI-SIPI.
 	smpInit()
 
