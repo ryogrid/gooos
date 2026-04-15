@@ -373,6 +373,27 @@ chosen optimization.
 No file-level code changes proposed in this doc; the design
 is "measure first".
 
+**Measurement (2026-04-15, PASS):** harness
+`tmp/test_kbd_latency.sh` bursts 100 PS/2 keystrokes via QEMU
+monitor `sendkey` with no inter-key delay and waits for the
+shell to echo all 100 characters on serial. Single-trial result
+on the current build (commit `1bbe200`, branch
+`ralph/goroutine-microkernel`):
+
+```
+keyboard-latency: 100 keys in 1992.918 ms  (19.929 ms/key, threshold 20 ms/key)
+result: PASS
+```
+
+19.929 ms/key < 20 ms/key threshold → `R-keyboard-latency`
+retires per §11. Note: the measured value sits within ~0.4% of
+the threshold, consistent with the design prediction of "up to
+one scheduler quantum (~10 ms)" of pump latency on top of the
+PS/2 round-trip itself; if a future change raises pump latency
+even slightly, this harness will catch the regression. Keep
+`tmp/test_kbd_latency.sh` as a one-shot diagnostic (not wired
+into `make`).
+
 ## 8. Dependencies
 
 Items 10 + 14 share infrastructure (`scripts/lint_isr.go`).
@@ -431,7 +452,8 @@ For each item:
 - **Retires**: `R-isr-safety-enforcement`,
   `R-runtime-alloc-reentry`, `R-global-layout`.
 - **Retires on measurement** (item 16): `R-keyboard-latency`
-  if measurement confirms ≤ 20 ms/keystroke.
+  — confirmed 2026-04-15 at 19.929 ms/keystroke (< 20 ms
+  threshold). See §7.3.
 - **Documents** (item 11): `R-sleep-granularity` remains as
   a "documented limitation" until a caller demands
   sub-10-ms sleep.

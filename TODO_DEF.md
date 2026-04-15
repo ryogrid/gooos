@@ -99,13 +99,18 @@ verification step pass. One commit per top-level item.
     log.
   - [x] Verify: 10/10 `bash tmp/test_sendkey.sh`.
 
-- [ ] **Item 16** — keyboard-latency measurement.
-  - [ ] Add `tmp/test_kbd_latency.sh` (burst 100 keys,
-    measure wall-clock to last echo).
-  - [ ] Run measurement; record result in
-    `impldoc/deferred_hygiene.md §7.3`.
-  - [ ] If < 20 ms/key, close. If ≥ 20 ms/key, open
-    follow-up design (do not implement here).
+- [x] **Item 16** — keyboard-latency measurement.
+  - [x] `tmp/test_kbd_latency.sh` bursts 100 keys via QEMU
+    monitor with no inter-key delay and waits for 100
+    'a' echoes on serial after a snapshot baseline.
+  - [x] Recorded measurement in
+    `impldoc/deferred_hygiene.md §7.3` and §11
+    (R-keyboard-latency retired, dated 2026-04-15).
+  - [x] Result: 19.929 ms/key (single trial), reproduced
+    at 19.888 ms/key on a re-run. Both < 20 ms threshold
+    → PASS, item closed without optimization.
+  - [x] Margin is tight (~0.4% headroom); harness left in
+    place as a one-shot regression check.
 
 ### `deferred_gc_and_stacks.md §3` (item 7 mitigation)
 
