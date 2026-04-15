@@ -16,11 +16,18 @@ An experimental x86_64 operating system written in **Go (TinyGo) + GNU assembly*
 | Scheduler | Done | **TinyGo native goroutines** (`scheduler=tasks`). Cooperative; PIT IRQ drives `sleepTicks`. TSS.RSP0 updated per-Ring-3-goroutine via the `gooosOnResume` hook in the patched TinyGo runtime |
 | Userspace | Done | Ring 3 execution via `iretq`, TSS for privilege transitions, `int 0x80` syscall interface (12 syscalls); each user process is a `ring3Wrapper` goroutine |
 | Filesystem | Done | In-memory flat filesystem: `Create`/`Write`/`Read`/`List`/`Delete` (32 entries, 40 KiB each); served by `fsTask` goroutine over native `chan *fsRequest` |
-| SMP | Done | ACPI MADT AP discovery, 16-bit real-mode trampoline, INIT-SIPI-SIPI. APs idle at `sti; hlt` in v1; BSP runs all goroutines |
+| SMP | Done (v1) | ACPI MADT AP discovery, 16-bit real-mode trampoline, INIT-SIPI-SIPI. APs idle at `sti; hlt`; BSP runs all goroutines. SMP v2 (per-CPU runqueues + work stealing + LAPIC IPI) is deferred; see `impldoc/deferred_smp_v2.md` and `TODO_DEF.md` "Further deferred" — needs a TinyGo runtime fork |
 | Channel IPC + select | Done | **Native Go `chan` and `select`** in Ring 0. `fsReqCh`, `keyboardCh`, per-process `exitCh` are all `make(chan ...)` constructed by the TinyGo runtime |
 | Syscall ABI | Done | 12-syscall register-based dispatch: `sys_exit`, `sys_write`, `sys_read`, `sys_exec`, `sys_fs_read/write/list`, `sys_yield`, `sys_sleep`, `sys_getargs`, `sys_sbrk`, `sys_vga_clear` |
 | ELF64 loader | Done | Parse ELF64 headers, map PT_LOAD segments, per-process page tracking, parent page save/restore for exec |
 | BusyBox-style shell | Done | Interactive shell (`sh.elf`) with built-in commands (help, echo, clear, exit) and external ELF commands (ls, cat, wc, hello) compiled with TinyGo |
+| ISR-safety lint | Done | `make lint` — AST walker (`scripts/lint_isr.go`) flags string-concat, channel ops, `go` statements, and runtime allocations inside ISR-reachable functions; runs as a `make build` prereq |
+| Global-layout verification | Done | `make verify-globals` — asserts every TinyGo runtime queue (`runqueue`, `sleepQueue`, `timerQueue`) lands inside `_globals_start..end` so `findGlobals` covers it; `make build` prereq |
+| Ring-3 stack pool | Done | Each Ring-3 process draws an 8 KiB kernel stack from `ring3StackPool` (`src/ring3_pool.go`); slot returns on `processExit` so per-exec heap leak shrinks from ~8 KiB to ~1 KiB |
+| Allocation-free fatal handlers | Done | `handlePageFault`/`handleDivisionError` format CR2/RIP/errcode into a `.bss` `panicHexBuf` via no-alloc `appendHex`/`appendStr` helpers (`src/panic.go`); `//go:nosplit` |
+| Stack-overflow diagnostic | Done | Patched `task.Pause()` calls `gooosStackOverflow(t)` on canary mismatch — prints task pointer + stack-top + canary address before halting, no allocation |
+| Boot stack-size audit | Done | `stackSizeAudit()` (gated by `const runStackAudit`) reports per-goroutine high-water-mark usage on serial; off in release builds |
+| `time.After` replacement | Done | `afterTicks(d uint64) <-chan struct{}` in `src/afterticks.go` — local stand-in because the TinyGo `time` package needs SSE we keep disabled |
 
 ### Where assembly is used
 
@@ -256,11 +263,20 @@ explains `gooosOnResume` and the `stackTop` field.
 make build
 ```
 
-This runs three phases:
+This runs five phases:
 
-1. **User programs**: `make -C user all` — compiles TinyGo user programs (`sh`, `hello`, `ls`, `cat`, `wc`) into ELF binaries
-2. **Embed**: `scripts/embed_elfs.sh` — converts user ELFs to Go byte arrays in `src/user_binaries.go`
-3. **Kernel**: assembles `.S` files, compiles all Go with TinyGo, links with `ld.lld` into `tmp/kernel.bin`
+1. **ISR-safety lint**: `scripts/lint_isr.go` walks every ISR-rooted call graph and rejects any string concat, channel op, `go` statement, or runtime allocation. Build fails on violation.
+2. **User programs**: `make -C user all` — compiles TinyGo user programs (`sh`, `hello`, `ls`, `cat`, `wc`) into ELF binaries.
+3. **Embed**: `scripts/embed_elfs.sh` — converts user ELFs to Go byte arrays in `src/user_binaries.go`.
+4. **Kernel**: assembles `.S` files, compiles all Go with TinyGo, links with `ld.lld` into `tmp/kernel.bin`.
+5. **Global-layout verify**: `scripts/verify_globals.sh` asserts every TinyGo runtime queue (`runqueue`, `sleepQueue`, `timerQueue`) lies inside `_globals_start..end` so the conservative GC can scan it.
+
+You can also run the lint and the verify steps standalone:
+
+```bash
+make lint              # ISR-safety lint only
+make verify-globals    # global-layout check only
+```
 
 ### Verify the build
 

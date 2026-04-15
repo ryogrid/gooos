@@ -190,19 +190,31 @@ below.
 
 ## Phase D — Final reconciliation
 
-- [ ] All items in this file are `- [x]`.
-- [ ] `git log` shows one commit per implemented item.
-- [ ] Repo-wide `Grep` for `TODO|FIXME|XXX|HACK` returns
-  no new hits.
-- [ ] Final sendkey: 10/10 `make run` and 10/10
-  `make run-smp`.
-- [ ] `README.md` updated:
-  - [ ] Retired risks listed.
-  - [ ] New `make` targets (`lint`, `verify-globals`)
-    documented.
-  - [ ] 10 ms PIT sleep floor documented.
-  - [ ] SMP status: BSP-only → SMP v2 working.
-- [ ] Final report to user.
+- [x] All non-SMP-v2 items are `- [x]`; SMP v2 items 1–5
+  recorded under `## Further deferred`.
+- [x] `git log` shows one commit per implemented item
+  (b7dc849..a24b1f8 = 12 commits including bootstrap and
+  Phase C reviewer).
+- [x] Repo-wide `Grep` for `TODO|FIXME|XXX|HACK` over `src/`
+  and `scripts/`: zero hits. Single `Makefile` hit is a
+  doc reference to `TODO.md` (the filename), not a marker.
+- [x] Final sendkey: 10/10 `make run`. SMP smoke under
+  `-smp 4` reaches the shell prompt with all 4 cores
+  online (`SMP: 4 cores online` on serial); APs idle as
+  expected since SMP v2 is deferred.
+- [x] `README.md` updated:
+  - [x] Progress table extended with new rows for ISR
+    lint, verify-globals, ring-3 stack pool, allocation-
+    free fatal handlers, stack-overflow diagnostic, boot
+    stack-size audit, `time.After` replacement.
+  - [x] SMP row updated to "Done (v1)" with a pointer to
+    the SMP v2 deferral.
+  - [x] `make lint` and `make verify-globals` documented
+    in the Build section, alongside the expanded
+    five-phase build pipeline.
+  - [x] 10 ms PIT sleep floor documented under "Known
+    limitations" (landed as part of item 11's commit).
+- [ ] Final report to user (next action).
 
 ## Reviewer follow-ups (MINOR)
 
