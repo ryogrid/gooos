@@ -71,10 +71,29 @@ One git commit per top-level item. Check off when that commit lands.
         headroom; watch if goprobe gains more tests).
   - [x] Baseline `test_sendkey.sh 1` still PASS after wiring.
 
-- [ ] **7. `tmp/test_goprobe.sh` harness + PASS**
-  - [ ] Script added (mirrors `test_fd_probe.sh` pattern),
-        `chmod +x`.
-  - [ ] `bash tmp/test_goprobe.sh` → PASS.
+- [x] **7. `tmp/test_goprobe.sh` harness + PASS**
+  - [x] Script added at `tmp/test_goprobe.sh` (mirrors
+        `test_fd_probe.sh` pattern), `chmod +x`, wait
+        extended to 15 s for QEMU's post-yield scheduling
+        overhead.
+  - [x] **Not tracked in git** — matches the project's
+        existing convention where every `tmp/test_*.sh`
+        harness (test_sendkey, test_fd_probe, test_redirect,
+        test_pipe, test_wc_pipe, test_pipe_matrix) lives
+        locally under the `.gitignore`'d `tmp/` directory.
+        Recorded here as a deliberate deviation from the
+        prompt's "one commit per TODO item" rule; forcing
+        the harness into the tree would invert a standing
+        project decision. This TODO's commit therefore
+        carries only the `TODO_USER.md` update.
+  - [x] Prerequisite fix landed in preceding commit
+        (`fix(syscall): sys_sleep via afterTicks`) —
+        sysSleepHandler hung because the kernel's patched
+        sleepTicks is a busy loop rather than a parking
+        primitive.
+  - [x] `bash tmp/test_goprobe.sh` →
+        `pf=0 begin=1 go_chan=1 select=1 time_sleep=1 yield=1 all=1`
+        → PASS.
 
 - [ ] **8. Regression matrix green**
   - [ ] `tmp/test_sendkey.sh` × 10 — all PASS.
