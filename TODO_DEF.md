@@ -158,11 +158,11 @@ verification step pass. One commit per top-level item.
 
 ### `deferred_gc_and_stacks.md §2` (item 6, doc-only)
 
-- [ ] **Item 6** — precise-GC gap analysis lands as
+- [x] **Item 6** — precise-GC gap analysis lands as
   documentation only.
-  - [ ] Update `TODO.md` to point at
-    `impldoc/deferred_gc_and_stacks.md §2.3` as the gap
-    analysis.
+  - [x] `TODO.md` "Previously flagged" section updated with
+    a 2026-04-15 status note pointing at
+    `impldoc/deferred_gc_and_stacks.md §2.3`.
 
 ### `deferred_hygiene.md §6` (item 11, doc-only)
 

@@ -128,6 +128,14 @@ Out-of-scope items flagged by
 ISR-safety lint enforcement, growable goroutine stacks, SMP v2,
 fatal-handler detail preservation.
 
+**Status update (2026-04-15):** the implementation push tracked
+in `TODO_DEF.md` retired most of these. Precise GC alone
+remains explicitly out of scope: see
+`impldoc/deferred_gc_and_stacks.md §2.3` for the gap analysis
+(what TinyGo provides, what upstream Go's write-barrier
+demands, why local implementation is too large to schedule).
+Revisit when TinyGo upstream lands write barriers, not before.
+
 ### Historical: Spike 1 sudo blocker (resolved)
 
 Original blocker notes retained for documentation. Resolution:
