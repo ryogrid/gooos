@@ -155,7 +155,13 @@ isr_common:
      * src/goroutine_irq.go. Defined here (not in a Go file) so TinyGo's
      * dead-code eliminator cannot strip it when no Go code references
      * it — the only accesses are from assembly and from the patched
-     * TinyGo runtime (interrupt_gooos.go). */
+     * TinyGo runtime (interrupt_gooos.go).
+     *
+     * v1 is BSP-only, so the plain (non-atomic) incl/decl above is
+     * safe: x86_64 IDT gates clear IF on entry, ISRs never call sti,
+     * and NMI observes the incl/decl as atomic at the instruction
+     * boundary. SMP v2 will need per-CPU counters (or lock incl) —
+     * see impldoc/goroutine_design_gc_and_smp.md §5. */
     .section .bss
     .global gooos_in_interrupt_depth
     .align 4

@@ -127,6 +127,16 @@ v2 door open.
 v2 enables true multi-goroutine execution across all cores. High-level
 components:
 
+- **Per-CPU `in_interrupt_depth` counter**: the v1 implementation
+  uses a single `.bss` u32 (`src/isr.S`) incremented/decremented
+  non-atomically. Safe on BSP-only because IDT gates keep IF=0 and
+  ISRs do not `sti`. Under v2 each AP's ISR prologue writes the
+  counter too; without per-CPU storage or `lock incl`, concurrent
+  updates lose increments and `interrupt.In()` returns the wrong
+  value. Fix: switch the counter to a per-CPU slot (FSBASE or a
+  per-CPU GS segment).
+
+
 - **Per-CPU runqueue**: replace `runtime.runqueue` with
   `perCPURunqueue[cpuID]`. Upstream TinyGo has no hook for this; it
   requires patching TinyGo's `scheduler.go` locally (or vendoring it).

@@ -176,6 +176,26 @@ sudo apt install -y build-essential grub-pc-bin grub-common xorriso mtools qemu-
 # Then install TinyGo from the .deb release linked above.
 ```
 
+### User-writable TinyGo copy (required for Ring-0 goroutines)
+
+gooos installs two bare-metal-specific files into TinyGo's runtime
+(`runtime_gooos.go`, `interrupt_gooos.go`) so that `scheduler=tasks`
+can run in Ring 0. The system TinyGo at `/usr/local/lib/tinygo/` is
+root-owned, so the build uses a user-writable copy at
+`$HOME/.local/tinygo/` (overridable via `TINYGOROOT`).
+
+One-time setup after installing TinyGo:
+
+```bash
+mkdir -p ~/.local/tinygo
+cp -a /usr/local/lib/tinygo/. ~/.local/tinygo/
+bash scripts/patch_tinygo_runtime.sh
+```
+
+Re-run `patch_tinygo_runtime.sh` after updating TinyGo or refreshing
+`~/.local/tinygo/`. See `impldoc/goroutine_design_scheduler.md §5.1`
+for why this is necessary.
+
 ## Build
 
 ```bash

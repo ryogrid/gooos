@@ -163,8 +163,12 @@ GOOOS_INTERRUPT
 echo "patched: $TINYGO_SRC/runtime/runtime_gooos.go"
 echo "patched: $TINYGO_SRC/runtime/interrupt/interrupt_gooos.go"
 echo
-echo "Next steps:"
-echo "  1. add \"baremetal\" to src/target.json build-tags alongside \"gooos\""
-echo "  2. add main.inInterruptDepth global (uint32) in src/goroutine_irq.go"
-echo "  3. wire src/isr.S prologue/epilogue to inc/dec main.inInterruptDepth"
-echo "  4. flip \"scheduler\": \"none\" -> \"tasks\" once everything else is in place"
+echo "These files expect the following kernel-side symbols, which are"
+echo "already provided by the current gooos tree:"
+echo "  src/target.json              \"baremetal\" in build-tags"
+echo "  src/isr.S                    gooos_in_interrupt_depth (.bss symbol)"
+echo "  src/stubs.S                  cli, sti, hlt, outb, readFlags, restoreFlags"
+echo "  src/pit.go                   main.pitTicks"
+echo "  src/goroutine_irq.go         Go-side linkname binding for the counter"
+echo
+echo "Re-run after TinyGo upgrades or whenever \$HOME/.local/tinygo is refreshed."
