@@ -159,13 +159,14 @@ The per-process PML4 design (keep user vaddrs at link-time
 
 ## Phase 4 — multi-process foundation
 
-- [ ] **4a** — `writeCR3` helper.
-  - [ ] 3-line `writeCR3` in `src/stubs.S`
+- [x] **4a** — `writeCR3` helper.
+  - [x] 3-line `writeCR3` in `src/stubs.S`
     (`movq %rdi, %cr3; ret`).
-  - [ ] `src/cr3.go` (new): `//go:linkname writeCR3 writeCR3`
+  - [x] `src/cr3.go` (new): `//go:linkname writeCR3 writeCR3`
     + `//go:nosplit func writeCR3(uintptr)`.
-  - [ ] Verify: `make build` clean; 10/10 sendkey
-    (writeCR3 not yet called from anywhere).
+  - [x] Verify: `make build` clean; 10/10 sendkey
+    (writeCR3 not yet called from anywhere — ISR-lint
+    sees no caller; future 4d wires it).
 
 - [ ] **4b** — variant page-table helpers.
   - [ ] `mapPageInto(pml4, vaddr, paddr, flags)` in

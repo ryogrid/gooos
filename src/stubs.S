@@ -202,6 +202,15 @@ readCR3:
     movq    %cr3, %rax
     ret
 
+    /* ---- writeCR3: load a new PML4 physical base into CR3 -------------- */
+    /* writeCR3(pml4 uintptr)                                              */
+    /* SysV ABI: rdi = phys addr of the PML4 to install.                   */
+    /* Writing CR3 implicitly flushes the entire (non-global) TLB.         */
+    .global writeCR3
+writeCR3:
+    movq    %rdi, %cr3
+    ret
+
     /* ---- invlpg: invalidate TLB entry for a virtual address ------------ */
     /* invlpg(addr uintptr)                                                */
     /* SysV ABI: rdi = virtual address whose TLB entry to flush.           */
