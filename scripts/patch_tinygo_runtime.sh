@@ -2,20 +2,29 @@
 # Apply scripts/tinygo_runtime.patch to the TinyGo tree rooted at
 # $TINYGO_SRC (default: $HOME/.local/tinygo/src).
 #
-# The patch installs four gooos-specific artifacts into TinyGo's
+# The patch installs six gooos-specific artifacts into TinyGo's
 # runtime — see scripts/tinygo_runtime.patch for the full unified
 # diff, and README.md § "User-writable TinyGo copy + runtime
 # patches" for what each artifact does:
 #
-#   src/runtime/runtime_gooos.go             (new file)
-#   src/runtime/interrupt/interrupt_gooos.go (new file)
-#   src/internal/task/task_stack.go          (adds state.stackTop)
-#   src/internal/task/task_stack_amd64.go    (gooosOnResume hook)
+#   src/runtime/runtime_gooos.go                     (kernel, new)
+#   src/runtime/runtime_gooos_user.go                (user,   new)
+#   src/runtime/interrupt/interrupt_gooos.go         (kernel, new)
+#   src/runtime/interrupt/interrupt_gooos_user.go    (user,   new)
+#   src/internal/task/task_stack.go                  (adds state.stackTop + gooosStackOverflow)
+#   src/internal/task/task_stack_amd64.go            (gooosOnResume hook)
+#
+# The kernel and userspace runtime bodies share the (gooos &&
+# baremetal) build-tag prefix and are disambiguated by the
+# `kernelspace` tag on src/target.json. Userspace builds
+# (user/target.json) deliberately omit `kernelspace`.
 #
 # Idempotent: re-running on an already-patched tree is a no-op.
-# A sentinel line in runtime_gooos.go is used to decide whether
-# the patch has been applied already; `patch --forward --batch`
-# is applied otherwise.
+# Upgrade-safe: a tree with only the v1 runtime files (lacking
+# the `kernelspace` tag) is repaired in place — the stale
+# runtime_gooos.go / interrupt_gooos.go are removed and the
+# patch is reapplied to land the tightened tags plus the two new
+# userspace siblings.
 
 set -euo pipefail
 
@@ -34,42 +43,101 @@ if [[ ! -d "$TINYGO_SRC/runtime" ]]; then
 fi
 
 TINYGO_ROOT="$(dirname "$TINYGO_SRC")"
-SENTINEL_FILE="$TINYGO_SRC/runtime/runtime_gooos.go"
-SENTINEL_TEXT="gooos-local runtime bodies"
 
-if [[ -f "$SENTINEL_FILE" ]] && grep -q "$SENTINEL_TEXT" "$SENTINEL_FILE"; then
+RG="$TINYGO_SRC/runtime/runtime_gooos.go"
+RGU="$TINYGO_SRC/runtime/runtime_gooos_user.go"
+IG="$TINYGO_SRC/runtime/interrupt/interrupt_gooos.go"
+IGU="$TINYGO_SRC/runtime/interrupt/interrupt_gooos_user.go"
+TS="$TINYGO_SRC/internal/task/task_stack.go"
+TS64="$TINYGO_SRC/internal/task/task_stack_amd64.go"
+
+# Canonical "clean" state: all four runtime files present, both
+# runtime_gooos.go variants carry their kernelspace discriminator,
+# and the task_stack.go hunks are in place.
+if [[ -f "$RG" && -f "$RGU" && -f "$IG" && -f "$IGU" ]] \
+    && grep -q '&& kernelspace' "$RG" \
+    && grep -q '&& !kernelspace' "$RGU" \
+    && grep -q 'gooosStackOverflow' "$TS" \
+    && grep -q 'gooosOnResume' "$TS64"; then
     echo "already-applied: tinygo runtime patch present at $TINYGO_SRC"
-    echo "(delete $SENTINEL_FILE and the in-place changes to re-run)"
+    echo "(delete the gooos* runtime files and the in-place changes to re-run)"
     exit 0
 fi
 
-# Fresh apply. --forward --batch keeps this non-interactive; any
-# conflict means the tree is not pristine and the user must
-# investigate.
-patch -p1 -d "$TINYGO_ROOT" --forward --batch < "$PATCH_FILE"
+# Either fresh tree or v1 state (old runtime_gooos.go without the
+# kernelspace tag, no _user sibling). Remove stale v1 files so the
+# new-file hunks can recreate them with the tightened tag; the
+# task_stack* modify hunks are safe to re-attempt because
+# --forward skips already-applied hunks.
+rm -f "$RG" "$IG"
+
+# Apply. `--forward` makes the modify-file hunks idempotent against
+# v1 state; `--batch` keeps it non-interactive. Swallow the non-zero
+# exit from already-applied hunks and rely on the post-condition
+# grep to confirm success.
+if ! patch -p1 -d "$TINYGO_ROOT" --forward --batch < "$PATCH_FILE"; then
+    echo "(patch reported some hunks already applied; verifying end state…)"
+fi
+
+# Post-condition: every expected artifact is in place and carries
+# the right discriminator. Any miss means the tree is in an
+# unexpected shape; bail so the user can investigate.
+fail=0
+for f in "$RG" "$RGU" "$IG" "$IGU"; do
+    if [[ ! -f "$f" ]]; then
+        echo "error: expected file not present after patch: $f" >&2
+        fail=1
+    fi
+done
+if ! grep -q '&& kernelspace' "$RG"; then
+    echo "error: $RG is missing the kernelspace build tag" >&2
+    fail=1
+fi
+if ! grep -q '&& !kernelspace' "$RGU"; then
+    echo "error: $RGU is missing the !kernelspace build tag" >&2
+    fail=1
+fi
+if ! grep -q 'gooosStackOverflow' "$TS"; then
+    echo "error: $TS is missing the gooosStackOverflow hook" >&2
+    fail=1
+fi
+if ! grep -q 'gooosOnResume' "$TS64"; then
+    echo "error: $TS64 is missing the gooosOnResume hook" >&2
+    fail=1
+fi
+if (( fail )); then
+    exit 1
+fi
 
 echo
 echo "tinygo runtime patched at $TINYGO_SRC"
 echo
 cat <<'EOF'
 The patch installs:
-  runtime_gooos.go             — sleepTicks/ticks/deadlock/main/exit etc.
-  interrupt/interrupt_gooos.go — Disable/Restore/In + State
-  task_stack.go                — adds state.stackTop field
-  task_stack_amd64.go          — calls gooosOnResume() in resume()
+  runtime_gooos.go              — kernel bodies (gooos && baremetal && kernelspace)
+  runtime_gooos_user.go         — userspace bodies (gooos && baremetal && !kernelspace)
+  interrupt/interrupt_gooos.go       — kernel interrupt shims
+  interrupt/interrupt_gooos_user.go  — userspace no-op interrupt shims
+  task_stack.go                 — adds state.stackTop + gooosStackOverflow hook
+  task_stack_amd64.go           — calls gooosOnResume() in resume()
 
-Kernel-side symbols these files expect (already provided by gooos):
-  src/target.json                 "baremetal" in build-tags
+Kernel-side symbols (already provided by gooos):
+  src/target.json                 "kernelspace" in build-tags
   src/isr.S                       gooos_in_interrupt_depth (.bss)
-  src/stubs.S                     cli, sti, hlt, outb, readFlags,
-                                  restoreFlags
+  src/stubs.S                     cli, sti, hlt, outb, readFlags, restoreFlags
   src/pit.go                      main.pitTicks
-  src/goroutine_irq.go            Go-side linkname binding
   src/goroutine_tss.go            gooosOnResume body
+  src/panic.go                    gooosStackOverflow body
+
+Userspace-side symbols (provided by gooos):
+  user/rt0.S                      syscall1, syscall3 (via //go:linkname)
+  user/gooos/runtime_hooks.go     gooosOnResume / gooosStackOverflow bodies
 
 Re-run after TinyGo upgrades or whenever $HOME/.local/tinygo is
 refreshed. To revert manually:
   rm $TINYGO_SRC/runtime/runtime_gooos.go
+  rm $TINYGO_SRC/runtime/runtime_gooos_user.go
   rm $TINYGO_SRC/runtime/interrupt/interrupt_gooos.go
+  rm $TINYGO_SRC/runtime/interrupt/interrupt_gooos_user.go
   patch -R -p1 -d $TINYGO_ROOT < scripts/tinygo_runtime.patch
 EOF

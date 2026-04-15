@@ -1,7 +1,7 @@
 --- a/src/runtime/runtime_gooos.go
 +++ b/src/runtime/runtime_gooos.go
 @@ -0,0 +1,91 @@
-+//go:build gooos && baremetal
++//go:build gooos && baremetal && kernelspace
 +
 +// gooos-local runtime bodies for bare-metal x86_64 Ring 0.
 +// Replaces the parts of runtime_unix.go incompatible with kernel
@@ -92,10 +92,97 @@
 +
 +// waitForEvents provided by wait_other.go (fallback). No override
 +// needed — that fallback body is a no-op, acceptable here.
+--- a/src/runtime/runtime_gooos_user.go
++++ b/src/runtime/runtime_gooos_user.go
+@@ -0,0 +1,84 @@
++//go:build gooos && baremetal && !kernelspace
++
++// gooos userspace runtime bodies for Ring-3 user programs. The
++// kernel equivalent is runtime_gooos.go; the two files share the
++// (gooos && baremetal) tag prefix but are disambiguated by the
++// kernelspace tag on src/target.json. Primitives here route
++// through gooos syscalls exposed by user/rt0.S (syscall1 /
++// syscall3) rather than kernel asm stubs.
++
++package runtime
++
++import "unsafe"
++
++type timeUnit int64
++
++// Syscall numbers are fixed by the kernel dispatch table
++// (src/userspace.go): sys_exit=0, sys_write=1, sys_sleep=8.
++// The asm wrappers in user/rt0.S are reached via //go:linkname,
++// matching the pattern in user/gooos/syscall.go.
++
++//go:linkname userSyscall1 syscall1
++func userSyscall1(nr, a1 uintptr) uintptr
++
++//go:linkname userSyscall3 syscall3
++func userSyscall3(nr, a1, a2, a3 uintptr) uintptr
++
++// userTicks is a Go-side monotonic counter bumped whenever
++// sleepTicks returns. Coarse (10 ms resolution) but monotonic.
++// Good enough for time.Sleep; not a wall clock.
++var userTicks uint64
++
++// sleepTicks blocks this process on sys_sleep for d ticks, then
++// bumps the local tick counter. Called from the scheduler idle
++// path when every task is parked.
++func sleepTicks(d timeUnit) {
++	if d <= 0 {
++		return
++	}
++	userSyscall1(8, uintptr(d)) // sys_sleep
++	userTicks += uint64(d)
++}
++
++func ticks() timeUnit { return timeUnit(userTicks) }
++
++// 100 Hz PIT tick = 10 ms = 10_000_000 ns (matches kernel).
++func ticksToNanoseconds(t timeUnit) int64  { return int64(t) * 10_000_000 }
++func nanosecondsToTicks(ns int64) timeUnit { return timeUnit(ns / 10_000_000) }
++
++// putchar writes one byte via sys_write(buf, len, fd=1). fd=1 is
++// serial-only (fd=0 also routes to VGA but requires Ring-0 MMIO).
++// Used by runtime.printstring on panic paths.
++func putchar(c byte) {
++	b := c
++	userSyscall3(1, uintptr(unsafe.Pointer(&b)), 1, 1)
++}
++
++// buffered / getchar: no line-buffered stdio in userspace.
++func buffered() int { return 0 }
++func getchar() byte { return 0 }
++
++// exit routes to sys_exit. The kernel handler parks the
++// ring3Wrapper goroutine, so sys_exit never returns; the
++// trailing loop exists only to satisfy control-flow analysis.
++func exit(code int) {
++	userSyscall1(0, uintptr(code))
++	for {
++	}
++}
++
++func abort() { exit(1) }
++
++// preinit runs before initAll(). Nothing to do in userspace.
++func preinit() {}
++
++// main is the C-ABI entry point called from user/rt0.S:_start.
++// run() initializes the heap, runs package init funcs, and enters
++// the scheduler loop (seeded with main.main under scheduler=tasks).
++//
++//export main
++func main() {
++	preinit()
++	run()
++	exit(0)
++}
 --- a/src/runtime/interrupt/interrupt_gooos.go
 +++ b/src/runtime/interrupt/interrupt_gooos.go
 @@ -0,0 +1,34 @@
-+//go:build gooos && baremetal
++//go:build gooos && baremetal && kernelspace
 +
 +package interrupt
 +
@@ -129,6 +216,23 @@
 +func Restore(state State) { gooos_restoreFlags(uintptr(state)) }
 +
 +func In() bool { return gooos_inInterruptDepth != 0 }
+--- a/src/runtime/interrupt/interrupt_gooos_user.go
++++ b/src/runtime/interrupt/interrupt_gooos_user.go
+@@ -0,0 +1,13 @@
++//go:build gooos && baremetal && !kernelspace
++
++// Userspace has no IRQs; Disable / Restore / In are trivial no-ops.
++// This file exists only so code under the (gooos && baremetal) tag
++// combo (runtime.addTimer, scheduler internals) resolves the
++// interrupt.* symbols at link time.
++
++package interrupt
++
++type State uintptr
++
++func Disable() State      { return 0 }
++func Restore(state State) {}
++func In() bool            { return false }
 --- a/src/internal/task/task_stack.go
 +++ b/src/internal/task/task_stack.go
 @@ -30,6 +30,11 @@
@@ -177,7 +281,7 @@
 @@ -44,7 +44,11 @@
  	r.r13 = uintptr(args)
  }
- 
+
 +//go:linkname gooosOnResume runtime.gooosOnResume
 +func gooosOnResume()
 +
@@ -185,4 +289,4 @@
 +	gooosOnResume() // gooos — update TSS.RSP0 for resumed goroutine
  	swapTask(s.sp, &systemStack)
  }
- 
+
