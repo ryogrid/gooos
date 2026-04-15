@@ -82,6 +82,53 @@ func fsRead(name string) []byte {
 	return nil
 }
 
+// fsAppend extends an existing file by len(data) bytes. Used by
+// fileFd.Write in fileModeWrite (after fsTruncate) and
+// fileModeAppend. Returns the number of bytes written; 0 if the
+// file does not exist or the append would overflow maxFileData.
+func fsAppend(name string, data []byte) int {
+	for i := 0; i < maxFiles; i++ {
+		if fs.files[i].used && fs.files[i].name == name {
+			n := len(data)
+			room := maxFileData - fs.files[i].size
+			if n > room {
+				n = room
+			}
+			for j := 0; j < n; j++ {
+				fs.files[i].data[fs.files[i].size+j] = data[j]
+			}
+			fs.files[i].size += n
+			return n
+		}
+	}
+	return 0
+}
+
+// fsTruncate clears the contents of an existing file and returns
+// true; returns false if the file does not exist. Creates the
+// file if missing? No — caller (fileFd.Open in mode-write) calls
+// fsCreate first.
+func fsTruncate(name string) bool {
+	for i := 0; i < maxFiles; i++ {
+		if fs.files[i].used && fs.files[i].name == name {
+			fs.files[i].size = 0
+			return true
+		}
+	}
+	return false
+}
+
+// fsSize returns the current size of a file, or -1 if missing.
+// Used by fileFd to position the offset for fileModeAppend.
+func fsSize(name string) int {
+	for i := 0; i < maxFiles; i++ {
+		if fs.files[i].used && fs.files[i].name == name {
+			return fs.files[i].size
+		}
+	}
+	return -1
+}
+
 // fsList returns the names of all files in the directory.
 func fsList() []string {
 	var names []string

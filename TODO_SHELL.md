@@ -42,14 +42,15 @@ The per-process PML4 design (keep user vaddrs at link-time
   - [x] Verify: `make build` clean.
   - [x] Verify: 10/10 `bash tmp/test_sendkey.sh`.
 
-- [ ] **1b** — `fileFd` + `fsAppend`.
-  - [ ] Add `fsAppend(name string, data []byte) int` to
+- [x] **1b** — `fileFd` + `fsAppend`.
+  - [x] Added `fsAppend`, `fsTruncate`, `fsSize` helpers to
     `src/fs.go`.
-  - [ ] `fileFd` struct + `Read` / `Write` / `Close` in
-    `src/fd.go` with `fileModeRead` / `fileModeWrite` /
-    `fileModeAppend`.
-  - [ ] Verify: `make build` clean.
-  - [ ] Verify: 10/10 sendkey.
+  - [x] `fileFd` struct + `openFileFd` constructor + `Read`
+    / `Write` / `Close` in `src/fd.go` with `fileModeRead`
+    / `fileModeWrite` (truncate-on-open) / `fileModeAppend`
+    (POSIX O_APPEND-style).
+  - [x] Verify: `make build` clean.
+  - [x] Verify: 10/10 sendkey.
 
 - [ ] **1c** — syscall ABI extension + user-binary rebuild.
   - [ ] `sys_open` (12), `sys_close` (13), `sys_dup2` (14)

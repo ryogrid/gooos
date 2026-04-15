@@ -123,6 +123,90 @@ func (c consoleStdout) Write(buf []byte) (int, fdErr) {
 
 func (consoleStdout) Close() fdErr { return fdErrOK }
 
+// --- fileFd ---------------------------------------------------------------
+
+// fileMode picks the open mode of a fileFd.
+type fileMode uint8
+
+const (
+	fileModeRead   fileMode = 1
+	fileModeWrite  fileMode = 2 // truncate on open; subsequent writes append
+	fileModeAppend fileMode = 3 // O_APPEND-style; offset starts at file end
+)
+
+// fileFd wraps a name in the in-memory filesystem with a byte
+// offset and an open mode. Per impldoc/shell_io_fd_table.md §6,
+// offset is shared on fd inheritance (POSIX semantics).
+type fileFd struct {
+	name   string
+	offset int
+	mode   fileMode
+}
+
+// openFileFd is the constructor used by sysOpenHandler (1c). It
+// creates / truncates the underlying file as the mode requires
+// and returns a ready-to-use *fileFd.
+func openFileFd(name string, mode fileMode) (*fileFd, fdErr) {
+	switch mode {
+	case fileModeRead:
+		if fsSize(name) < 0 {
+			return nil, fdErrBad
+		}
+		return &fileFd{name: name, mode: mode}, fdErrOK
+	case fileModeWrite:
+		// POSIX O_WRONLY|O_CREAT|O_TRUNC.
+		if fsSize(name) < 0 {
+			if !fsCreate(name) {
+				return nil, fdErrBad
+			}
+		} else {
+			fsTruncate(name)
+		}
+		return &fileFd{name: name, mode: mode}, fdErrOK
+	case fileModeAppend:
+		// POSIX O_WRONLY|O_CREAT|O_APPEND.
+		if fsSize(name) < 0 {
+			if !fsCreate(name) {
+				return nil, fdErrBad
+			}
+		}
+		return &fileFd{name: name, mode: mode}, fdErrOK
+	default:
+		return nil, fdErrBad
+	}
+}
+
+func (f *fileFd) Read(buf []byte) (int, fdErr) {
+	if f.mode != fileModeRead {
+		return 0, fdErrBad
+	}
+	data := fsRead(f.name)
+	if data == nil {
+		return 0, fdErrBad
+	}
+	if f.offset >= len(data) {
+		return 0, fdErrEOF
+	}
+	n := copy(buf, data[f.offset:])
+	f.offset += n
+	return n, fdErrOK
+}
+
+func (f *fileFd) Write(buf []byte) (int, fdErr) {
+	if f.mode != fileModeWrite && f.mode != fileModeAppend {
+		return 0, fdErrBad
+	}
+	n := fsAppend(f.name, buf)
+	f.offset += n
+	if n == 0 && len(buf) > 0 {
+		// Either file disappeared or fs is full.
+		return 0, fdErrBad
+	}
+	return n, fdErrOK
+}
+
+func (f *fileFd) Close() fdErr { return fdErrOK }
+
 // Package-scope singletons. Inherited by fork/exec via shallow
 // Process.fds copy.
 var (
