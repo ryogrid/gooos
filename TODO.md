@@ -6,11 +6,12 @@ audit trail — do not delete.
 
 ## Phase A — Prerequisite spikes
 
-- [ ] **Spike 1 — Runtime collision**: decide how to replace
-  `runtime_unix.go`'s `sleepTicks`/`ticks`/`ticksToNanoseconds`/
-  `nanosecondsToTicks`/`deadlock`/`tinygo_register_fatal_signals`
-  with gooos-local bodies. Pass when a build succeeds without
-  duplicate-symbol errors.
+- [~] **Spike 1 — Runtime collision**: investigation complete;
+  only viable path requires installing files into TinyGo's
+  runtime tree (root-owned). See **Deferred** below for findings
+  and the prepared `scripts/patch_tinygo_runtime.sh`. The spike
+  is not marked `[x]` because the user must run the sudo step
+  before a green build is possible.
 - [ ] **Spike 2 — Link viability**: trivial `ch := make(chan int); go func(){ ch<-1 }(); <-ch`
   links and boots to the shell banner under QEMU.
 - [ ] **Spike 3 — `interrupt.In()`**: `in_interrupt_depth` counter
@@ -68,4 +69,42 @@ audit trail — do not delete.
 
 ## Deferred (out-of-scope for this session)
 
-(empty at start — items populated when encountered)
+- **Spike 1 blocked — TinyGo runtime patch requires sudo**.
+  `runtime_unix.go` (under `goos=linux` and `!baremetal`) defines
+  `sleepTicks` / `ticks` / `ticksToNanoseconds` / `nanosecondsToTicks`
+  / `tinygo_register_fatal_signals` with libc-calling bodies. The
+  TinyGo build has no overlay flag, and TinyGo's runtime package
+  cannot be shadowed from `./src`. Adding `"baremetal"` to
+  `build-tags` excludes `runtime_unix.go` but also drops
+  `interrupt_none.go`, leaving the `interrupt` package with no
+  `Disable` / `Restore` / `In` / `State` definitions — the TinyGo
+  runtime's `internal/task` package then fails to compile.
+  - Concrete breakage confirmed:
+    `undefined: interrupt.Disable` at
+    `/usr/local/lib/tinygo/src/internal/task/queue.go:15` and siblings.
+  - Only viable resolution found: install gooos-specific files
+    inside the TinyGo source tree at
+    `/usr/local/lib/tinygo/src/runtime/runtime_gooos.go` and
+    `/usr/local/lib/tinygo/src/runtime/interrupt/interrupt_gooos.go`
+    (both tagged `//go:build gooos && baremetal`). That path is
+    owned by root, requires `sudo`, and is not reproducible
+    without a documented patch script.
+  - **Prepared artifact**: `scripts/patch_tinygo_runtime.sh` creates
+    both files with stub bodies that `//go:linkname`-bridge to
+    gooos's kernel primitives (`pitTicks`, `cli`, `sti`, `hlt`,
+    `outb`, `readFlags`, `restoreFlags`, `inInterruptDepth`).
+    Run once per dev machine with `sudo bash scripts/patch_tinygo_runtime.sh`.
+    Re-run idempotently after TinyGo upgrades.
+  - Dependencies for subsequent steps once patch is applied:
+    - add `"baremetal"` to `src/target.json` `build-tags`
+    - add `main.inInterruptDepth` as a `uint32` global
+    - wire `src/isr.S` prologue/epilogue to inc/dec it
+    - Spike 2, 3, 4 still need separate validation after the
+      patch lands (Spike 3 in particular depends on the ISR
+      counter wiring being correct)
+- All subsequent Phase A/B steps are implicitly blocked pending
+  the patch.
+- Out-of-scope items already flagged by design review (unchanged
+  from `impldoc/goroutine_design_gc_and_smp.md §8a`): precise GC,
+  ISR-safety lint enforcement, growable goroutine stacks, SMP v2,
+  fatal-handler detail preservation.
