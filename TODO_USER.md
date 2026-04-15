@@ -23,13 +23,27 @@ One git commit per top-level item. Check off when that commit lands.
         Dead code until TODO 3 flips scheduler=tasks, but
         `make build` stays clean.
 
-- [ ] **3. Flip `user/target.json` to tasks scheduler**
-  - [ ] `scheduler=tasks`, `default-stack-size=8192`,
+- [x] **3. Flip `user/target.json` to tasks scheduler**
+  - [x] `scheduler=tasks`, `default-stack-size=8192`,
         `automatic-stack-size=true`,
         `build-tags=["gooos","baremetal"]`.
-  - [ ] `make build` clean; every user ELF links.
-  - [ ] `nm user/build/hello.elf | grep '\bmain\b'` shows `T main`.
-  - [ ] Baseline harnesses (`test_sendkey.sh 1`) still PASS.
+  - [x] Add `user/task_stack_amd64.S` (copy of TinyGo stub) +
+        wire into `user/Makefile`. TinyGo's `-o *.o` flow does
+        not assemble embedded .S, same issue the kernel works
+        around in `src/task_stack_amd64.S`.
+  - [x] Extend `user/linker_user.ld` with `_heap_end` — add a
+        1 MiB fixed heap region (baremetal.go's `growHeap`
+        returns false; matches `rt0.S:mmap` 1 MiB cap).
+  - [x] Patch script bugfix: also `rm -f` the `_user` runtime
+        files on re-apply (new-file hunks append when target
+        exists, duplicating bodies); clean up `.rej` residuals
+        left by `--forward` on already-applied modify hunks.
+  - [x] `make build` clean; every user ELF links.
+  - [x] `nm user/build/hello.elf | grep '\bmain\b'` shows `T main`
+        at `0x40100496`.
+  - [ ] Baseline harnesses (`test_sendkey.sh 1`) — deferred to
+        TODO 4, because the post-flip ELF sizes (50–58 KiB)
+        exceed the current `maxFileData = 40960` FS slot cap.
 
 - [ ] **4. Bump `maxFileData` to 96 KiB**
   - [ ] `src/fs.go:12` 40960 → 98304; update comment.

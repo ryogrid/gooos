@@ -218,7 +218,7 @@
 +func In() bool { return gooos_inInterruptDepth != 0 }
 --- a/src/runtime/interrupt/interrupt_gooos_user.go
 +++ b/src/runtime/interrupt/interrupt_gooos_user.go
-@@ -0,0 +1,13 @@
+@@ -0,0 +1,14 @@
 +//go:build gooos && baremetal && !kernelspace
 +
 +// Userspace has no IRQs; Disable / Restore / In are trivial no-ops.

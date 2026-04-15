@@ -64,12 +64,14 @@ if [[ -f "$RG" && -f "$RGU" && -f "$IG" && -f "$IGU" ]] \
     exit 0
 fi
 
-# Either fresh tree or v1 state (old runtime_gooos.go without the
-# kernelspace tag, no _user sibling). Remove stale v1 files so the
-# new-file hunks can recreate them with the tightened tag; the
-# task_stack* modify hunks are safe to re-attempt because
-# --forward skips already-applied hunks.
-rm -f "$RG" "$IG"
+# Either fresh tree, v1 state (old runtime_gooos.go without the
+# kernelspace tag, no _user sibling), or an incomplete v2 apply.
+# Remove all four runtime files so the new-file hunks always create
+# fresh; `patch`'s new-file semantics append when the target exists,
+# which would duplicate bodies on re-apply. task_stack* modify
+# hunks are safe to re-attempt because --forward skips
+# already-applied ones.
+rm -f "$RG" "$RGU" "$IG" "$IGU"
 
 # Apply. `--forward` makes the modify-file hunks idempotent against
 # v1 state; `--batch` keeps it non-interactive. Swallow the non-zero
@@ -78,6 +80,13 @@ rm -f "$RG" "$IG"
 if ! patch -p1 -d "$TINYGO_ROOT" --forward --batch < "$PATCH_FILE"; then
     echo "(patch reported some hunks already applied; verifying end state…)"
 fi
+
+# --forward leaves .rej files next to task_stack*.go when the
+# modify-file hunks were already applied (v1 tree). That's the
+# expected outcome, not a failure; clear the residuals so future
+# runs don't confuse the state.
+rm -f "$TINYGO_SRC/internal/task/task_stack.go.rej" \
+      "$TINYGO_SRC/internal/task/task_stack_amd64.go.rej"
 
 # Post-condition: every expected artifact is in place and carries
 # the right discriminator. Any miss means the tree is in an
