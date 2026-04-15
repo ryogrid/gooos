@@ -181,13 +181,35 @@ sudo apt install -y build-essential grub-pc-bin grub-common xorriso mtools qemu-
 # Then install TinyGo from the .deb release linked above.
 ```
 
-### User-writable TinyGo copy (required for Ring-0 goroutines)
+### User-writable TinyGo copy + runtime patches (required)
 
-gooos installs two bare-metal-specific files into TinyGo's runtime
-(`runtime_gooos.go`, `interrupt_gooos.go`) so that `scheduler=tasks`
-can run in Ring 0. The system TinyGo at `/usr/local/lib/tinygo/` is
-root-owned, so the build uses a user-writable copy at
-`$HOME/.local/tinygo/` (overridable via `TINYGOROOT`).
+gooos needs four local changes to TinyGo's runtime for
+`scheduler=tasks` to work in Ring 0. The system TinyGo at
+`/usr/local/lib/tinygo/` is root-owned, so the build uses a
+user-writable copy at `$HOME/.local/tinygo/` (overridable via
+the `TINYGOROOT` environment variable the Makefile exports).
+
+`scripts/patch_tinygo_runtime.sh` installs / edits:
+
+1. **`runtime/runtime_gooos.go`** (new, gooos+baremetal build tag) —
+   provides `sleepTicks`, `ticks`, `ticksToNanoseconds`,
+   `nanosecondsToTicks`, `deadlock`, `putchar`, `preinit`, `exit`,
+   `abort`, and the bare-metal `main` entry point that `boot.S`
+   calls.
+2. **`runtime/interrupt/interrupt_gooos.go`** (new) — implements
+   `interrupt.Disable` / `Restore` / `In` + the `State` type,
+   backed by gooos's `cli` / `readFlags` / `restoreFlags` and the
+   `.bss` counter `gooos_in_interrupt_depth` (`src/isr.S`).
+3. **`internal/task/task_stack.go`** (patched in place) — adds a
+   `stackTop uintptr` field to the `state` struct and assigns it
+   to `canaryPtr + stackSize` in `initialize()`. Needed so
+   `gooos_tss.go`'s side table can resolve each goroutine's
+   kernel-stack top for TSS.RSP0.
+4. **`internal/task/task_stack_amd64.go`** (patched in place) —
+   inserts a `gooosOnResume(t)` call before `swapTask` in the
+   `state.resume()` body. This hook is how the gooos kernel
+   updates `TSS.RSP0` every time TinyGo's scheduler resumes a
+   Ring-3 goroutine.
 
 One-time setup after installing TinyGo:
 
@@ -197,9 +219,13 @@ cp -a /usr/local/lib/tinygo/. ~/.local/tinygo/
 bash scripts/patch_tinygo_runtime.sh
 ```
 
-Re-run `patch_tinygo_runtime.sh` after updating TinyGo or refreshing
-`~/.local/tinygo/`. See `impldoc/goroutine_design_scheduler.md §5.1`
-for why this is necessary.
+Re-run `patch_tinygo_runtime.sh` after updating TinyGo or any
+time `~/.local/tinygo/` is refreshed. The script is idempotent:
+the two "in place" edits (3, 4) are guarded by grep sentinels so
+they only apply once. See
+`impldoc/goroutine_design_scheduler.md §5.1` and
+`impldoc/phase_b_ring3_and_exec.md §4` for why these patches are
+necessary.
 
 ## Build
 
