@@ -40,10 +40,10 @@ One git commit per top-level item.
   - [x] `bash tmp/test_tinyc.sh` →
         `pf=0 s45=2 fib13=1 forsum=1` → PASS.
 
-- [ ] **5. Regression matrix green**
-  - [ ] `tmp/test_sendkey.sh 1` PASS.
-  - [ ] `tmp/test_goprobe.sh` PASS.
-  - [ ] `tmp/test_gochan.sh` PASS.
+- [x] **5. Regression matrix green**
+  - [x] `tmp/test_sendkey.sh 1` → `pf=0 exit=3 cat=1`.
+  - [x] `tmp/test_goprobe.sh` → PASS.
+  - [x] `tmp/test_gochan.sh` → PASS.
 
 - [ ] **6. README update**
   - [ ] Progress table row for Tiny C interpreter.
