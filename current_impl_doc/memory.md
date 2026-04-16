@@ -183,21 +183,35 @@ pointer lets us avoid a second map probe for the CR3 swap.
 ```mermaid
 flowchart TB
     A[user/rt0.S defines mmap wrapper<br/>→ sys_sbrk] --> B{baremetal.go:<br/>growHeap → false}
-    B -->|yes, always| C[No runtime heap growth<br/>under gc=leaking + baremetal]
-    C --> D[user/linker_user.ld reserves<br/>256 KiB inside .bss]
-    D --> E[_heap_start .. _heap_end<br/>= fixed 256 KiB]
-    E --> F[bump-allocator inside user<br/>gc=leaking never reclaims]
+    B -->|yes, always| C[No runtime heap growth<br/>the 1 MiB .heap reservation is the ceiling]
+    C --> D[user/linker_user.ld + user/rt0.S<br/>reserve 1 MiB in dedicated .heap @nobits]
+    D --> E[_heap_start .. _heap_end<br/>= fixed 1 MiB]
+    E --> F[gc=conservative mark/sweep<br/>reclaims dead allocations]
+    F --> G{Process.HeapLimit<br/>= HeapBreak + 2 MiB}
+    G -->|sysSbrkHandler refuses past limit| H[-1 → OOM-panic]
 ```
 
-- **256 KiB user heap** per process, reserved at link time
-  inside `.bss` so the kernel's ELF loader maps it as
-  PT_LOAD memsz pages.
-- **`gc=leaking`**: every `make`, `append`, `new`, goroutine
-  stack allocation is permanent. Fine for short-lived user
-  programs; larger programs should escalate to `gc=conservative`.
-- `sys_sbrk` exists and `HeapBreak` is tracked per-process,
-  but the current user runtime (baremetal.go) never calls
-  `mmap`/`sbrk` — the fixed reservation is enough.
+- **1 MiB user heap** per process, reserved at link time in a
+  dedicated `.heap : ALIGN(4096) { *(.heap) }` output section
+  (input from `user/rt0.S`'s `.heap @nobits`). Sits OUTSIDE
+  `[_globals_start, _globals_end)` so the conservative GC
+  does not treat heap contents as roots.
+- **`gc=conservative`**: every `make`, `append`, `new`,
+  goroutine stack that becomes unreachable is reclaimed on
+  the next mark/sweep. `findGlobals()` reads the synthetic
+  `__ehdr_start` Elf64 header (`user/rt0.S`, mirror of
+  `src/stubs.S:341-375`) to locate the globals scan range;
+  `tinygo_scanCurrentStack` (ported to
+  `user/runtime_asm_amd64.S`) scans the live stack.
+- **`Process.HeapLimit` ceiling**: `userHeapLimit = 2 MiB`
+  (1 MiB heap + 1 MiB sbrk slack). `sysSbrkHandler`
+  (`src/userspace.go`) refuses to advance `HeapBreak` past
+  `HeapLimit` — returns -1 in `RAX`, user code OOM-panics
+  cleanly rather than exhausting kernel physical memory.
+- `baremetal.go:growHeap` returns false unconditionally, so
+  the fixed 1 MiB is a hard runtime ceiling. Switch to
+  option (b) — `//go:linkname` override to `sys_sbrk` — if a
+  future user program needs growth.
 
 ## In-Memory Filesystem (`src/fs.go`)
 

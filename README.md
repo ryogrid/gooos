@@ -39,6 +39,7 @@ An experimental x86_64 operating system written in **Go (TinyGo) + GNU assembly*
 | Text editor (vi-like) | Done | `edit.elf` — modal text editor with Normal/Insert/Command modes. Navigate with h/j/k/l or arrow keys, insert text with `i`/`a`/`o`, save with `:w`, quit with `:q`. 5 Go source files under `user/cmd/edit/`. See `impldoc/editor_overview.md` |
 | Tiny C interpreter | Done | `tinyc.elf` — tree-walking interpreter for a C-subset language (int-only, 1D arrays, functions, if/else/while/for, println). Hand-written recursive-descent parser + AST evaluator, ~1000 lines of Go. Invoked from the shell as `$ tinyc program.tc`. See `impldoc/tinyc_interpreter.md` for the design |
 | Userspace goroutines & channels | Done | Ring-3 user binaries run on their own TinyGo `scheduler=tasks` runtime — native `go func()`, `chan`, `select`, and `time.Sleep` work inside a user process. Build-tag split (`kernelspace` on `src/target.json`) keeps the kernel and user runtime bodies disjoint; `user/gooos/runtime_hooks.go` supplies the Ring-3-safe `gooosOnResume` / `gooosStackOverflow`. `sys_sleep` routes through `afterTicks` on the kernel side so a sleeping user process no longer holds the CPU. Proven by `user/cmd/goprobe/main.go` (PASS/FAIL probe) + `tmp/test_goprobe.sh`, and demonstrated interactively by `user/cmd/gochan/main.go` — a shell-invokable 3-stage pipeline + `select` demo (`$ gochan`) with harness at `tmp/test_gochan.sh`. See `impldoc/userspace_goroutines_overview.md` for the design set |
+| Userspace conservative GC | Done | `user/target.json` now runs `gc=conservative` (was `leaking`). User binaries gain `_globals_start`/`_globals_end` brackets + synthetic `__ehdr_start` Elf64 header in `user/rt0.S` so TinyGo's `findGlobals()` can locate root-scan ranges at runtime; `tinygo_scanCurrentStack` ported into `user/runtime_asm_amd64.S` for stack scanning. Per-process 1 MiB fixed heap (`.heap @nobits` section, `user/linker_user.ld`) with `Process.HeapLimit` + `sysSbrkHandler` ceiling (`userHeapLimit = 2 MiB`) prevents runaway `sys_sbrk`. `maxFileData` bumped to 256 KiB to absorb ~13–17 KiB of per-binary GC overhead. `fib(10)` in Tiny C now works (177 recursive frames reclaim cleanly); long-running user programs no longer leak. See `impldoc/userspace_conservative_gc_*.md` |
 
 ### Running the gochan demo
 
@@ -227,7 +228,7 @@ gooos/
 │   └── busybox_shell_spec.md                       # shell specification
 ├── user/                                           # userland SDK and programs
 │   ├── Makefile                                    # build all user ELFs
-│   ├── target.json                                 # TinyGo target for userspace (gc=leaking)
+│   ├── target.json                                 # TinyGo target for userspace (gc=conservative, scheduler=tasks)
 │   ├── linker_user.ld                              # linker script (entry at 0x40100000)
 │   ├── rt0.S                                       # startup assembly + syscall stubs
 │   ├── go.mod                                      # user module

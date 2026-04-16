@@ -13,7 +13,7 @@ Ring-3 target with its own full goroutine scheduler.
   "build-tags": ["gooos", "baremetal"],
   "goos": "linux",
   "goarch": "amd64",
-  "gc": "leaking",
+  "gc": "conservative",
   "scheduler": "tasks",
   "panic-strategy": "trap",
   "linker": "ld.lld",
@@ -29,6 +29,17 @@ means the user build picks up
 of the kernel's `runtime_gooos.go` that routes `sleepTicks`
 through `sys_sleep` and `putchar` through `sys_write(fd=1)`.
 See `impldoc/userspace_goroutines_overview.md`.
+
+`gc=conservative` matches the kernel: each user binary reclaims
+dead allocations via mark/sweep. Root scanning uses
+`_globals_start` / `_globals_end` brackets defined in
+`user/linker_user.ld` plus a synthetic `__ehdr_start` Elf64 header
+in `user/rt0.S` (mirror of `src/stubs.S:341-375`), with
+`tinygo_scanCurrentStack` in `user/runtime_asm_amd64.S` for
+live-register + stack scanning. Each process gets a fixed 1 MiB
+`.heap @nobits` region; `Process.HeapLimit` + `sysSbrkHandler`
+cap `sys_sbrk` at 2 MiB per process. See
+`impldoc/userspace_conservative_gc_*.md`.
 
 ## User Build Chain
 

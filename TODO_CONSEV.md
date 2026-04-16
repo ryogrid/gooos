@@ -103,15 +103,19 @@ One git commit per top-level item.
   - [x] Optional polish applied: `fib.tc` fixture upgraded
         from `fib(7)` → `fib(10)`; harness assertion updated.
 
-- [ ] **8. README.md + `current_impl_doc/` update**
-  - [ ] README.md progress-table row for user-side GC.
-  - [ ] Remove any stale `gc=leaking` claims in README.
-  - [ ] Note lifted constraint (fib(10), long-running
-        programs).
-  - [ ] `current_impl_doc/userland.md` — update TinyGo target
-        table + heap size.
-  - [ ] `current_impl_doc/memory.md` — update user heap
-        description.
+- [x] **8. README.md + `current_impl_doc/` update**
+  - [x] README.md progress-table row added:
+        "Userspace conservative GC".
+  - [x] Fixed stale `gc=leaking` annotation in README's
+        directory-layout listing (line 230).
+  - [x] Noted lifted constraint: `fib(10)` works, long-running
+        programs no longer leak.
+  - [x] `current_impl_doc/userland.md` — TinyGo target table
+        updated (`"gc": "conservative"`); added paragraph on
+        conservative-GC root scanning + HeapLimit.
+  - [x] `current_impl_doc/memory.md` — user heap section
+        rewritten: 1 MiB dedicated `.heap @nobits` section,
+        globals brackets, mark/sweep, HeapLimit enforcement.
 
 - [ ] **9. Reviewer pass + completeness**
   - [ ] Reviewer subagent: CRITICAL=0, MAJOR=0 (fix inline).
