@@ -30,13 +30,13 @@ One git commit per top-level item.
   - [x] user/gooos/fs.go: 65536 → 131072.
   - [x] `make build` clean.
 
-- [ ] **5. Editor source files (5 files)**
-  - [ ] user/cmd/edit/keybinds.go — EditorCmd enum.
-  - [ ] user/cmd/edit/buffer.go — Buffer + line manipulation.
-  - [ ] user/cmd/edit/screen.go — Viewport + rendering.
-  - [ ] user/cmd/edit/input.go — readCommand + vi-mode dispatch.
-  - [ ] user/cmd/edit/main.go — entry point + main loop.
-  - [ ] Standalone tinygo build compiles.
+- [x] **5. Editor source files (5 files)**
+  - [x] user/cmd/edit/keybinds.go — EditorCmd enum + Mode enum.
+  - [x] user/cmd/edit/buffer.go — Buffer + cursor + editing ops.
+  - [x] user/cmd/edit/screen.go — Viewport + rendering + status.
+  - [x] user/cmd/edit/input.go — readCommand + vi-mode dispatch.
+  - [x] user/cmd/edit/main.go — entry point + main loop + execute.
+  - [x] Standalone tinygo build compiles cleanly.
 
 - [ ] **6. Build integration**
   - [ ] user/Makefile CMDS += edit.
