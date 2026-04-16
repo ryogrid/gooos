@@ -86,19 +86,22 @@ One git commit per top-level item.
   - [x] `test_sendkey.sh 1 → pf=0 exit=3 cat=1` — shell boots
         and works under `gc=conservative`.
 
-- [ ] **7. Regression matrix**
-  - [ ] `tmp/test_sendkey.sh` × 10 all PASS.
-  - [ ] `test_fd_probe.sh` PASS.
-  - [ ] `test_redirect.sh` PASS.
-  - [ ] `test_pipe.sh` PASS.
-  - [ ] `test_wc_pipe.sh` PASS.
-  - [ ] `test_pipe_matrix.sh` PASS.
-  - [ ] `test_goprobe.sh` PASS.
-  - [ ] `test_gochan.sh` PASS.
-  - [ ] `test_tinyc.sh` PASS.
-  - [ ] `test_edit.sh` PASS.
-  - [ ] Optional post-flip polish: restore `fib(10)` in
-        `fib.tc` fixture.
+- [x] **7. Regression matrix — all green under `gc=conservative`**
+  - [x] `tmp/test_sendkey.sh` trials 1–10 all
+        `pf=0 exit=3 cat=1`.
+  - [x] `test_fd_probe.sh` → `contents=1 read_write=1 err=1 pf=0`.
+  - [x] `test_redirect.sh` → `hello_lines=1 pf=0`.
+  - [x] `test_pipe.sh` → `pf=0 exit=3 hello_lines=1 world_lines=1`.
+  - [x] `test_wc_pipe.sh` → `echo_counts=1 file_counts=1 pf=0`.
+  - [x] `test_pipe_matrix.sh` → all 4 cases `pf=0`.
+  - [x] `test_goprobe.sh` → `pf=0 begin=1 go_chan=1 select=1 time_sleep=1 yield=1 all=1`.
+  - [x] `test_gochan.sh` → `pf=0 sq=1/1/1/1/1 alpha=1 beta=1 fin=1`.
+  - [x] `test_tinyc.sh` → **`fib(10) = 55`** works under
+        `gc=conservative` (177 calls would OOM under leaking;
+        conservative reclaims). Result: `pf=0 s45=2 fib55=1 forsum=1`.
+  - [x] `test_edit.sh` → `pf=0 hello=1`.
+  - [x] Optional polish applied: `fib.tc` fixture upgraded
+        from `fib(7)` → `fib(10)`; harness assertion updated.
 
 - [ ] **8. README.md + `current_impl_doc/` update**
   - [ ] README.md progress-table row for user-side GC.

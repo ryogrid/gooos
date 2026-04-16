@@ -421,7 +421,7 @@ func main() {
 	fsWrite("sum.tc", []byte("main()\n{\n    var i, s;\n    s = 0;\n    i = 0;\n    while (i < 10) {\n        s = s + i;\n        i = i + 1;\n    }\n    println(\"s = %d\", s);\n}\n"))
 
 	fsCreate("fib.tc")
-	fsWrite("fib.tc", []byte("fib(n)\n{\n    if (n <= 1) return n;\n    return fib(n - 1) + fib(n - 2);\n}\n\nmain()\n{\n    println(\"%d\", fib(7));\n}\n"))
+	fsWrite("fib.tc", []byte("fib(n)\n{\n    if (n <= 1) return n;\n    return fib(n - 1) + fib(n - 2);\n}\n\nmain()\n{\n    println(\"%d\", fib(10));\n}\n"))
 
 	fsCreate("array.tc")
 	fsWrite("array.tc", []byte("var A[10];\n\narraySum(a, n)\n{\n    var i, s;\n    s = 0;\n    for (i = 0; i < n; i = i + 1) s = s + a[i];\n    return s;\n}\n\nmain()\n{\n    var i;\n    for (i = 0; i < 10; i = i + 1) A[i] = i;\n    println(\"s = %d\", arraySum(A, 10));\n}\n"))
