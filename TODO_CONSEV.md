@@ -117,12 +117,20 @@ One git commit per top-level item.
         rewritten: 1 MiB dedicated `.heap @nobits` section,
         globals brackets, mark/sweep, HeapLimit enforcement.
 
-- [ ] **9. Reviewer pass + completeness**
-  - [ ] Reviewer subagent: CRITICAL=0, MAJOR=0 (fix inline).
-  - [ ] MINOR recorded in this doc's tail.
-  - [ ] `grep -rn 'TODO\|FIXME\|XXX'` diff range — no new
+- [x] **9. Reviewer pass + completeness**
+  - [x] Reviewer subagent (`general-purpose`, fresh run after
+        first attempt 500'd) reports **CRITICAL=0, MAJOR=0,
+        MINOR=0**. Every design-doc requirement verified via
+        `file:line` spot-check. Every harness re-run green
+        including `test_tinyc.sh → fib55=1` (the reclamation
+        demonstration).
+  - [x] `grep -rn TODO/FIXME/XXX` over
+        `git diff 81576b1..HEAD` in `src/*.go`, `user/*.S`,
+        `user/*.ld`, `user/*.json`, `scripts/*.sh` — zero new
         markers.
-  - [ ] Every checked item has a matching commit.
+  - [x] Commit sequence matches 1:1 with TODO items 1–8:
+        `9aeca38 7b65605 22ce849 886d9e8 a61c3e5 86ad09a
+        0306abb a7aca0d`.
 
 ## Deferred items
 
