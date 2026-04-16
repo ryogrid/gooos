@@ -145,12 +145,12 @@ errno.
 
 ```mermaid
 sequenceDiagram
-    participant Parent as parent Process
-    participant Child as child Process (new)
-    participant Pipe as pipe refcount
+    participant Parent as "parent Process"
+    participant Child as "child Process new"
+    participant Pipe as "pipe refcount"
 
     Parent->>Child: elfSpawn copies fds array (shallow)
-    loop for each fd i in Parent.fds[0..15]
+    loop for each fd in parent table
         Child->>Child: child.fds[i] = parent.fds[i]
         alt fds[i] is pipeReader or pipeWriter
             Child->>Pipe: fdAddRef(fds[i])
@@ -158,7 +158,7 @@ sequenceDiagram
     end
     Note over Child: child now holds every ref parent had
     Parent->>Parent: may then Close(fd) to drop its copy
-    Child->>Child: may Close(fd) too; last ref closes pipe end
+    Child->>Child: may Close(fd) too, then the last ref closes pipe end
 ```
 
 This is what lets `cmd1 | cmd2` build a pipeline: the shell

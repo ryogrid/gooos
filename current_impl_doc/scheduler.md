@@ -14,17 +14,16 @@ block-beta
     columns 2
     block:queues
         columns 1
-        RQ[runqueue<br/>FIFO of runnable tasks]
-        SQ[sleepQueue<br/>delta-encoded]
-        TQ[timerQueue<br/>whenTicks-ordered]
+        RQ["runqueue<br/>FIFO of runnable tasks"]
+        SQ["sleepQueue<br/>delta-encoded"]
+        TQ["timerQueue<br/>whenTicks-ordered"]
     end
     block:hooks
         columns 1
-        Pause[task.Pause<br/>canary check<br/>→ swapTask]
-        Resume[task.resume<br/>gooosOnResume<br/>swapTask]
-        SleepTicks[sleepTicks<br/>sti/hlt/cli busy wait]
+        Pause["task.Pause<br/>canary check<br/>→ swapTask"]
+        Resume["task.resume<br/>gooosOnResume<br/>swapTask"]
+        SleepTicks["sleepTicks<br/>sti/hlt/cli busy wait"]
     end
-    queues --> hooks : drive
 ```
 
 - **`runqueue`**: ready-to-run goroutines. `Gosched()` pushes
@@ -133,8 +132,8 @@ Allocating these on the Go heap would leak 8 KiB per exec under
 ```mermaid
 flowchart LR
     Init[ring3StackPoolInit<br/>alloc 32 × 8 KiB stacks<br/>push all indices into chan int] --> Free[ring3StackPoolCh<br/>32 slot free list]
-    Free -->|ring3StackAcquire<br/>(<-ch)| Used[slot in use by ring3Wrapper]
-    Used -->|processExit<br/>ring3StackRelease<br/>(ch <- idx)| Free
+    Free -->|ring3StackAcquire<br/>recv from ch| Used[slot in use by ring3Wrapper]
+    Used -->|processExit<br/>ring3StackRelease<br/>send idx to ch| Free
 ```
 
 - `maxRing3Procs = 32` → 32 concurrent Ring-3 processes max.
@@ -161,10 +160,10 @@ flowchart LR
 
 ```mermaid
 sequenceDiagram
-    participant BSP as main.go:smpInit
-    participant ACPI as detectAPsFromACPI
-    participant Tramp as trampoline.S @ 0x8000
-    participant AP as AP core
+    participant BSP as "main.go smpInit"
+    participant ACPI as "detectAPsFromACPI"
+    participant Tramp as "trampoline.S @ 0x8000"
+    participant AP as "AP core"
 
     BSP->>ACPI: parse RSDP → RSDT → MADT
     ACPI-->>BSP: expected AP count
@@ -176,7 +175,7 @@ sequenceDiagram
     BSP->>AP: SIPI retry
     AP->>AP: real → protected → long mode<br/>reload GDT<br/>jumpTo AP entry
     AP->>BSP: serialPrintln "AP N online"
-    AP->>AP: sti; hlt loop forever
+    AP->>AP: sti then hlt loop forever
     BSP->>BSP: report "SMP: N cores online"
 ```
 
