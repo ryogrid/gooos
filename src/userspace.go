@@ -516,6 +516,18 @@ func sysVgaSetCursorHandler(frame *SyscallFrame) {
 	}
 	vgaCursorRow = row
 	vgaCursorCol = col
+
+	// Enable the hardware cursor with a standard underline shape
+	// (scanlines 14-15). Register 0x0A bit 5 = cursor-disable; clear
+	// it and set the start scanline. Register 0x0B sets the end
+	// scanline. Needed because QEMU may boot with the cursor disabled
+	// or with start > end (which also hides it).
+	outb(0x3D4, 0x0A)
+	outb(0x3D5, 14) // cursor start scanline (bit 5 = 0 enables)
+	outb(0x3D4, 0x0B)
+	outb(0x3D5, 15) // cursor end scanline
+
+	// Program the cursor position (high byte = 0x0E, low = 0x0F).
 	pos := uint16(row*vgaWidth + col)
 	outb(0x3D4, 0x0F)
 	outb(0x3D5, uint8(pos&0xFF))
