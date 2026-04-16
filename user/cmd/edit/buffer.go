@@ -312,6 +312,7 @@ func (b *Buffer) openLineAbove() {
 	for i := b.cy; i < len(b.lines); i++ {
 		newLines[i+1] = b.lines[i]
 	}
+	b.lines = newLines
 	b.cx = 0
 	b.modified = true
 }

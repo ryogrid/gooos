@@ -114,8 +114,12 @@ func (e *Editor) execute(cmd EditorCmd) {
 	case CmdForceQuit:
 		e.quit = true
 	case CmdSaveQuit:
-		saveFile(e.filename, e.buf)
-		e.quit = true
+		_, ok := saveFile(e.filename, e.buf)
+		if ok {
+			e.quit = true
+		} else {
+			e.setMessage("Error: could not save " + e.filename)
+		}
 	}
 }
 

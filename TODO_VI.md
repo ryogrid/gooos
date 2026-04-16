@@ -60,15 +60,38 @@ One git commit per top-level item.
   - [x] Shell command list updated (+ edit).
   - [x] Usage section with vi-mode key reference table.
 
-- [ ] **10. Reviewer pass + completeness**
-  - [ ] Reviewer subagent: no CRITICAL/MAJOR.
-  - [ ] grep TODO/FIXME/XXX — no new markers.
-  - [ ] Every checked item has a commit.
+- [x] **10. Reviewer pass + completeness**
+  - [x] Reviewer subagent: CRITICAL=0, MAJOR=1 (fixed),
+        MINOR=3 (1 fixed, 2 noted).
+  - [x] `grep -rn TODO/FIXME/XXX` over user/cmd/edit/ +
+        src/keyboard.go — zero hits.
+  - [x] Cross-reference: 9 TODO items → 9 commits
+        (`26d0a4f..49a16c6`), all checked.
 
 ## Deferred items
 
-(None yet.)
+- **Undo/redo** — heap cost under gc=leaking. v2.
+- **Horizontal scrolling** — lines > 80 chars truncated. v2.
+- **Search (`/`, `?`)** — needs mini input loop. v2.
+- **Syntax highlighting** — needs per-language tokenizer. v2.
+- **Multiple buffers / split panes** — v2.
 
 ## Reviewer MINOR notes
 
-(None yet.)
+Reviewer subagent: CRITICAL=0, MAJOR=1, MINOR=3.
+
+1. **MAJOR-1 (fixed)**: `buffer.go:openLineAbove` did not
+   assign `b.lines = newLines` — the `O` command was a no-op.
+   Fixed by adding the missing assignment.
+2. **MINOR-1 (fixed)**: `main.go:CmdSaveQuit` ignored
+   saveFile return value. Fixed: now checks ok and shows error
+   instead of quitting on failure.
+3. **MINOR-2 (noted)**: `buffer.go:cursorRight` allows
+   `cx == len(line)` (one past end). Vi Normal mode would
+   clamp to `len-1`. Left as-is: the renderer and insert logic
+   handle the extra position correctly, and clamping would
+   require mode-awareness in cursor methods.
+4. **MINOR-3 (noted)**: Status bar has no ModeCommand case — no
+   mode label shown during `:` prompt. The `:` prompt appears
+   on the message bar (row 24), which is functional. Left as-is
+   to keep the status bar switch minimal.
