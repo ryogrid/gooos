@@ -33,10 +33,37 @@ var scancodeToASCII = [128]byte{
 	0x39: ' ', // space
 }
 
+// scancodeToASCIIShifted is the shift-held variant of the table
+// above. Required so the shell can read `<`, `>`, `|`, `_`
+// (and uppercase letters) for redirection / pipes / arguments.
+var scancodeToASCIIShifted = [128]byte{
+	0x02: '!', 0x03: '@', 0x04: '#', 0x05: '$', 0x06: '%',
+	0x07: '^', 0x08: '&', 0x09: '*', 0x0A: '(', 0x0B: ')',
+	0x0C: '_', 0x0D: '+',
+	0x10: 'Q', 0x11: 'W', 0x12: 'E', 0x13: 'R', 0x14: 'T',
+	0x15: 'Y', 0x16: 'U', 0x17: 'I', 0x18: 'O', 0x19: 'P',
+	0x1A: '{', 0x1B: '}',
+	0x1E: 'A', 0x1F: 'S', 0x20: 'D', 0x21: 'F', 0x22: 'G',
+	0x23: 'H', 0x24: 'J', 0x25: 'K', 0x26: 'L',
+	0x27: ':', 0x28: '"', 0x29: '~',
+	0x2B: '|',
+	0x2C: 'Z', 0x2D: 'X', 0x2E: 'C', 0x2F: 'V', 0x30: 'B',
+	0x31: 'N', 0x32: 'M',
+	0x33: '<', 0x34: '>', 0x35: '?',
+	0x39: ' ',
+}
+
 const (
 	scBackspace = 0x0E
 	scEnter     = 0x1C
+	scLShift    = 0x2A
+	scRShift    = 0x36
 )
+
+// shiftHeld tracks left+right shift state via make/break events
+// from the IRQ. Read from handleKeyboard; written from the same
+// (single-CPU v1, no race).
+var shiftHeld uint8
 
 // keyboardInit is a no-op under Phase B — the ring buffer lives in
 // .bss and is zero-initialized; keyboardCh is constructed at
@@ -54,15 +81,32 @@ func keyboardInit() {}
 func handleKeyboard(vector uint64) {
 	scancode := inb(kbdDataPort)
 	picSendEOI(1)
-	// Ignore key release events (bit 7 set).
+
+	// Track shift state on make + break.
+	switch scancode {
+	case scLShift, scRShift:
+		shiftHeld++
+		return
+	case scLShift | 0x80, scRShift | 0x80:
+		if shiftHeld > 0 {
+			shiftHeld--
+		}
+		return
+	}
+
+	// Ignore other key release events (bit 7 set).
 	if scancode&0x80 != 0 {
 		return
 	}
 
-	// Translate scancode to ASCII.
+	// Translate scancode to ASCII (shifted variant if shift held).
 	var ascii byte
 	if scancode < 128 {
-		ascii = scancodeToASCII[scancode]
+		if shiftHeld > 0 {
+			ascii = scancodeToASCIIShifted[scancode]
+		} else {
+			ascii = scancodeToASCII[scancode]
+		}
 	}
 
 	// event = (scancode & 0xFF) | ((ascii & 0xFF) << 8)

@@ -58,3 +58,35 @@ func Sleep(ms int) {
 	}
 	syscall1(sysSleep, uintptr(ticks))
 }
+
+// Spawn starts a child process running the named program and
+// returns its PID immediately. The caller invokes Wait(pid)
+// later to retrieve the exit code. Returns (-1, -errno) on
+// failure.
+func Spawn(path string, args string) (int, int) {
+	pathBytes := []byte(path)
+	argBytes := []byte(args)
+	var argPtr uintptr
+	var argLen uintptr
+	if len(argBytes) > 0 {
+		argPtr = uintptr(unsafe.Pointer(&argBytes[0]))
+		argLen = uintptr(len(argBytes))
+	}
+	r := syscall4(sysSpawn,
+		uintptr(unsafe.Pointer(&pathBytes[0])),
+		uintptr(len(pathBytes)),
+		argPtr,
+		argLen,
+	)
+	if int64(r) < 0 {
+		return -1, int(int64(r))
+	}
+	return int(r), 0
+}
+
+// Wait blocks until the named child exits and returns its exit
+// code. The PID becomes invalid after Wait returns.
+func Wait(pid int) int {
+	r := syscall1(sysWait, uintptr(pid))
+	return int(int64(r))
+}

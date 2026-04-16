@@ -1,0 +1,402 @@
+# TODO_SHELL — Shell IO Implementation
+
+Tracks every concrete work item from `impldoc/shell_io_*.md`.
+Order follows `shell_io_overview.md §5` (foundation →
+redirection → sequential pipes → multi-process foundation →
+concurrent pipes).
+
+Mark `- [x]` only after the implementation **and** its
+verification step pass. One commit per top-level item.
+
+User-confirmed pre-decisions (`shell_io_overview.md §6`):
+- D1 PML4-per-process; D2 chan-byte pipe; D3 16 fds;
+  D4 clean rebuild for sys_read ABI; D5 foreground-only stdin.
+
+TinyGo amd64 codegen re-verified 2026-04-15:
+`objdump -d user/build/hello.elf` shows
+`mov $0x40100342, %edi` — absolute 32-bit immediates.
+The per-process PML4 design (keep user vaddrs at link-time
+`0x40100000+`, give each process its own PT entries) is sound.
+
+---
+
+## Phase 0 — Bootstrap
+
+- [x] Bootstrap commit lands TODO_SHELL.md (`7ababf9`).
+
+## Phase 1 — fd table foundation
+
+- [x] **1a** — `FileDesc` interface + `Process.fds`.
+  - [x] New `src/fd.go`: `FileDesc` interface,
+    `fdErr` enum (`OK`/`EOF`/`Pipe`/`Bad`), helpers
+    `procGetFD` / `procAllocFD` / `procClose` / `procDup2`.
+  - [x] Concrete impls `consoleStdin`, `consoleStdout`,
+    package-scope singletons (`stdinFD`, `stdoutFD`,
+    `stderrFD`).
+  - [x] `Process.fds [16]FileDesc` field added; Process
+    struct comment updated.
+  - [x] `processExit` calls `procCloseAll` before pool
+    release.
+  - [x] Boot-shell stdio fds initialized in
+    `src/elf.go:elfLoad` via `procInitStdio`.
+  - [x] Verify: `make build` clean.
+  - [x] Verify: 10/10 `bash tmp/test_sendkey.sh`.
+
+- [x] **1b** — `fileFd` + `fsAppend`.
+  - [x] Added `fsAppend`, `fsTruncate`, `fsSize` helpers to
+    `src/fs.go`.
+  - [x] `fileFd` struct + `openFileFd` constructor + `Read`
+    / `Write` / `Close` in `src/fd.go` with `fileModeRead`
+    / `fileModeWrite` (truncate-on-open) / `fileModeAppend`
+    (POSIX O_APPEND-style).
+  - [x] Verify: `make build` clean.
+  - [x] Verify: 10/10 sendkey.
+
+- [x] **1c** — syscall ABI extension + user-binary rebuild.
+  - [x] `sys_open` (12), `sys_close` (13), `sys_dup2` (14)
+    constants + handlers in `src/userspace.go`.
+  - [x] `sysReadHandler` / `sysWriteHandler` rewritten to
+    dispatch through `Process.fds` (via 256-byte kernel
+    scratch buffer per chunk).
+  - [x] `sysFail(fdErr) uintptr` helper (`src/fd.go`).
+  - [x] `user/gooos/syscall.go` constants for new syscalls.
+  - [x] `user/gooos/io.go` rewritten: POSIX `Stdin`/`Stdout`
+    /`Stderr` consts; `Open`/`Close`/`Dup2`/`Read`/`Write`
+    first-class; `Print` passes `Stdout`; `ReadLine` passes
+    `Stdin` (3-arg).
+  - [x] `user/rt0.S` `write` stub simplified — the new
+    kernel ABI matches C's `write(fd, buf, count)`
+    directly so the register shuffle is removed.
+  - [x] **fd inheritance fix**: `elfExec` shallow-copies
+    `parent.fds` into `child.fds` (caught by sendkey
+    regression: `cat hello.txt` was silently failing
+    because the child had nil fds). Per
+    `shell_io_fd_table.md §6`.
+  - [x] `make embed-user` re-emitted all five user ELFs.
+  - [x] Single commit covers kernel + userland.
+  - [x] Verify: `make build` clean (lint + verify-globals
+    green).
+  - [x] Verify: 10/10 sendkey (`pf=0 exit=3 cat=1` — full
+    end-to-end through new fd path).
+
+- [x] **1d** — `fdprobe` ELF (renamed from `fd_probe`
+  because the gooos keyboard handler doesn't decode shift +
+  minus, so `_` is unreachable from the sendkey harness;
+  documented inline).
+  - [x] `user/cmd/fdprobe/main.go`: opens `hello.txt`,
+    reads via `Read(fd, buf)`, writes to stdout via
+    `Write(Stdout, buf)`, closes; tries opening
+    `nope.txt` and confirms negative return.
+  - [x] Embedded via `scripts/embed_elfs.sh` (entry added
+    to `user/Makefile` `CMDS`).
+  - [x] `src/main.go` writes `fdprobe.elf` into the FS
+    alongside the other user binaries.
+  - [x] Verify: `tmp/test_fd_probe.sh` PASS:
+    `contents=1 read_write=1 err=1 pf=0`.
+  - [x] Verify: 10/10 sendkey.
+
+## Phase 2 — redirection
+
+- [x] **2** — shell redirection (`<`, `>`, `>>`).
+  - [x] `src/keyboard.go` shift handling: tracks
+    left/right shift make/break, shifted ASCII table
+    for symbols and uppercase letters. Verification
+    prerequisite (gives the sendkey harness `<`, `>`,
+    `|`, `_`, etc.).
+  - [x] `user/cmd/sh/parse.go` (new): `tokenize`,
+    `parseLine`, `cmdLine` struct, `joinArgs`.
+  - [x] `user/cmd/sh/main.go` `executeCommand` (now
+    `executeCmdLine`) handles `cmdLine`; saved-stdio
+    dup2 dance via slots 10/11.
+  - [x] Failure paths: syntax error, open failure both
+    print to stderr (`gooos.Println` for v1; serial only
+    until stderr split) and skip the command.
+  - [x] `user/rt0.S`: `memmove` added (now needed by
+    `runtime.sliceAppend` for the parser's `[]string`
+    slices).
+  - [x] `src/fs.go` `maxFileData` bumped 40 KiB → 64 KiB;
+    `sh.elf` grew to ~47 KiB after the parser landed.
+  - [x] New harness `tmp/test_redirect.sh`:
+    `echo hello > out.txt; cat out.txt` produces
+    `hello` on serial.
+  - [x] Verify: `bash tmp/test_redirect.sh` PASS
+    (`hello_lines=1 pf=0`); 10/10 sendkey.
+
+- [x] **3** — sequential pipe + `sys_pipe`.
+  - [x] `src/pipe.go` (new): `seqPipeBuf`, `seqPipeReader`,
+    `seqPipeWriter`, `newSeqPipe()` — sequential variant
+    (writer fills, reader drains, no concurrency).
+    Idempotent `Close` on both ends to survive fd
+    inheritance.
+  - [x] `sys_pipe` (17) constant + handler in
+    `src/userspace.go`; `procAllocFD` allocates the two
+    fds with rollback if the second one fails.
+  - [x] `user/gooos/syscall.go` `sysPipe` constant.
+  - [x] `user/gooos/io.go` `Pipe()` returns
+    `(rfd, wfd, errno)`.
+  - [x] Shell parser refactored: `parsePipeline` splits on
+    `|` into per-stage `cmdLine`s; `tokenize` recognizes
+    `|` as a token. `executePipeline` dispatches:
+    1-stage → existing redirect path, 2-stage →
+    `executeTwoStagePipe`, 3+ stages → "not supported in
+    this round" message (handled in phase 5).
+  - [x] `executeTwoStagePipe` orchestrates fd dance:
+    save stdout, dup2(wfd→stdout), exec stage 1, restore
+    stdout, close wfd (writer-done now), save stdin,
+    dup2(rfd→stdin), exec stage 2, restore stdin,
+    close rfd. Order matters — closing wfd before stage 1
+    runs would mark the writer done prematurely (writes
+    still proceed but the discipline is misleading).
+  - [x] `user/cmd/cat/main.go` extended: with no
+    filename arg, reads stdin in 256-byte chunks until
+    EOF and writes to stdout (POSIX `cat`). Lets the
+    pipe harness validate end-to-end data flow with no
+    new ELF needed.
+  - [x] New harness `tmp/test_pipe.sh`:
+    `echo hello | cat` produces `hello` on serial.
+  - [x] Verify: harness PASS (`pf=0 exit=1
+    hello_lines=1`); 10/10 sendkey.
+
+## Phase 4 — multi-process foundation
+
+- [x] **4a** — `writeCR3` helper.
+  - [x] 3-line `writeCR3` in `src/stubs.S`
+    (`movq %rdi, %cr3; ret`).
+  - [x] `src/cr3.go` (new): `//go:linkname writeCR3 writeCR3`
+    + `//go:nosplit func writeCR3(uintptr)`.
+  - [x] Verify: `make build` clean; 10/10 sendkey
+    (writeCR3 not yet called from anywhere — ISR-lint
+    sees no caller; future 4d wires it).
+
+- [x] **4b** — variant page-table helpers.
+  - [x] `mapPageInto(pml4, vaddr, paddr, flags)` in
+    `src/vm.go`.
+  - [x] `unmapPageFrom(pml4, vaddr)` (no `invlpg` —
+    caller's TLB doesn't have the entry; CR3 swap will
+    flush when the proc actually runs).
+  - [x] `walkAndGetPaddrIn(pml4, vaddr) uintptr`.
+  - [x] Existing CR3-reading helpers kept as-is to
+    minimize diff (kernel paths still use them).
+  - [x] Verify: `make build` clean; 10/10 sendkey
+    (helpers unused so far; lint sees them as unused).
+
+- [x] **4c** — `newProcPML4` / `freeProcPML4`.
+  - [x] `src/proc_pml4.go` (new). `newProcPML4` allocs a
+    fresh PML4 page and copies the boot PML4[0] entry
+    verbatim into it (shares the boot PDP — and
+    therefore the 0..1 GiB identity map — by reference).
+    `pml4SharedKernelPDP` cached on first use.
+  - [x] `freeProcPML4(pml4)` walks PML4[1..511] (skips
+    [0] which is shared) → freePDP → freePD → freePage.
+    User physical pages themselves are freed by
+    processExit's existing UserPaddrs walk; this only
+    releases the table machinery.
+  - [x] Verify: `make build` clean; 10/10 sendkey
+    (helpers unused — wired in 4e).
+
+- [x] **4d** — `gInfo.proc` cache + `gooosOnResume` CR3 swap.
+  - [x] Added `proc *Process` field to `gInfo`.
+  - [x] `registerRing3GWithStack(stackTop, proc)` 2-arg
+    signature; ring3Wrapper passes `proc`.
+  - [x] `gooosOnResume` calls `writeCR3(gi.proc.pml4)`
+    when `gi.proc != nil && gi.proc.pml4 != 0`. Still
+    one map lookup (`gInfoByTask[t]`); the rest is
+    pointer-load + asm — nosplit-safe.
+  - [x] First-resume `gi == nil` invariant documented in
+    the function's comment.
+  - [x] Added `Process.pml4 uintptr` field (zero until
+    4e populates it). `gooosOnResume` short-circuits CR3
+    swap when pml4 == 0, so this commit ships the hook
+    behavior with no functional change yet.
+  - [x] Verify: `make build` clean; 10/10 sendkey
+    (Process.pml4 is always 0 in this commit; pipe
+    harness PASS unchanged).
+
+- [x] **4e** — `elfSpawn` + `processWait` split.
+  - [x] Split `elfExec` into `elfSpawn(name, args, parent)
+    → (*Process, bool)` + `processWait(*Process) uintptr`.
+    `elfExec` becomes `spawn + wait` thin wrapper.
+  - [x] `Process.pml4` populated via `newProcPML4`.
+  - [x] `elfSpawn` populates user mappings via
+    `mapPageInto`; writes PT_LOAD bytes through paddr
+    (no kernel deref of child-only vaddr).
+  - [x] `ring3Wrapper` calls `writeCR3(proc.pml4)` after
+    `tssSetRSP0ForCurrentG`, before `jumpToRing3` (covers
+    the first scheduler dispatch where gooosOnResume
+    short-circuits because gInfoByTask isn't populated
+    yet).
+  - [x] `processExit` switches CR3 back to `bootPML4`
+    BEFORE calling `freeProcPML4(proc.pml4)` — otherwise
+    the kernel would be running on freed pages once the
+    PT/PD/PDP/PML4 pages went back to the allocator.
+  - [x] **Critical PML4 design fix**: original
+    `newProcPML4` shared the boot PDP itself via
+    `pml4SharedKernelPDP` (single physical page). That
+    caused per-process mappings under PDP[1+] to leak
+    into bootPML4 because both PML4s pointed at the same
+    PDP. Fix: each per-process PML4 gets its OWN PDP,
+    and only that per-process PDP's [0] entry copies
+    the boot PD pointer (verbatim PDP[0] entry — `pml4
+    SharedKernelPDP0`). Caught by the first PF-after-
+    exit on the regression run.
+  - [x] `procByPID` / `sys_spawn`/`sys_wait` deferred to
+    4g (this commit keeps the `procByTask` registry
+    only).
+  - [x] `savedParent` left in place but no longer
+    written/read; cleanup in 4f.
+  - [x] Verify: `make build` clean; 10/10 sendkey
+    (every shell command runs via the new
+    elfSpawn → processWait path on its own per-proc PML4);
+    test_redirect, test_pipe, test_fd_probe all PASS.
+
+- [x] **4f** — `savedParent` removal.
+  - [x] Dropped global `savedParent` and `SavedMapping`
+    type in `src/process.go`.
+  - [x] Save / restore code already absent from
+    `elfSpawn` (4e). `processExit`'s restore block was
+    already removed in 4e too.
+  - [x] Removed nested-exec rejection in
+    `sysExecHandler` (per-process PML4 makes nested
+    exec safe — no shared address space to collide).
+  - [x] Updated `src/process.go` header comment.
+  - [x] Verify: 10/10 sendkey.
+
+- [x] **4g** — `sys_spawn` + `sys_wait` wiring.
+  - [x] `sys_spawn` (15), `sys_wait` (16) constants +
+    handlers in `src/userspace.go`.
+  - [x] `Process.pid` field; `procByPID` map;
+    `nextPID`, `allocPID`. `elfSpawn` registers,
+    `processWait` reaps.
+  - [x] Userland `Spawn(name, args) (pid, errno)` +
+    `Wait(pid) exitCode` in `user/gooos/proc.go`.
+    `user/gooos/syscall.go` constants added.
+  - [x] `Exec` left in place (synchronous wrapper) for
+    back-compat — shell still uses `Exec`.
+  - [x] Verify: 10/10 sendkey (the existing
+    spawn+wait wrapper that `Exec` is now built on
+    still produces unchanged behavior).
+  - [x] Concurrency probe folded into Phase 5 —
+    multi-stage pipelines naturally exercise
+    concurrent Spawn / Wait through the shell.
+
+- [x] **4h** — foreground stdin model.
+  - [x] `foregroundProc *Process` package-scope in
+    `src/process.go`; `setForegroundProc` /
+    `getForegroundProc` accessors.
+  - [x] `consoleStdin.Read` returns `(0, fdErrEOF)` when
+    `currentProc() != getForegroundProc()`.
+  - [x] `processWait` transfers foreground to the child
+    on entry, restores prev (parent) on exit. Symmetric
+    save/restore so nested waits compose correctly.
+  - [x] `elfLoad` (boot shell launcher) sets the boot
+    shell as initial foreground.
+  - [x] Verify: 10/10 sendkey; tmp/test_redirect.sh,
+    tmp/test_pipe.sh, tmp/test_fd_probe.sh all PASS
+    (shell reads prompt, children inherit foreground
+    while running, pipe stages whose stdin is a pipe
+    end aren't blocked by the foreground check).
+
+- [x] **5** — concurrent pipe (`chan byte`).
+  - [x] Replaced `seqPipe*` in `src/pipe.go` with a
+    `chan byte` pipe (4 KiB cap). Reader parks on
+    receive, writer parks on send, TinyGo's scheduler
+    handles both via native chan parking.
+  - [x] **Refcounted Close** on both ends (`rdRefs` /
+    `wrRefs` on the shared `*pipe`; each `procAllocFD` /
+    `procDup2` / elfSpawn-fd-inheritance bumps via
+    `fdAddRef`, each `Close` decrements). Without
+    refcounts, shell's dup2 of its own pipe-end
+    reference would kill the chan for the just-spawned
+    child that legitimately inherited it.
+  - [x] Shell `executeConcurrentPipe` supports N-stage
+    pipelines via nested `sys_pipe` + `sys_spawn` +
+    close-the-end-you-don't-own discipline. Shell
+    closes its ORIGINAL pipe slots right after each
+    stage that owns them is spawned — children inherit
+    correctly, chans close when last child exits.
+  - [x] Harness `tmp/test_pipe.sh` extended to a
+    3-stage pipeline (`echo world | cat | cat`). Both
+    2-stage (`echo hello | cat`) and 3-stage paths
+    PASS.
+  - [x] Verify: harness PASS (`pf=0 exit=3
+    hello_lines=1 world_lines=1`); 10/10 sendkey;
+    test_redirect + test_fd_probe still PASS.
+
+## Phase C — reviewer pass
+
+- [x] Launch general-purpose reviewer subagent.
+  - [x] Verdict PASS — no CRITICAL or MAJOR.
+  - [x] Six MINOR items recorded in
+    `## Reviewer follow-ups (MINOR)` below with
+    rationale for leaving each as-is.
+  - [x] No second pass needed (MINORs are below the
+    3-design-issue threshold).
+
+## Phase D — Final reconciliation
+
+- [x] All items in this file are `- [x]`.
+- [x] `git log` shows one commit per implemented item
+  (17 commits in the push: bootstrap + 15 items + Phase C
+  reviewer + Phase D README).
+- [x] Repo-wide `Grep` for `TODO|FIXME|XXX|HACK` over
+  `src/`, `user/`, `scripts/`, `Makefile`: no new hits.
+- [x] Repo-wide `Grep` for `unimplemented|not implemented`:
+  no new hits.
+- [x] Final regression: 10/10 `bash tmp/test_sendkey.sh`
+  (`pf=0 exit=3 cat=1`), `tmp/test_fd_probe.sh` PASS,
+  `tmp/test_redirect.sh` PASS, `tmp/test_pipe.sh` PASS
+  (2-stage + 3-stage).
+- [x] `README.md` updated:
+  - [x] Progress table gains rows for fd table,
+    redirection, pipes, multi-process, and the
+    extended shell.
+  - [x] Syscall ABI line updated: 12 → 18 syscalls; new
+    ones listed.
+  - [x] `sys_read` (fd, buf, max) and `sys_write`
+    (fd, buf, len) 3-arg signatures documented.
+  - [x] Assembly stub line mentions `writeCR3`.
+  - [x] Known limitations: no job control, no signals,
+    no `2>` stderr split.
+  - [x] Shell demo extended with `echo > out.txt`,
+    `cat out.txt`, `echo ... | cat | cat`.
+- [x] Final report to user — see below / conversation.
+
+## Reviewer follow-ups (MINOR)
+
+Reviewer pass returned **PASS** — no CRITICAL or MAJOR
+findings. Six MINOR items recorded, all left as-is with
+documented rationale:
+
+1. `tmp/test_pipe.sh` contains exploratory commentary that
+   predates the final harness. **Left as-is**: cosmetic
+   only, actual logic below it is correct and PASSes.
+2. `processExit` sends `proc.exitCh <- exitCode` before
+   `writeCR3(bootPML4) + freeProcPML4`. **Left as-is**:
+   correct under single-CPU cooperative scheduling; an SMP
+   parent that wakes on another CPU would need a fence.
+   Documented in the multi-process design doc's §15 risk
+   delta (`R-cr3-swap-cost` and implicit SMP v2 assumption).
+3. `procCloseAll` runs after `exitCh` send; a parent
+   pipe-reader only observes EOF after the child's
+   `procCloseAll` drops the last `wrRefs`. **Left as-is**:
+   same single-CPU reasoning as item 2.
+4. `pipe.Read` fills `buf` fully before returning rather
+   than POSIX's "return as soon as any data arrives".
+   **Left as-is**: functionally OK because kernel
+   `sysReadHandler` dispatches via a 256-byte scratch and
+   Close-driven EOF wakes partial returns; no existing
+   test exercises a slow producer.
+5. `elfSpawn` calls `fdAddRef(parent.fds[i])` even for nil
+   slots. **Left as-is**: nil-safe because the type switch
+   in `fdAddRef` doesn't match a nil `FileDesc`
+   (`src/fd.go`).
+6. Pipeline built-in stages run inline in the shell
+   goroutine. **Left as-is**: works because the shell is
+   foreground at the head of the pipeline and the 4 KiB
+   chan buffer dwarfs typical built-in output (`echo` etc.).
+   Documented by implication in the shell source.
+
+## Further deferred
+
+(empty — populated if a feature must slip out of this
+task's scope; include reason + unlock condition)

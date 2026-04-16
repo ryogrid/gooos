@@ -13,7 +13,7 @@ TARGET   := target.json
 LDSCRIPT := linker_user.ld
 BUILD    := build
 
-CMDS := sh hello ls cat wc goprobe gochan
+CMDS := sh hello ls cat wc fdprobe goprobe gochan
 ELFS := $(patsubst %,$(BUILD)/%.elf,$(CMDS))
 
 .PHONY: all clean

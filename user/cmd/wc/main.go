@@ -4,14 +4,26 @@ import "github.com/ryogrid/gooos/user/gooos"
 
 func main() {
 	args := gooos.Args()
+	var data []byte
+	var label string
 	if args == "" {
-		gooos.Println("usage: wc <filename>")
-		gooos.Exit(1)
-	}
-	data := gooos.ReadFile(args)
-	if data == nil {
-		gooos.Println("wc: file not found: " + args)
-		gooos.Exit(1)
+		// No filename → read stdin until EOF (POSIX wc).
+		label = ""
+		var buf [256]byte
+		for {
+			n := gooos.Read(gooos.Stdin, buf[:])
+			if n <= 0 {
+				break
+			}
+			data = append(data, buf[:n]...)
+		}
+	} else {
+		label = args
+		data = gooos.ReadFile(args)
+		if data == nil {
+			gooos.Println("wc: file not found: " + args)
+			gooos.Exit(1)
+		}
 	}
 
 	lines, words := 0, 0
@@ -29,7 +41,11 @@ func main() {
 		}
 	}
 
-	gooos.Println(itoa(lines) + " " + itoa(words) + " " + itoa(bytes) + " " + args)
+	out := itoa(lines) + " " + itoa(words) + " " + itoa(bytes)
+	if label != "" {
+		out += " " + label
+	}
+	gooos.Println(out)
 }
 
 func itoa(n int) string {
