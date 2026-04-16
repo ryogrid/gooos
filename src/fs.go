@@ -9,7 +9,7 @@ package main
 // Maximum number of files and maximum data size per file.
 const (
 	maxFiles    = 32
-	maxFileData = 131072 // 128 KiB — one doubling ahead of the current peak (goprobe.elf at 89 KiB post-scheduler flip) per the size-audit policy in impldoc/userspace_verification.md §5. FS footprint: 32 × 128 KiB = 4 MiB of .bss (FileSystem lives in globals, not the kernel heap).
+	maxFileData = 262144 // 256 KiB — doubled from 128 KiB to absorb the ~10–16 KiB conservative-GC overhead (metadata bitmap + mark/sweep code + synthetic Elf64 header) on top of tinyc.elf's 126 KiB baseline. FS footprint: 32 × 256 KiB = 8 MiB of .bss (FileSystem lives in globals, not the kernel heap). See impldoc/userspace_conservative_gc_verification.md §3.
 )
 
 // FileEntry represents a single file in the filesystem.

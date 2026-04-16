@@ -60,11 +60,15 @@ One git commit per top-level item.
         inside their globals range; the other 8 ELFs DCE'd
         the queues entirely.
 
-- [ ] **5. `maxFileData` bump 131072 → 262144 (256 KiB)**
-  - [ ] `src/fs.go:12` change + comment update.
-  - [ ] Extend `scripts/embed_elfs.sh` with pre-flight size
-        check aborting if any ELF > 262144.
-  - [ ] Verify: `make build` clean; `verify-globals: OK`.
+- [x] **5. `maxFileData` bump 131072 → 262144 (256 KiB)**
+  - [x] `src/fs.go:12` change + comment update.
+  - [x] `scripts/embed_elfs.sh` pre-flight size check
+        (`MAX_ELF_SIZE = 262144`).
+  - [x] Verify: `make build` clean;
+        `verify-globals: OK (1 symbols inside [0x10b286, 0x9d9118))`
+        — globals range grew by ~4 MiB matching
+        32 × (256 − 128) KiB FS footprint growth.
+        `test_sendkey.sh 1` PASS.
 
 - [ ] **6. FLIP `user/target.json` gc=leaking → gc=conservative**
   - [ ] Single JSON edit.
