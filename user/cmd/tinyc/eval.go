@@ -122,22 +122,22 @@ func (ev *Evaluator) callFunc(name string, fn *FuncDef, args []*Node, callerEnv 
 	}
 	ev.callDepth++
 	local := newEnv(ev.globals)
-	// Bind parameters
+	// Bind parameters: detect array-name arguments FIRST so we
+	// don't try to evaluate them as scalars (arrays live in
+	// env.arrays, not env.vars — evalExpr(NdVar) would fail).
 	for i, pname := range fn.params {
-		if i < len(args) {
-			argVal := ev.evalExpr(args[i], callerEnv)
-			local.vars[pname] = argVal
+		if i >= len(args) {
+			continue
 		}
-	}
-	// Check if any argument is an array name: bind by reference
-	for i, pname := range fn.params {
-		if i < len(args) && args[i].Kind == NdVar {
+		if args[i].Kind == NdVar {
 			argName := args[i].Name
 			if arr, ok := callerEnv.lookupArray(argName); ok {
 				local.arrays[pname] = arr
-				delete(local.vars, pname)
+				continue
 			}
 		}
+		argVal := ev.evalExpr(args[i], callerEnv)
+		local.vars[pname] = argVal
 	}
 	oldReturned := ev.returned
 	oldRetVal := ev.retVal

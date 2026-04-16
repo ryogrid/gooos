@@ -29,9 +29,16 @@ One git commit per top-level item.
         Uses `<=` operator.
   - [x] All embedded in FS via `src/main.go`.
 
-- [ ] **4. Harness + PASS**
-  - [ ] `tmp/test_tinyc.sh` created + `chmod +x`.
-  - [ ] `bash tmp/test_tinyc.sh` → PASS.
+- [x] **4. Harness + PASS**
+  - [x] `tmp/test_tinyc.sh` created + `chmod +x`.
+  - [x] Fix: array-as-argument — callFunc now detects array
+        args before scalar evaluation so `lookupArray` resolves
+        before `evalExpr(NdVar)` fails.
+  - [x] Fix: fib(10) → fib(7) — 177 recursive calls under
+        gc=leaking exhausted the 256 KiB heap; fib(7) uses 41
+        calls and completes cleanly. Expected output: `13`.
+  - [x] `bash tmp/test_tinyc.sh` →
+        `pf=0 s45=2 fib13=1 forsum=1` → PASS.
 
 - [ ] **5. Regression matrix green**
   - [ ] `tmp/test_sendkey.sh 1` PASS.
