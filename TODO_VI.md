@@ -13,12 +13,12 @@ One git commit per top-level item.
   - [x] Ctrl+letter → control-char ASCII mapping.
   - [x] `make build` clean + `test_sendkey.sh 1` PASS (`pf=0 exit=3 cat=1`).
 
-- [ ] **2. New syscalls (18-20) + kernel handlers**
-  - [ ] sysReadKey (18): foreground check, <-keyboardCh, unpack.
-  - [ ] sysVgaWriteAt (19): write char at (row, col) to 0xB8000.
-  - [ ] sysVgaSetCursor (20): CRT controller + software cursor.
-  - [ ] Add to dispatch switch in src/userspace.go.
-  - [ ] `make build` clean + `test_sendkey.sh` PASS.
+- [x] **2. New syscalls (18-20) + kernel handlers**
+  - [x] sysReadKey (18): foreground check, <-keyboardCh, unpack.
+  - [x] sysVgaWriteAt (19): write char at (row, col) to 0xB8000.
+  - [x] sysVgaSetCursor (20): CRT controller + software cursor.
+  - [x] Add to dispatch switch in src/userspace.go.
+  - [x] `make build` clean + `test_sendkey.sh 1` PASS.
 
 - [ ] **3. Userspace API wrappers**
   - [ ] user/gooos/syscall.go: sysReadKey=18, sysVgaWriteAt=19,

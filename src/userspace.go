@@ -60,9 +60,12 @@ const (
 	sysOpen     = 12
 	sysClose    = 13
 	sysDup2     = 14
-	sysSpawn    = 15
-	sysWait     = 16
-	sysPipe     = 17
+	sysSpawn       = 15
+	sysWait        = 16
+	sysPipe        = 17
+	sysReadKey     = 18
+	sysVgaWriteAt  = 19
+	sysVgaSetCursor = 20
 )
 
 // jumpToRing3 transitions the CPU to Ring 3 user mode via iretq.
@@ -111,6 +114,12 @@ func syscallDispatch(frame *SyscallFrame) {
 		sysSpawnHandler(frame)
 	case sysWait:
 		sysWaitHandler(frame)
+	case sysReadKey:
+		sysReadKeyHandler(frame)
+	case sysVgaWriteAt:
+		sysVgaWriteAtHandler(frame)
+	case sysVgaSetCursor:
+		sysVgaSetCursorHandler(frame)
 	default:
 		frame.RAX = 0xFFFFFFFFFFFFFFFF // -1 for invalid syscall
 	}
@@ -441,6 +450,77 @@ func sysSbrkHandler(frame *SyscallFrame) {
 
 func sysVgaClearHandler(frame *SyscallFrame) {
 	vgaConsoleClear()
+	frame.RAX = 0
+}
+
+// --- Syscall 18: sys_read_key ---
+// RDI = buf_ptr (receives 4 bytes: scancode, ascii, mods, flags)
+//
+// Blocks until one keyboard event is available, then writes
+// the unpacked event to the caller's buffer. No echo — the
+// editor manages all screen output. Foreground process only.
+
+func sysReadKeyHandler(frame *SyscallFrame) {
+	proc := currentProc()
+	if proc == nil || proc != foregroundProc {
+		frame.RAX = 0xFFFFFFFFFFFFFFFF
+		return
+	}
+	event := <-keyboardCh
+	buf := frame.RDI
+	*(*uint8)(unsafe.Pointer(buf + 0)) = uint8(event & 0xFF)         // scancode
+	*(*uint8)(unsafe.Pointer(buf + 1)) = uint8((event >> 8) & 0xFF)  // ascii
+	*(*uint8)(unsafe.Pointer(buf + 2)) = uint8((event >> 16) & 0xFF) // mods
+	*(*uint8)(unsafe.Pointer(buf + 3)) = uint8((event >> 24) & 0xFF) // flags
+	frame.RAX = 0
+}
+
+// --- Syscall 19: sys_vga_write_at ---
+// RDI = row, RSI = col, RDX = char, R10 = attr
+//
+// Writes a single character with color attribute at (row, col)
+// in the VGA text buffer. Does NOT advance the software cursor.
+// attr=0 defaults to 0x0F (white on black).
+
+func sysVgaWriteAtHandler(frame *SyscallFrame) {
+	row := int(frame.RDI)
+	col := int(frame.RSI)
+	ch := byte(frame.RDX)
+	attr := uint16(frame.R10)
+	if row < 0 || row >= vgaHeight || col < 0 || col >= vgaWidth {
+		frame.RAX = 0xFFFFFFFFFFFFFFFF
+		return
+	}
+	if attr == 0 {
+		attr = 0x0F // default: white on black
+	}
+	vga := (*[vgaCells]uint16)(unsafe.Pointer(uintptr(0xB8000)))
+	offset := row*vgaWidth + col
+	vga[offset] = uint16(ch) | (attr << 8)
+	frame.RAX = 0
+}
+
+// --- Syscall 20: sys_vga_set_cursor ---
+// RDI = row, RSI = col
+//
+// Moves the hardware blinking cursor by programming the VGA CRT
+// controller (ports 0x3D4/0x3D5). Also updates the kernel's
+// software cursor position (vgaCursorRow/Col).
+
+func sysVgaSetCursorHandler(frame *SyscallFrame) {
+	row := int(frame.RDI)
+	col := int(frame.RSI)
+	if row < 0 || row >= vgaHeight || col < 0 || col >= vgaWidth {
+		frame.RAX = 0xFFFFFFFFFFFFFFFF
+		return
+	}
+	vgaCursorRow = row
+	vgaCursorCol = col
+	pos := uint16(row*vgaWidth + col)
+	outb(0x3D4, 0x0F)
+	outb(0x3D5, uint8(pos&0xFF))
+	outb(0x3D4, 0x0E)
+	outb(0x3D5, uint8((pos>>8)&0xFF))
 	frame.RAX = 0
 }
 
