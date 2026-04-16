@@ -26,9 +26,9 @@ One git commit per top-level item.
   - [x] user/gooos/io.go: ReadKey(), VgaWriteAt(), VgaSetCursor().
   - [x] `make build` clean.
 
-- [ ] **4. Fix ReadFile 64 KiB buffer**
-  - [ ] user/gooos/fs.go: 65536 → 131072.
-  - [ ] `make build` clean.
+- [x] **4. Fix ReadFile 64 KiB buffer**
+  - [x] user/gooos/fs.go: 65536 → 131072.
+  - [x] `make build` clean.
 
 - [ ] **5. Editor source files (5 files)**
   - [ ] user/cmd/edit/keybinds.go — EditorCmd enum.

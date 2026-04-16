@@ -7,12 +7,12 @@ import "unsafe"
 // The buffer is heap-allocated (not stack) because the user stack is only 8 KiB.
 func ReadFile(name string) []byte {
 	nameBytes := []byte(name)
-	buf := make([]byte, 65536) // max file size
+	buf := make([]byte, 131072) // match maxFileData (128 KiB)
 	n := syscall4(sysFsRead,
 		uintptr(unsafe.Pointer(&nameBytes[0])),
 		uintptr(len(name)),
 		uintptr(unsafe.Pointer(&buf[0])),
-		65536,
+		131072,
 	)
 	if n == 0xFFFFFFFFFFFFFFFF {
 		return nil
