@@ -94,6 +94,29 @@ func VgaClear() {
 	syscall0(sysVgaClear)
 }
 
+// ReadKey blocks until a single keystroke is available and
+// returns the raw key event components:
+//   scancode — PS/2 scancode set 1 (make code, 0x80 stripped)
+//   ascii    — translated ASCII (0 for non-printable)
+//   mods     — bit 0=Shift, bit 1=Ctrl, bit 2=Alt
+//   flags    — bit 0=extended key (0xE0 prefix, e.g. arrow keys)
+func ReadKey() (scancode, ascii, mods, flags uint8) {
+	var buf [8]byte
+	syscall1(sysReadKey, uintptr(unsafe.Pointer(&buf[0])))
+	return buf[0], buf[1], buf[2], buf[3]
+}
+
+// VgaWriteAt writes a single character at (row, col) with the
+// given color attribute. attr=0 uses the default (white on black).
+func VgaWriteAt(row, col int, ch byte, attr uint16) {
+	syscall4(sysVgaWriteAt, uintptr(row), uintptr(col), uintptr(ch), uintptr(attr))
+}
+
+// VgaSetCursor moves the hardware blinking cursor to (row, col).
+func VgaSetCursor(row, col int) {
+	syscall2(sysVgaSetCursor, uintptr(row), uintptr(col))
+}
+
 // Pipe returns [readFd, writeFd] on success. On failure both
 // values are -1 and the second return is the negative errno.
 func Pipe() (int, int, int) {

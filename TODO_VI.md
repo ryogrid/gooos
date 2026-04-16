@@ -20,11 +20,11 @@ One git commit per top-level item.
   - [x] Add to dispatch switch in src/userspace.go.
   - [x] `make build` clean + `test_sendkey.sh 1` PASS.
 
-- [ ] **3. Userspace API wrappers**
-  - [ ] user/gooos/syscall.go: sysReadKey=18, sysVgaWriteAt=19,
+- [x] **3. Userspace API wrappers**
+  - [x] user/gooos/syscall.go: sysReadKey=18, sysVgaWriteAt=19,
         sysVgaSetCursor=20.
-  - [ ] user/gooos/io.go: ReadKey(), VgaWriteAt(), VgaSetCursor().
-  - [ ] `make build` clean.
+  - [x] user/gooos/io.go: ReadKey(), VgaWriteAt(), VgaSetCursor().
+  - [x] `make build` clean.
 
 - [ ] **4. Fix ReadFile 64 KiB buffer**
   - [ ] user/gooos/fs.go: 65536 → 131072.
