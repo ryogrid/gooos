@@ -28,10 +28,11 @@ One git commit per top-level item.
         `readelf -l` shows RW PT_LOAD filesz=0x28 memsz=0x101000;
         `tmp/test_sendkey.sh 1` PASS (`pf=0 exit=3 cat=1`).
 
-- [ ] **2. `tinygo_scanCurrentStack` in `user/runtime_asm_amd64.S`**
-  - [ ] Port `src/stubs.S:248-269` (trampoline + weak dummy).
-  - [ ] Verify: `make build` clean; `nm user/build/hello.elf
-        | grep tinygo_scanCurrentStack` non-empty;
+- [x] **2. `tinygo_scanCurrentStack` in `user/runtime_asm_amd64.S`**
+  - [x] Port `src/stubs.S:248-269` (trampoline + weak dummy).
+  - [x] Verify: `make build` clean;
+        `tinygo_scanCurrentStack=0x401000F2 T` +
+        `tinygo_scanstack=0x4010010D W` in `hello.elf`;
         `test_sendkey.sh 1` PASS.
 
 - [ ] **3. `Process.HeapLimit` + `sysSbrkHandler` enforcement**
