@@ -1,0 +1,71 @@
+# TODO — vi-like Text Editor
+
+Design sources: `impldoc/editor_raw_input.md`, `impldoc/editor_overview.md`.
+One git commit per top-level item.
+
+## Items
+
+- [x] **1. Keyboard driver: Ctrl/Alt + extended keys**
+  - [x] Add ctrlHeld, altHeld, extendedPrefix to src/keyboard.go.
+  - [x] Track Ctrl/Alt make/break in handleKeyboard.
+  - [x] Consume 0xE0 prefix, set extended flag.
+  - [x] Pack mods (bits 16-18) + flags (bit 24) into event.
+  - [x] Ctrl+letter → control-char ASCII mapping.
+  - [x] `make build` clean + `test_sendkey.sh 1` PASS (`pf=0 exit=3 cat=1`).
+
+- [ ] **2. New syscalls (18-20) + kernel handlers**
+  - [ ] sysReadKey (18): foreground check, <-keyboardCh, unpack.
+  - [ ] sysVgaWriteAt (19): write char at (row, col) to 0xB8000.
+  - [ ] sysVgaSetCursor (20): CRT controller + software cursor.
+  - [ ] Add to dispatch switch in src/userspace.go.
+  - [ ] `make build` clean + `test_sendkey.sh` PASS.
+
+- [ ] **3. Userspace API wrappers**
+  - [ ] user/gooos/syscall.go: sysReadKey=18, sysVgaWriteAt=19,
+        sysVgaSetCursor=20.
+  - [ ] user/gooos/io.go: ReadKey(), VgaWriteAt(), VgaSetCursor().
+  - [ ] `make build` clean.
+
+- [ ] **4. Fix ReadFile 64 KiB buffer**
+  - [ ] user/gooos/fs.go: 65536 → 131072.
+  - [ ] `make build` clean.
+
+- [ ] **5. Editor source files (5 files)**
+  - [ ] user/cmd/edit/keybinds.go — EditorCmd enum.
+  - [ ] user/cmd/edit/buffer.go — Buffer + line manipulation.
+  - [ ] user/cmd/edit/screen.go — Viewport + rendering.
+  - [ ] user/cmd/edit/input.go — readCommand + vi-mode dispatch.
+  - [ ] user/cmd/edit/main.go — entry point + main loop.
+  - [ ] Standalone tinygo build compiles.
+
+- [ ] **6. Build integration**
+  - [ ] user/Makefile CMDS += edit.
+  - [ ] src/main.go preloads edit.elf.
+  - [ ] `make build` clean; edit.elf < 128 KiB.
+
+- [ ] **7. Test harness + PASS**
+  - [ ] tmp/test_edit.sh created + chmod +x.
+  - [ ] bash tmp/test_edit.sh → PASS.
+
+- [ ] **8. Regression matrix green**
+  - [ ] test_sendkey.sh PASS.
+  - [ ] test_goprobe.sh PASS.
+  - [ ] test_gochan.sh PASS.
+  - [ ] test_tinyc.sh PASS.
+
+- [ ] **9. README update**
+  - [ ] Progress table row.
+  - [ ] Usage section with vi-mode key reference.
+
+- [ ] **10. Reviewer pass + completeness**
+  - [ ] Reviewer subagent: no CRITICAL/MAJOR.
+  - [ ] grep TODO/FIXME/XXX — no new markers.
+  - [ ] Every checked item has a commit.
+
+## Deferred items
+
+(None yet.)
+
+## Reviewer MINOR notes
+
+(None yet.)

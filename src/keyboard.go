@@ -5,6 +5,12 @@
 // keyboardIRQSend. keyboardPump (a goroutine) drains the ring and
 // forwards into the native channel keyboardCh, consumed by
 // sysReadHandler in src/userspace.go.
+//
+// Event encoding (32-bit):
+//   bits  0– 7: scancode (make code, 0x80 stripped)
+//   bits  8–15: ASCII    (0 for non-printable / special keys)
+//   bits 16–18: modifiers (bit 0=Shift, bit 1=Ctrl, bit 2=Alt)
+//   bit     24: extended-key flag (0xE0-prefixed scancode)
 
 package main
 
@@ -58,12 +64,19 @@ const (
 	scEnter     = 0x1C
 	scLShift    = 0x2A
 	scRShift    = 0x36
+	scLCtrl     = 0x1D
+	scLAlt      = 0x38
 )
 
-// shiftHeld tracks left+right shift state via make/break events
-// from the IRQ. Read from handleKeyboard; written from the same
-// (single-CPU v1, no race).
+// Modifier state — tracked via make/break events from the IRQ.
+// Single-CPU v1, no race.
 var shiftHeld uint8
+var ctrlHeld uint8
+var altHeld uint8
+
+// extendedPrefix is set when a 0xE0 byte arrives; the NEXT
+// scancode is an extended key (arrow, Home, End, Delete, etc.).
+var extendedPrefix bool
 
 // keyboardInit is a no-op under Phase B — the ring buffer lives in
 // .bss and is zero-initialized; keyboardCh is constructed at
@@ -82,20 +95,42 @@ func handleKeyboard(vector uint64) {
 	scancode := inb(kbdDataPort)
 	picSendEOI(1)
 
-	// Track shift state on make + break.
-	switch scancode {
-	case scLShift, scRShift:
-		shiftHeld++
+	// Extended key prefix (0xE0): consume and set flag for the
+	// next scancode. Arrow keys, Home, End, Delete, right-Ctrl
+	// and right-Alt all send 0xE0 before the actual scancode.
+	if scancode == 0xE0 {
+		extendedPrefix = true
 		return
-	case scLShift | 0x80, scRShift | 0x80:
-		if shiftHeld > 0 {
+	}
+
+	// Track modifier state on make + break.
+	switch scancode & 0x7F { // strip break bit for matching
+	case scLShift, scRShift:
+		if scancode&0x80 == 0 {
+			shiftHeld++
+		} else if shiftHeld > 0 {
 			shiftHeld--
+		}
+		return
+	case scLCtrl:
+		if scancode&0x80 == 0 {
+			ctrlHeld++
+		} else if ctrlHeld > 0 {
+			ctrlHeld--
+		}
+		return
+	case scLAlt:
+		if scancode&0x80 == 0 {
+			altHeld++
+		} else if altHeld > 0 {
+			altHeld--
 		}
 		return
 	}
 
 	// Ignore other key release events (bit 7 set).
 	if scancode&0x80 != 0 {
+		extendedPrefix = false
 		return
 	}
 
@@ -109,7 +144,29 @@ func handleKeyboard(vector uint64) {
 		}
 	}
 
-	// event = (scancode & 0xFF) | ((ascii & 0xFF) << 8)
-	event := uint32(scancode) | (uint32(ascii) << 8)
+	// Ctrl + letter → control character (0x01–0x1A).
+	if ctrlHeld > 0 && ascii >= 'a' && ascii <= 'z' {
+		ascii = ascii - 'a' + 1
+	}
+
+	// Build modifier + extended-key flags.
+	mods := uint8(0)
+	if shiftHeld > 0 {
+		mods |= 1
+	}
+	if ctrlHeld > 0 {
+		mods |= 2
+	}
+	if altHeld > 0 {
+		mods |= 4
+	}
+	flags := uint8(0)
+	if extendedPrefix {
+		flags |= 1
+		extendedPrefix = false
+	}
+
+	// Pack: scancode[0:7] | ascii[8:15] | mods[16:23] | flags[24:31]
+	event := uint32(scancode) | uint32(ascii)<<8 | uint32(mods)<<16 | uint32(flags)<<24
 	keyboardIRQSend(event)
 }
