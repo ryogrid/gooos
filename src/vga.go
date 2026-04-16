@@ -79,9 +79,15 @@ func vgaConsolePrint(s string) {
 }
 
 // vgaConsoleClear fills the entire VGA text buffer with spaces and
-// resets the cursor to the top-left corner.
+// resets the cursor to the top-left corner. Also disables the VGA
+// hardware cursor — set-cursor is opt-in via sys_vga_set_cursor,
+// so TUI programs (like the editor) that enabled it leave the
+// screen clean for the shell on exit.
 func vgaConsoleClear() {
 	vgaClear()
 	vgaCursorRow = 0
 	vgaCursorCol = 0
+	// Disable hardware cursor: set bit 5 of CRTC register 0x0A.
+	outb(0x3D4, 0x0A)
+	outb(0x3D5, 0x20)
 }
