@@ -135,7 +135,7 @@ stateDiagram-v2
 
 ```mermaid
 flowchart TD
-    Prompt[Print "$ "] --> Read[gooos.ReadLine]
+    Prompt["Print '$ '"] --> Read[gooos.ReadLine]
     Read --> Parse[parse.go: tokenize + redirect + pipe split]
     Parse --> Pipeline{pipeline<br/>len ≥ 2?}
     Pipeline -->|yes| Pipes[build N-1 pipes<br/>spawn each stage<br/>with dup2'd fds]
@@ -166,12 +166,12 @@ sequenceDiagram
     participant FS as filesystem
     participant Child
 
-    Shell->>Shell: parse "cmd > out.txt"
-    Shell->>FS: sys_open("out.txt", OpenWrite) → fd3
-    Shell->>FD: sys_dup2(fd3, 1) — stdout now points to out.txt
-    Shell->>FD: sys_close(fd3) — only fd 1 holds the file
-    Shell->>Child: sys_exec("cmd")
-    Note over Child: child inherits fds; writes to stdout land in out.txt
+    Shell->>Shell: parse cmd redirection to out.txt
+    Shell->>FS: sys_open out.txt OpenWrite returns fd3
+    Shell->>FD: sys_dup2 fd3 to fd1 stdout now points to out.txt
+    Shell->>FD: sys_close fd3 only fd1 keeps the file
+    Shell->>Child: sys_exec cmd
+    Note over Child: child inherits fds, and writes to stdout land in out.txt
     Child->>Child: processExit
     Shell->>FS: post-child: restore stdout by dup2(saved, 1)
 ```
@@ -185,9 +185,9 @@ flowchart LR
     Loop --> P1[pipe1 r/w]
 
     subgraph Spawn
-        S0[stage 0:<br/>stdout → pipe0.w<br/>spawn]
-        S1[stage 1:<br/>stdin ← pipe0.r<br/>stdout → pipe1.w<br/>spawn]
-        S2[stage 2 (last):<br/>stdin ← pipe1.r<br/>stdout → terminal<br/>spawn]
+        S0["stage 0:<br/>stdout → pipe0.w<br/>spawn"]
+        S1["stage 1:<br/>stdin ← pipe0.r<br/>stdout → pipe1.w<br/>spawn"]
+        S2["stage 2 last:<br/>stdin ← pipe1.r<br/>stdout → terminal<br/>spawn"]
     end
     Shell --> S0
     Shell --> S1
@@ -243,14 +243,14 @@ stateDiagram-v2
     Normal --> Insert: i / a / o / O
     Insert: Insert mode<br/>printable → insertChar<br/>Enter → newline<br/>Backspace → deleteBack<br/>Esc → Normal
     Insert --> Normal: Escape
-    Normal --> Command: :
+    Normal --> Command: colon key
     Command: Command mode<br/>cmdBuf accumulates<br/>Enter → execute
-    Command --> Normal: Enter (no :q) / Esc
-    Command --> Save: :w / :wq
-    Command --> Quit: :q / :q! / :wq
+    Command --> Normal: Enter without quit command or Esc
+    Command --> Save: w or wq command
+    Command --> Quit: q q! or wq command
     Save: saveFile → Open(OpenWrite) + Write + Close
-    Save --> Normal: :w only
-    Save --> Quit: :wq
+    Save --> Normal: w only
+    Save --> Quit: wq
     Quit --> [*]: VgaClear on exit<br/>hardware cursor disabled
 ```
 

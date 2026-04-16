@@ -75,10 +75,10 @@ sequenceDiagram
     Main->>Main: checkTaskOffset, afterTicks self-test
     Main->>Main: smpInit (AP INIT-SIPI-SIPI)
     Main->>Main: GDT rebuild (Ring-3 segs + TSS)
-    Main->>Sched: go fsTask(); go keyboardPump()
+    Main->>Sched: start fsTask and keyboardPump goroutines
     Main->>Main: fsCreate/fsWrite for 10 user ELFs + fixtures
     Main->>Sched: go ring3Wrapper(shellProc)
-    Main->>Main: <-shell.exitCh (block forever)
+    Main->>Main: wait on shell exitCh forever
     Sched->>Shell: resume wrapper → iretq into Ring 3
 ```
 
