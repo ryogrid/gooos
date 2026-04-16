@@ -20,7 +20,7 @@ An experimental x86_64 operating system written in **Go (TinyGo) + GNU assembly*
 | Channel IPC + select | Done | **Native Go `chan` and `select`** in Ring 0. `fsReqCh`, `keyboardCh`, per-process `exitCh` are all `make(chan ...)` constructed by the TinyGo runtime |
 | Syscall ABI | Done | 18-syscall register-based dispatch (all numbered; see `impldoc/shell_io_fd_table.md §5.1` for the canonical table): `sys_exit`, `sys_write(fd,buf,len)`, `sys_read(fd,buf,max)`, `sys_exec`, `sys_fs_read/write/list`, `sys_yield`, `sys_sleep`, `sys_getargs`, `sys_sbrk`, `sys_vga_clear`, `sys_open`, `sys_close`, `sys_dup2`, `sys_spawn`, `sys_wait`, `sys_pipe` |
 | ELF64 loader | Done | Parse ELF64 headers, map PT_LOAD segments, per-process page tracking, parent page save/restore for exec |
-| BusyBox-style shell | Done | Interactive shell (`sh.elf`) with built-in commands (help, echo, clear, exit) and external ELF commands (ls, cat, wc, hello, fdprobe, goprobe, gochan, tinyc) compiled with TinyGo; supports `<`/`>`/`>>` redirection and N-stage `\|` pipes |
+| BusyBox-style shell | Done | Interactive shell (`sh.elf`) with built-in commands (help, echo, clear, exit) and external ELF commands (ls, cat, wc, hello, fdprobe, goprobe, gochan, tinyc, edit) compiled with TinyGo; supports `<`/`>`/`>>` redirection and N-stage `\|` pipes |
 | File descriptor table | Done | Per-process `Process.fds [16]` of `FileDesc`; `consoleStdin` / `consoleStdout` / `fileFd` / `pipeReader` / `pipeWriter` impls; inheritance on exec; refcounted close on pipe ends |
 | Shell redirection | Done | `cmd > file`, `cmd >> file`, `cmd < file` via shell-side `Open` + `Dup2` + `Close` dance; parser in `user/cmd/sh/parse.go` |
 | Concurrent pipes | Done | `cmd1 \| cmd2 \| ...` — N-stage pipelines; kernel `pipe` backed by a 4 KiB `chan byte`; writer-close → reader-EOF, reader-close → writer-EPIPE; stages run on their own per-process PML4s |
@@ -32,6 +32,9 @@ An experimental x86_64 operating system written in **Go (TinyGo) + GNU assembly*
 | Stack-overflow diagnostic | Done | Patched `task.Pause()` calls `gooosStackOverflow(t)` on canary mismatch — prints task pointer + stack-top + canary address before halting, no allocation |
 | Boot stack-size audit | Done | `stackSizeAudit()` (gated by `const runStackAudit`) reports per-goroutine high-water-mark usage on serial; off in release builds |
 | `time.After` replacement | Done | `afterTicks(d uint64) <-chan struct{}` in `src/afterticks.go` — local stand-in because the TinyGo `time` package needs SSE we keep disabled |
+| Raw keyboard input | Done | `sys_read_key` (syscall 18) delivers single keystrokes with modifier flags (Shift/Ctrl/Alt) and extended-key prefix (arrow keys, Home/End/Delete). Keyboard driver (`src/keyboard.go`) tracks Ctrl + Alt make/break and consumes 0xE0 prefix. Backward compatible with line-buffered `sys_read` |
+| VGA cell + cursor control | Done | `sys_vga_write_at` (19) writes a character with color attribute at (row, col); `sys_vga_set_cursor` (20) programs the hardware cursor via CRT controller. Enables full-screen editors and TUI programs |
+| Text editor (vi-like) | Done | `edit.elf` — modal text editor with Normal/Insert/Command modes. Navigate with h/j/k/l or arrow keys, insert text with `i`/`a`/`o`, save with `:w`, quit with `:q`. 5 Go source files under `user/cmd/edit/`. See `impldoc/editor_overview.md` |
 | Tiny C interpreter | Done | `tinyc.elf` — tree-walking interpreter for a C-subset language (int-only, 1D arrays, functions, if/else/while/for, println). Hand-written recursive-descent parser + AST evaluator, ~1000 lines of Go. Invoked from the shell as `$ tinyc program.tc`. See `impldoc/tinyc_interpreter.md` for the design |
 | Userspace goroutines & channels | Done | Ring-3 user binaries run on their own TinyGo `scheduler=tasks` runtime — native `go func()`, `chan`, `select`, and `time.Sleep` work inside a user process. Build-tag split (`kernelspace` on `src/target.json`) keeps the kernel and user runtime bodies disjoint; `user/gooos/runtime_hooks.go` supplies the Ring-3-safe `gooosOnResume` / `gooosStackOverflow`. `sys_sleep` routes through `afterTicks` on the kernel side so a sleeping user process no longer holds the CPU. Proven by `user/cmd/goprobe/main.go` (PASS/FAIL probe) + `tmp/test_goprobe.sh`, and demonstrated interactively by `user/cmd/gochan/main.go` — a shell-invokable 3-stage pipeline + `select` demo (`$ gochan`) with harness at `tmp/test_gochan.sh`. See `impldoc/userspace_goroutines_overview.md` for the design set |
 
@@ -95,6 +98,37 @@ s = 45
 - Design doc: `impldoc/tinyc_interpreter.md`.
 - Automated harness: `tmp/test_tinyc.sh` — runs all 4 fixtures,
   asserts expected output + `PF=0`.
+
+### Using the text editor
+
+`edit` is a vi-like modal editor. Open a file from the shell:
+
+```
+$ edit hello.txt
+```
+
+The editor takes over the full 80x25 VGA screen. Key bindings:
+
+| Mode | Keys | Action |
+|---|---|---|
+| Normal | `h`/`j`/`k`/`l` or arrows | Move cursor |
+| Normal | `i` | Enter Insert mode |
+| Normal | `a` | Enter Insert mode after cursor |
+| Normal | `o` / `O` | Open line below / above |
+| Normal | `x` | Delete character |
+| Normal | `dd` | Delete line |
+| Normal | `:` | Enter Command mode |
+| Insert | any printable | Insert character |
+| Insert | `Escape` | Return to Normal mode |
+| Command | `:w` | Save file |
+| Command | `:q` | Quit (refuses if unsaved; use `:q!` to force) |
+| Command | `:wq` | Save and quit |
+
+- Source: `user/cmd/edit/` (5 files: main, buffer, screen, input,
+  keybinds).
+- Design docs: `impldoc/editor_overview.md`,
+  `impldoc/editor_raw_input.md`.
+- Automated harness: `tmp/test_edit.sh`.
 
 ### Where assembly is used
 

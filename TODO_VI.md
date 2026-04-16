@@ -55,9 +55,10 @@ One git commit per top-level item.
   - [x] test_gochan.sh → PASS.
   - [x] test_tinyc.sh → PASS.
 
-- [ ] **9. README update**
-  - [ ] Progress table row.
-  - [ ] Usage section with vi-mode key reference.
+- [x] **9. README update**
+  - [x] Progress table rows (raw input, VGA control, editor).
+  - [x] Shell command list updated (+ edit).
+  - [x] Usage section with vi-mode key reference table.
 
 - [ ] **10. Reviewer pass + completeness**
   - [ ] Reviewer subagent: no CRITICAL/MAJOR.
