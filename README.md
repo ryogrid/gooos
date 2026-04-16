@@ -2,6 +2,8 @@
 
 An experimental x86_64 operating system written in **Go (TinyGo) + GNU assembly**. The kernel runs on **TinyGo's native goroutine runtime** (`scheduler=tasks`, `gc=conservative`) — service loops are plain `go func()` goroutines, IPC is Go's built-in `chan`, and Ring 3 processes are goroutines that `iretq` into userspace. Assembly is used only where the CPU demands it.
 
+![gooos mascot](gooos_mascot2.png)
+
 ## Progress
 
 | Milestone | Status | Description |
