@@ -9,9 +9,7 @@ package main
 // Maximum number of files and maximum data size per file.
 const (
 	maxFiles    = 32
-	maxFileData = 65536 // 64 KiB — fits the post-shell-IO sh.elf (~47 KiB)
-	// and leaves headroom for redirected file output. Total FS
-	// memory footprint = maxFiles * maxFileData = 2 MiB.
+	maxFileData = 131072 // 128 KiB — one doubling ahead of the current peak (goprobe.elf at 89 KiB post-scheduler flip) per the size-audit policy in impldoc/userspace_verification.md §5. FS footprint: 32 × 128 KiB = 4 MiB of .bss (FileSystem lives in globals, not the kernel heap).
 )
 
 // FileEntry represents a single file in the filesystem.

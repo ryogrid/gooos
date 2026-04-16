@@ -10,7 +10,6 @@ package main
 
 import (
 	"runtime"
-	"time"
 	"unsafe"
 )
 
@@ -370,11 +369,20 @@ func sysYieldHandler(frame *SyscallFrame) {
 
 // --- Syscall 8: sys_sleep ---
 // RDI = ticks (10 ms each at 100 Hz PIT)
+//
+// Uses afterTicks rather than time.Sleep: the kernel's patched
+// sleepTicks (runtime_gooos.go) is a busy sti/hlt/cli loop used
+// by the scheduler idle path, not a parking primitive — calling
+// it from a goroutine body via time.Sleep blocks the CPU without
+// yielding to cooperative consumers. Same rationale as in
+// src/afterticks.go. A user program sleeping here leaves every
+// other kernel goroutine (fsTask, keyboardPump, sibling
+// ring3Wrappers) free to run.
 
 func sysSleepHandler(frame *SyscallFrame) {
 	ticks := uint64(frame.RDI)
 	if ticks > 0 {
-		time.Sleep(time.Duration(ticks) * 10 * time.Millisecond)
+		<-afterTicks(ticks)
 	}
 	frame.RAX = 0
 }

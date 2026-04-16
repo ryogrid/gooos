@@ -392,6 +392,14 @@ func main() {
 	fsWrite("wc.elf", userElf_wc[:])
 	serialPrintln("  wc.elf: " + utoa(uint64(len(userElf_wc))) + " bytes")
 
+	fsCreate("goprobe.elf")
+	fsWrite("goprobe.elf", userElf_goprobe[:])
+	serialPrintln("  goprobe.elf: " + utoa(uint64(len(userElf_goprobe))) + " bytes")
+
+	fsCreate("gochan.elf")
+	fsWrite("gochan.elf", userElf_gochan[:])
+	serialPrintln("  gochan.elf: " + utoa(uint64(len(userElf_gochan))) + " bytes")
+
 	fsCreate("fdprobe.elf")
 	fsWrite("fdprobe.elf", userElf_fdprobe[:])
 	serialPrintln("  fdprobe.elf: " + utoa(uint64(len(userElf_fdprobe))) + " bytes")
