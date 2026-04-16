@@ -5,7 +5,7 @@
   "build-tags": ["gooos", "baremetal"],
   "goos": "linux",
   "goarch": "amd64",
-  "gc": "leaking",
+  "gc": "conservative",
   "scheduler": "tasks",
   "panic-strategy": "trap",
   "linker": "ld.lld",

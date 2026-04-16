@@ -60,6 +60,13 @@ SECTIONS
     /* Guard gap: matches kernel convention (src/linker.ld:71). */
     . += 4096;
 
+    /* _stack_top — top of the Ring-3 user stack the kernel sets up
+     * in elfSpawn / elfLoad (userStackBase + 2 * pageSize). The
+     * conservative GC's gc_stack_raw.go scans [sp, _stack_top) for
+     * the system stack. Mirrors the kernel's _stack_top at
+     * src/linker.ld:86. Must match the value in src/process.go. */
+    _stack_top = 0x7FFF2000;
+
     /DISCARD/ : {
         *(.eh_frame)
         *(.eh_frame_hdr)

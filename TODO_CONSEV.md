@@ -70,10 +70,21 @@ One git commit per top-level item.
         32 × (256 − 128) KiB FS footprint growth.
         `test_sendkey.sh 1` PASS.
 
-- [ ] **6. FLIP `user/target.json` gc=leaking → gc=conservative**
-  - [ ] Single JSON edit.
-  - [ ] Verify: `make build` clean; no undefined-symbol
+- [x] **6. FLIP `user/target.json` gc=leaking → gc=conservative**
+  - [x] JSON edit.
+  - [x] Required follow-up: add `_stack_top = 0x7FFF2000;` to
+        `user/linker_user.ld` — gc_stack_raw.go needs the
+        symbol to bound system-stack scanning. Mirrors
+        `src/linker.ld:86`.
+  - [x] Verify: `make build` clean; every user ELF linked
+        without `undefined: _stack_top` or `tinygo_scanstack`
         errors; `verify_globals_user.sh` green per ELF.
+  - [x] ELF sizes post-flip (all under 256 KiB cap):
+        hello 63 KiB · ls 66 · cat 66 · wc 74 · fdprobe 65 ·
+        sh 88 · edit 103 · goprobe 103 · gochan 113 ·
+        **tinyc 138.5 KiB** (peak, +15 KiB from gc=leaking).
+  - [x] `test_sendkey.sh 1 → pf=0 exit=3 cat=1` — shell boots
+        and works under `gc=conservative`.
 
 - [ ] **7. Regression matrix**
   - [ ] `tmp/test_sendkey.sh` × 10 all PASS.
