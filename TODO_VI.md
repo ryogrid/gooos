@@ -49,11 +49,11 @@ One git commit per top-level item.
         `cat file` output ends with `\n` and grep matches.
   - [x] `bash tmp/test_edit.sh` → `pf=0 hello=1` → PASS.
 
-- [ ] **8. Regression matrix green**
-  - [ ] test_sendkey.sh PASS.
-  - [ ] test_goprobe.sh PASS.
-  - [ ] test_gochan.sh PASS.
-  - [ ] test_tinyc.sh PASS.
+- [x] **8. Regression matrix green**
+  - [x] test_sendkey.sh → `pf=0 exit=3 cat=1`.
+  - [x] test_goprobe.sh → PASS.
+  - [x] test_gochan.sh → PASS.
+  - [x] test_tinyc.sh → PASS.
 
 - [ ] **9. README update**
   - [ ] Progress table row.
