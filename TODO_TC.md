@@ -14,10 +14,11 @@ One git commit per top-level item.
   - [x] `user/cmd/tinyc/main.go` — entry point + I/O
   - [x] Standalone `tinygo build` compiles without errors.
 
-- [ ] **2. Build integration**
-  - [ ] `user/Makefile` CMDS adds `tinyc`.
-  - [ ] `src/main.go` preloads `tinyc.elf`.
-  - [ ] `make build` clean; `tinyc.elf` < 128 KiB.
+- [x] **2. Build integration**
+  - [x] `user/Makefile` CMDS adds `tinyc`.
+  - [x] `src/main.go` preloads `tinyc.elf`.
+  - [x] `make build` clean; `tinyc.elf` = 128664 bytes
+        (125.6 KiB, 2.4 KiB headroom under 128 KiB cap).
 
 - [ ] **3. Test fixtures**
   - [ ] `sum.tc` — while-loop sum 0..9 (expected: `s = 45`).
