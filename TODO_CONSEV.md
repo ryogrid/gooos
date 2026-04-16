@@ -48,12 +48,17 @@ One git commit per top-level item.
   - [x] Verify: `make build` clean;
         `test_sendkey.sh 1 → pf=0 exit=3 cat=1`.
 
-- [ ] **4. `scripts/verify_globals_user.sh`**
-  - [ ] New script — generalization of `scripts/verify_globals.sh`
-        taking an ELF path arg.
-  - [ ] Tolerate missing runtime queues (user DCE).
-  - [ ] Wire into `user/Makefile` after each `ld.lld` step.
-  - [ ] Verify: runs green against every current user ELF.
+- [x] **4. `scripts/verify_globals_user.sh`**
+  - [x] New script — generalization of `scripts/verify_globals.sh`
+        taking an ELF path arg; `chmod +x`.
+  - [x] Tolerates missing runtime queues (DCE case: prints
+        "no runtime queues (OK, DCE)").
+  - [x] Wired into `user/Makefile` ELF link rule via
+        `bash ../scripts/verify_globals_user.sh $@`.
+  - [x] Verify: every user ELF either green or DCE-tolerated.
+        `goprobe.elf` + `gochan.elf` show 1 queue symbol each
+        inside their globals range; the other 8 ELFs DCE'd
+        the queues entirely.
 
 - [ ] **5. `maxFileData` bump 131072 → 262144 (256 KiB)**
   - [ ] `src/fs.go:12` change + comment update.

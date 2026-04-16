@@ -50,6 +50,7 @@ $(BUILD)/runtime_asm_amd64.o: runtime_asm_amd64.S | $(BUILD)
 $(BUILD)/%.elf: cmd/%/main.go gooos/*.go $(BUILD)/rt0.o $(BUILD)/task_stack_amd64.o $(BUILD)/runtime_asm_amd64.o $(LDSCRIPT) $(TARGET) | $(BUILD)
 	$(TINYGO) build -target=$(TARGET) -o $(BUILD)/$*_go.o ./cmd/$*
 	$(LD) -m elf_x86_64 -n -T $(LDSCRIPT) -o $@ $(BUILD)/rt0.o $(BUILD)/task_stack_amd64.o $(BUILD)/runtime_asm_amd64.o $(BUILD)/$*_go.o
+	bash ../scripts/verify_globals_user.sh $@
 
 clean:
 	rm -rf $(BUILD)
