@@ -159,5 +159,64 @@ memset:
     movq    %r8, %rax        /* return dest */
     ret
 
+/* ---------- Synthetic ELF header for findGlobals() ----------------------
+ *
+ * runtime/os_linux.go:findGlobals() parses the Elf64 header at
+ * __ehdr_start to locate writable PT_LOAD segments for conservative-GC
+ * root scanning. The kernel's elfSpawn/elfLoad copies PT_LOAD segments
+ * only — the real ELF header is NOT present in the user address space.
+ * We synthesize one in .rodata describing exactly the globals region
+ * (_globals_start..end). Mirrors src/stubs.S:341-375; user-defined
+ * __ehdr_start overrides ld.lld's auto-defined hidden symbol.
+ */
+
+    .section .rodata,"a",@progbits
+    .align 8
+    .global __ehdr_start
+__ehdr_start:
+    /* --- Elf64_Ehdr (64 bytes) --- */
+    .byte   0x7f, 0x45, 0x4c, 0x46   /* e_ident[0..3]: ELF magic */
+    .byte   2                         /* ELFCLASS64 */
+    .byte   1                         /* ELFDATA2LSB */
+    .byte   1                         /* EV_CURRENT */
+    .byte   0                         /* ELFOSABI_NONE */
+    .byte   0                         /* ABI version */
+    .zero   7                         /* e_ident[9..15]: padding */
+    .short  2                         /* e_type: ET_EXEC */
+    .short  0x3E                      /* e_machine: EM_X86_64 */
+    .long   1                         /* e_version: EV_CURRENT */
+    .quad   0                         /* e_entry (unused by findGlobals) */
+    .quad   64                        /* e_phoff: phdr right after ehdr */
+    .quad   0                         /* e_shoff (unused) */
+    .long   0                         /* e_flags */
+    .short  64                        /* e_ehsize */
+    .short  56                        /* e_phentsize */
+    .short  1                         /* e_phnum: 1 program header */
+    .short  0                         /* e_shentsize (unused) */
+    .short  0                         /* e_shnum (unused) */
+    .short  0                         /* e_shstrndx (unused) */
+
+    /* --- Elf64_Phdr (56 bytes) — writable globals region --- */
+    .long   1                         /* p_type: PT_LOAD */
+    .long   6                         /* p_flags: PF_R | PF_W */
+    .quad   0                         /* p_offset (unused) */
+    .quad   _globals_start            /* p_vaddr */
+    .quad   0                         /* p_paddr (unused) */
+    .quad   0                         /* p_filesz (unused by findGlobals) */
+    .quad   _globals_size             /* p_memsz */
+    .quad   0                         /* p_align (unused) */
+
+/* ---------- User heap (1 MiB, @nobits) ------------------------------------
+ *
+ * Collected by user/linker_user.ld's .heap output section, bracketed by
+ * _heap_start / _heap_end. @nobits so the ELF loader zero-fills the 1 MiB
+ * at load without bloating the on-disk ELF. Mirrors kernel .heap at
+ * src/stubs.S:381. baremetal.go:growHeap returns false — this is the
+ * per-process hard ceiling for TinyGo's conservative GC.
+ */
+
+    .section .heap,"aw",@nobits
+    .skip 0x100000
+
     /* Mark the stack as non-executable. */
     .section .note.GNU-stack,"",@progbits
