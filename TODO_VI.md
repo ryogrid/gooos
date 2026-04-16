@@ -43,9 +43,11 @@ One git commit per top-level item.
   - [x] src/main.go preloads edit.elf.
   - [x] `make build` clean; edit.elf = 91920 bytes (89.8 KiB).
 
-- [ ] **7. Test harness + PASS**
-  - [ ] tmp/test_edit.sh created + chmod +x.
-  - [ ] bash tmp/test_edit.sh → PASS.
+- [x] **7. Test harness + PASS**
+  - [x] tmp/test_edit.sh created + chmod +x (untracked).
+  - [x] Fix: add trailing newline on save (POSIX convention) so
+        `cat file` output ends with `\n` and grep matches.
+  - [x] `bash tmp/test_edit.sh` → `pf=0 hello=1` → PASS.
 
 - [ ] **8. Regression matrix green**
   - [ ] test_sendkey.sh PASS.

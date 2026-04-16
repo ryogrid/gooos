@@ -49,6 +49,9 @@ func saveFile(name string, buf *Buffer) (int, bool) {
 			total++
 		}
 	}
+	// Always end with a trailing newline (POSIX convention).
+	gooos.Write(fd, []byte{'\n'})
+	total++
 	gooos.Close(fd)
 	buf.modified = false
 	return total, true
