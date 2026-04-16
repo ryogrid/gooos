@@ -5,7 +5,12 @@
 # This mirrors the kernel's build approach (TinyGo resolves paths relative
 # to its install directory, not the project root).
 
-TINYGO   ?= tinygo
+# Must match the patched TinyGo tree used by the kernel Makefile.
+# The patched runtime_gooos_user.go / interrupt_gooos_user.go live
+# under TINYGOROOT; the system tinygo at /usr/local would use its
+# own (unpatched) source tree and silently produce broken ELFs.
+TINYGOROOT ?= $(HOME)/.local/tinygo
+TINYGO   ?= $(TINYGOROOT)/bin/tinygo
 AS       ?= as
 LD       := ld.lld
 
