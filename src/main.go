@@ -408,6 +408,10 @@ func main() {
 	fsWrite("tinyc.elf", userElf_tinyc[:])
 	serialPrintln("  tinyc.elf: " + utoa(uint64(len(userElf_tinyc))) + " bytes")
 
+	fsCreate("edit.elf")
+	fsWrite("edit.elf", userElf_edit[:])
+	serialPrintln("  edit.elf: " + utoa(uint64(len(userElf_edit))) + " bytes")
+
 	// Store a test file for cat/wc demos.
 	fsCreate("hello.txt")
 	fsWrite("hello.txt", []byte("Hello from the gooos filesystem!\nThis is a test file.\n"))

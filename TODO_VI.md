@@ -38,10 +38,10 @@ One git commit per top-level item.
   - [x] user/cmd/edit/main.go — entry point + main loop + execute.
   - [x] Standalone tinygo build compiles cleanly.
 
-- [ ] **6. Build integration**
-  - [ ] user/Makefile CMDS += edit.
-  - [ ] src/main.go preloads edit.elf.
-  - [ ] `make build` clean; edit.elf < 128 KiB.
+- [x] **6. Build integration**
+  - [x] user/Makefile CMDS += edit.
+  - [x] src/main.go preloads edit.elf.
+  - [x] `make build` clean; edit.elf = 91920 bytes (89.8 KiB).
 
 - [ ] **7. Test harness + PASS**
   - [ ] tmp/test_edit.sh created + chmod +x.
