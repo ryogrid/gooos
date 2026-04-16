@@ -45,9 +45,10 @@ One git commit per top-level item.
   - [x] `tmp/test_goprobe.sh` → PASS.
   - [x] `tmp/test_gochan.sh` → PASS.
 
-- [ ] **6. README update**
-  - [ ] Progress table row for Tiny C interpreter.
-  - [ ] Usage section with shell invocation + sample output.
+- [x] **6. README update**
+  - [x] Progress table row for Tiny C interpreter.
+  - [x] Shell command list updated (+ tinyc).
+  - [x] Usage section with invocation examples + sample output.
 
 - [ ] **7. Reviewer pass + completeness**
   - [ ] Reviewer subagent: no CRITICAL/MAJOR.
