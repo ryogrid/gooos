@@ -20,12 +20,14 @@ One git commit per top-level item.
   - [x] `make build` clean; `tinyc.elf` = 128664 bytes
         (125.6 KiB, 2.4 KiB headroom under 128 KiB cap).
 
-- [ ] **3. Test fixtures**
-  - [ ] `sum.tc` — while-loop sum 0..9 (expected: `s = 45`).
-  - [ ] `fib.tc` — recursive fibonacci(10) (expected: `55`).
-  - [ ] `array.tc` — array + function call (expected: `s = 45`).
-  - [ ] `for.tc` — for-loop exercise.
-  - [ ] All embedded in FS via `src/main.go`.
+- [x] **3. Test fixtures**
+  - [x] `sum.tc` — while-loop sum 0..9 (expected: `s = 45`).
+  - [x] `fib.tc` — recursive fibonacci(10) (expected: `55`).
+        Uses `<=` operator (v1 extension).
+  - [x] `array.tc` — array + function call (expected: `s = 45`).
+  - [x] `for.tc` — for-loop sum 1..10 (expected: `sum = 55`).
+        Uses `<=` operator.
+  - [x] All embedded in FS via `src/main.go`.
 
 - [ ] **4. Harness + PASS**
   - [ ] `tmp/test_tinyc.sh` created + `chmod +x`.
