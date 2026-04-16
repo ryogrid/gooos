@@ -35,16 +35,18 @@ One git commit per top-level item.
         `tinygo_scanstack=0x4010010D W` in `hello.elf`;
         `test_sendkey.sh 1` PASS.
 
-- [ ] **3. `Process.HeapLimit` + `sysSbrkHandler` enforcement**
-  - [ ] Add `HeapLimit uintptr` to `Process` struct
-        (`src/process.go`).
-  - [ ] `userHeapLimit = 2*1024*1024` constant.
-  - [ ] Init `HeapLimit = HeapBreak + userHeapLimit` at both
-        `src/elf.go:228` (elfLoad) and
-        `src/process.go:288` (elfSpawn).
-  - [ ] `src/userspace.go:420-447`: check
-        `newBreak > proc.HeapLimit` → return -1.
-  - [ ] Verify: `make build` clean; `test_sendkey.sh 1` PASS.
+- [x] **3. `Process.HeapLimit` + `sysSbrkHandler` enforcement**
+  - [x] Added `HeapLimit uintptr` to `Process` struct
+        (`src/process.go:33`).
+  - [x] `userHeapLimit = 2*1024*1024` constant
+        (`src/process.go:22`).
+  - [x] Init `HeapLimit = HeapBreak + userHeapLimit` at both
+        `src/elf.go:229` (elfLoad) and
+        `src/process.go:289` (elfSpawn).
+  - [x] `src/userspace.go:433-439`: refuse sbrk past the
+        ceiling with -1 return.
+  - [x] Verify: `make build` clean;
+        `test_sendkey.sh 1 → pf=0 exit=3 cat=1`.
 
 - [ ] **4. `scripts/verify_globals_user.sh`**
   - [ ] New script — generalization of `scripts/verify_globals.sh`

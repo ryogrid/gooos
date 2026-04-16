@@ -222,10 +222,13 @@ func elfLoad(name string) bool {
 	}
 	stackTop := userStackBase + 2*pageSize
 
-	// Set heap break to end of last PT_LOAD (page-aligned up).
+	// Set heap break to end of last PT_LOAD (page-aligned up) and
+	// install the per-process heap ceiling. See userHeapLimit in
+	// src/process.go.
 	if len(phdrs) > 0 {
 		lastPh := &phdrs[len(phdrs)-1]
 		proc.HeapBreak = (lastPh.Vaddr + uintptr(lastPh.Memsz) + pageSize - 1) &^ (pageSize - 1)
+		proc.HeapLimit = proc.HeapBreak + userHeapLimit
 	}
 
 	proc.EntryPoint = entry

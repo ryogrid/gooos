@@ -19,6 +19,13 @@ import "unsafe"
 // request (up to 256 pages for a 1 MiB initial heap).
 const maxUserPages = 512
 
+// userHeapLimit is the per-process heap ceiling enforced by
+// sysSbrkHandler. 2 MiB = 1 MiB for the fixed .heap reservation
+// in user/linker_user.ld plus 1 MiB of sbrk slack. Prevents a
+// runaway user program from exhausting kernel physical memory
+// via sys_sbrk in a loop. See impldoc/userspace_conservative_gc_runtime.md §4.
+const userHeapLimit = 2 * 1024 * 1024
+
 // Process is a Ring-3 process descriptor. Under Phase B it is no
 // longer indexed by TaskID; instead procByTask maps a goroutine's
 // task.Task pointer to its *Process.
@@ -30,6 +37,7 @@ type Process struct {
 	UserPaddrs  [maxUserPages]uintptr
 	UserPageCnt int
 	HeapBreak   uintptr
+	HeapLimit   uintptr // sys_sbrk ceiling; HeapBreak + userHeapLimit on init
 	EntryPoint  uintptr
 	StackTop    uintptr
 
@@ -286,6 +294,7 @@ func elfSpawn(filename, args string, parent *Process) (*Process, bool) {
 	if len(phdrs) > 0 {
 		lastPh := &phdrs[len(phdrs)-1]
 		child.HeapBreak = (lastPh.Vaddr + uintptr(lastPh.Memsz) + pageSize - 1) &^ (pageSize - 1)
+		child.HeapLimit = child.HeapBreak + userHeapLimit
 	}
 
 	serialPrintln("elfSpawn: loaded " + filename)

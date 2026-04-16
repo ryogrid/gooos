@@ -429,6 +429,14 @@ func sysSbrkHandler(frame *SyscallFrame) {
 	oldBreak := proc.HeapBreak
 	newBreak := oldBreak + increment
 
+	// Refuse growth past the per-process heap ceiling. Under
+	// gc=conservative a runaway allocation loop must OOM-panic
+	// rather than exhaust kernel physical memory via allocPage.
+	if newBreak > proc.HeapLimit {
+		frame.RAX = 0xFFFFFFFFFFFFFFFF
+		return
+	}
+
 	// Allocate and map pages for the new region.
 	userFlags := uintptr(pagePresent | pageWrite | pageUser)
 	pageStart := oldBreak &^ (pageSize - 1)
