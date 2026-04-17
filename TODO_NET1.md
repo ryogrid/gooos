@@ -19,7 +19,7 @@ lands and the listed verification passes.
       TX buffers (16 pages), MAC read from RAL0/RAH0, link-up poll,
       `e1000Transmit`, `e1000TryReceive`. Descriptors are raw `[16]byte`
       with manual field accessors. Verify: `make build` clean.
-- [ ] `feat(net): e1000 IRQ handler` — `src/e1000_irq.go`. `//go:nosplit`
+- [x] `feat(net): e1000 IRQ handler` — `src/e1000_irq.go`. `//go:nosplit`
       `handleE1000IRQ` (ICR read-to-clear, signal `rxSignalCh` via
       non-blocking select, EOI via `picSendEOI` or `lapicSendEOI`).
       Verify: `make build` clean.
