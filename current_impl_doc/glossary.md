@@ -19,7 +19,7 @@ MADT) during early boot to enumerate LAPIC IDs and IOAPIC addresses, which is
 essential for SMP bring-up.
 
 ### AP – Application Processor
-Any CPU core other than the BSP.  During SMP initialisation each AP receives an
+Any CPU core other than the BSP.  During SMP initialization each AP receives an
 INIT–SIPI–SIPI sequence from the BSP and enters a halt loop until work is
 available.
 
@@ -57,7 +57,7 @@ The primary CPU that executes all early boot code—loading the GDT, IDT, page
 tables, and ACPI discovery—before waking the APs.
 
 ### BSS – Block Started by Symbol
-The ELF section that holds zero-initialised (uninitialized) global data.  gooos
+The ELF section that holds zero-initialized (uninitialized) global data.  gooos
 linker scripts ensure BSS is placed after DATA and zeroed at startup.
 
 ---
@@ -237,7 +237,7 @@ acceleration for development and testing.
 ### LAPIC – Local Advanced Programmable Interrupt Controller
 The per-CPU interrupt controller that handles IPIs, the LAPIC timer, and
 delivery of IOAPIC-routed IRQs.  gooos programs the LAPIC during SMP
-initialisation.
+initialization.
 
 ### LD – Linker
 The linker tool (`ld.lld` / GNU `ld`) that combines object files and a linker
@@ -290,7 +290,7 @@ NMI in its IDT setup.
 
 ### NXE – No-eXecute Enable
 Bit 11 of the EFER MSR.  When set, page-table entries can mark pages as
-non-executable, providing a basic defence against code-injection attacks.
+non-executable, providing a basic defense against code-injection attacks.
 
 ---
 
@@ -317,7 +317,7 @@ The third-level page-table structure sitting between PML4 and PD in x86-64
 paging.
 
 ### PIC – Programmable Interrupt Controller
-The legacy Intel 8259 interrupt controller.  gooos initialises (and masks) the
+The legacy Intel 8259 interrupt controller.  gooos initializes (and masks) the
 PIC before switching to the APIC for interrupt delivery.
 
 ### PID – Process ID
@@ -451,7 +451,7 @@ as a user-space application.
 ## U
 
 ### UART – Universal Asynchronous Receiver/Transmitter
-A serial-port controller.  gooos initialises a UART for early debug output and
+A serial-port controller.  gooos initializes a UART for early debug output and
 serial console access.
 
 ### USB – Universal Serial Bus
