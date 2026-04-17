@@ -35,14 +35,12 @@ listed verification passes.
       `GetGateway`/`SetGateway`/`GetMAC`/`ApplyNetConfig`/`GetDNS`/
       `SetDNS` + `IPv4`/`FormatIP`/`FormatMAC` helpers. Verify:
       `make -C user` clean.
-- [ ] `test(net): user/cmd/udpecho — userspace UDP echo server` — proves
-      the socket API end-to-end: binds port 7, loops
-      `UDPRecvFrom`+`UDPSendTo`. Embed in kernel; verify host
-      `nc -u -w2 127.0.0.1 9999` round-trips through the *userspace*
-      echo (distinct from the kernel-builtin echo still on port 7 —
-      resolve the bind conflict by moving the kernel echo off port 7
-      once userspace can serve it, OR bind udpecho on a different port
-      like 17 and hostfwd appropriately).
+- [x] `test(net): user/cmd/udpecho — userspace UDP echo server` —
+      proves the socket API end-to-end. Binds port 17 (keeping the
+      kernel-builtin echo on port 7 intact for the existing Phase-1–4
+      `test-net` harness); `run-net` adds a second hostfwd
+      `udp::19999-:17`. Loops `UDPRecvFrom` → `UDPSendTo`. Embedded in
+      kernel via `user_binaries.go`.
 
 ## Part B — DHCP Client (depends on Part A)
 

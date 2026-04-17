@@ -125,13 +125,14 @@ run-smp: $(KERNEL_ISO) check-multiboot
 	$(QEMU) -cdrom $(KERNEL_ISO) -serial stdio -no-reboot -no-shutdown -smp 4
 
 # run-net attaches an emulated Intel 82540EM (e1000) NIC using QEMU's
-# user-mode networking (slirp). UDP hostfwd maps host 9999/udp -> guest 7
-# so `nc -u 127.0.0.1 9999` exercises the kernel UDP echo server without
-# needing TAP / root. Guest default IP is 10.0.2.15, gateway 10.0.2.2.
+# user-mode networking (slirp). UDP hostfwd maps:
+#   host 9999/udp -> guest 7  — kernel-builtin UDP echo server
+#   host 19999/udp -> guest 17 — userspace udpecho.elf (Phase 5 SDK smoke)
+# Guest default IP is 10.0.2.15, gateway 10.0.2.2.
 run-net: $(KERNEL_ISO) check-multiboot
 	$(QEMU) -cdrom $(KERNEL_ISO) -serial stdio -no-reboot -no-shutdown \
 	  -device e1000,netdev=n0 \
-	  -netdev user,id=n0,hostfwd=udp::9999-:7
+	  -netdev user,id=n0,hostfwd=udp::9999-:7,hostfwd=udp::19999-:17
 
 # test-net boots the kernel with an e1000 NIC under user-mode networking,
 # greps serial markers (PCI/MAC/link/NET init/ARP gratuitous/ICMP+netbuf
