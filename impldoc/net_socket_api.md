@@ -243,6 +243,12 @@ func sysSendtoHandler(frame *SyscallFrame) {
     dstIP := uint32(frame.R10)
     dstPort := uint16(frame.R8)
 
+    // Validate user pointer is within user address range.
+    if bufPtr < 0x40000000 {
+        frame.RAX = sysFail(fdErrBad)
+        return
+    }
+
     if bufLen > 1472 { // max UDP payload without fragmentation
         frame.RAX = sysFail(fdErrBad)
         return
@@ -292,7 +298,16 @@ func sysRecvfromHandler(frame *SyscallFrame) {
         return
     }
 
-    // Block until a datagram arrives
+    // Validate user buffer pointer.
+    bufPtr := frame.RSI
+    if bufPtr < 0x40000000 {
+        frame.RAX = sysFail(fdErrBad)
+        return
+    }
+
+    // Block until a datagram arrives.
+    // **v1 note**: blocks indefinitely. A timeout mechanism
+    // (via afterTicks or a deadline argument) is deferred to v2.
     dg := <-sock.recvCh
 
     // Copy payload to user buffer
