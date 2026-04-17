@@ -99,11 +99,12 @@ lands and the listed verification passes.
       UDP echo traffic; packet counts rise without busy-looping.
       **Verified**: UDP echo round-trip (`echo -n irq-test-123 | nc -u -w2
       127.0.0.1 9999`) succeeds with the rxSignalCh-driven loop.
-- [ ] `feat(net): netDiag + boot-time auto-dump` — `netDiag()` in
+- [x] `feat(net): netDiag + boot-time auto-dump` — `netDiag()` in
       `net.go` prints link / MAC / IP / ARP cache / all counters; goroutine
       in main.go calls `<-afterTicks(500); netDiag()` after `netInit`.
       Verify: serial log contains `=== Network Diagnostics ===` block
-      ~5 s after boot.
+      ~5 s after boot. **Verified**: block shows Link: UP, MAC, IP, GW,
+      ARP cache entries, and all 18 counters.
 
 ## Cross-cutting
 

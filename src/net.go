@@ -111,11 +111,60 @@ func nextHopIP(dst uint32) uint32 {
 	return ourGateway
 }
 
-// netDiag prints a short identity block to serial. Phase 4 fills this
-// out with the ARP cache and statistics counters.
+// netDiag prints the full network stack state to serial: link /
+// MAC / IP / gateway, the live ARP cache, and every counter in
+// netStats. Invoked once automatically ~5 s after netInit by a
+// goroutine spawned from main.go.
 func netDiag() {
 	serialPrintln("=== Network Diagnostics ===")
+
+	if e1000Found {
+		status := e1000Read(e1000STATUS)
+		if status&e1000StatusLU != 0 {
+			serialPrintln("Link: UP")
+		} else {
+			serialPrintln("Link: DOWN")
+		}
+	} else {
+		serialPrintln("Link: (no NIC)")
+	}
 	serialPrintln("MAC: " + macToString(e1000MAC))
 	serialPrintln("IP:  " + ipToString(ourIP))
 	serialPrintln("GW:  " + ipToString(ourGateway))
+
+	serialPrintln("ARP cache:")
+	flags := arpLock.Acquire()
+	any := false
+	for i := 0; i < arpCacheSize; i++ {
+		if arpCache[i].Used {
+			line := "  " + ipToString(arpCache[i].IP) + " -> " +
+				macToString(arpCache[i].MAC)
+			arpLock.Release(flags)
+			serialPrintln(line)
+			flags = arpLock.Acquire()
+			any = true
+		}
+	}
+	arpLock.Release(flags)
+	if !any {
+		serialPrintln("  (empty)")
+	}
+
+	s := netStatsSnapshot()
+	serialPrintln("TX: " + utoa(s.TxPackets) + " pkts, " + utoa(s.TxBytes) + " bytes")
+	serialPrintln("RX: " + utoa(s.RxPackets) + " pkts, " + utoa(s.RxBytes) + " bytes")
+	serialPrintln("RxDropped: " + utoa(s.RxDropped) +
+		"  RxUnknownEtherType: " + utoa(s.RxUnknownEtherType))
+	serialPrintln("ARP: hits=" + utoa(s.ArpHits) +
+		" misses=" + utoa(s.ArpMisses) +
+		" req=" + utoa(s.ArpRequestsSent) +
+		" rep=" + utoa(s.ArpRepliesSent))
+	serialPrintln("IPv4: ChecksumErr=" + utoa(s.ChecksumErr) +
+		" FragmentsDropped=" + utoa(s.FragmentsDropped))
+	serialPrintln("ICMP echo: " + utoa(s.IcmpEcho))
+	serialPrintln("UDP: recv=" + utoa(s.UdpRecv) +
+		" send=" + utoa(s.UdpSend) +
+		" portUnreach=" + utoa(s.UdpPortUnreach))
+	serialPrintln("Buf alloc fails: " + utoa(s.BufAllocFail))
+	serialPrintln("=== end ===")
 }

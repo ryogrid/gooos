@@ -385,6 +385,13 @@ func main() {
 		netInit()
 		testNetBuf()
 		testICMPEchoReply()
+		// Dump a complete diagnostic snapshot ~5 s after boot so
+		// automated test scripts have a grep target and operators
+		// can eyeball link / counters without a shell command.
+		go func() {
+			<-afterTicks(500)
+			netDiag()
+		}()
 	}
 
 	// Register IPI handlers before IOAPIC (which enables interrupt
