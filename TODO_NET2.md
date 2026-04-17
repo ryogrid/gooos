@@ -16,7 +16,7 @@ listed verification passes.
       `socketFd` can own its receive queue) and `udpSendRaw` that builds
       a frame with explicit src/dst IPs and a fixed destination MAC,
       bypassing ARP. Verify: `make build` clean.
-- [ ] `feat(net): ourDNS global + netDiag row` — `src/net.go` adds the
+- [x] `feat(net): ourDNS global + netDiag row` — `src/net.go` adds the
       DNS-server global alongside `ourIP`/`ourNetmask`/`ourGateway` and
       prints it in `netDiag`. Verify: `make run-net` shows `DNS:
       0.0.0.0` before any configuration.

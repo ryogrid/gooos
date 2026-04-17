@@ -12,10 +12,15 @@ package main
 
 // Static IP configuration — matches the QEMU user-mode slirp defaults
 // (guest = 10.0.2.15, gateway / DNS / TFTP server = 10.0.2.2).
+//
+// ourDNS is updated by the userspace DHCP client via sys_net_config;
+// at boot it is zero until the client runs. No in-kernel DNS resolver
+// uses it yet — it is exposed for userspace programs.
 var (
 	ourIP      uint32
 	ourNetmask uint32
 	ourGateway uint32
+	ourDNS     uint32
 )
 
 // netInit configures the static address block, sends a gratuitous ARP
@@ -134,6 +139,7 @@ func netDiag() {
 	serialPrintln("MAC: " + macToString(e1000MAC))
 	serialPrintln("IP:  " + ipToString(ourIP))
 	serialPrintln("GW:  " + ipToString(ourGateway))
+	serialPrintln("DNS: " + ipToString(ourDNS))
 
 	serialPrintln("ARP cache:")
 	flags := arpLock.Acquire()
