@@ -189,6 +189,9 @@ func smpInit() {
 //
 //export apEntry
 func apEntry(apIndex uint64) {
+	// Initialize per-CPU storage for this AP before any per-CPU access.
+	percpuInitAP(apIndex)
+
 	serialPutChar('A')
 	serialPutChar('P')
 	serialPutChar(' ')

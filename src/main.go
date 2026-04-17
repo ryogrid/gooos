@@ -346,7 +346,12 @@ func main() {
 	}()
 
 	// Boot Application Processors via INIT-SIPI-SIPI.
+	// smpInit maps the LAPIC MMIO page, so per-CPU init must follow.
 	smpInit()
+
+	// Initialize per-CPU storage for the BSP. Must be after smpInit
+	// (which maps the LAPIC page) so lapicRead works.
+	percpuInitBSP()
 
 	// Set up new GDT with Ring 3 code/data segments and TSS.
 	gdtInit()

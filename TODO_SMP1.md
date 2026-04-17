@@ -15,14 +15,18 @@ One git commit per top-level item.
 
 ### Phase 0 — Foundation
 
-- [ ] **1. Per-CPU storage (GS base)**
-  - `src/stubs.S`: add `wrmsr`, `rdmsr`, `cpuID` asm stubs.
-  - `src/percpu.go` (new): `PerCPU` struct (64-byte aligned),
-    `perCPUBlocks [17]PerCPUAligned`, `percpuInitBSP()`,
-    `percpuInitAP()`, Go `cpuID()` declaration.
-  - `src/smp.go:apEntry`: call `percpuInitAP(apIndex)`.
-  - `src/main.go`: call `percpuInitBSP()` before `smpInit()`.
-  - Verify: `make build` clean; serial shows cpuID per CPU.
+- [x] **1. Per-CPU storage (GS base)**
+  - [x] `src/stubs.S`: add `wrmsr`, `rdmsr`, `cpuID`,
+        `readInterruptDepth` asm stubs.
+  - [x] `src/percpu.go` (new): `PerCPU` struct (64-byte aligned),
+        `perCPUBlocks [17]PerCPU`, `percpuInitBSP()`,
+        `percpuInitAP()`, Go `cpuID()` declaration.
+  - [x] `src/smp.go:apEntry`: call `percpuInitAP(apIndex)`.
+  - [x] `src/main.go`: call `percpuInitBSP()` after `smpInit()`
+        (LAPIC must be mapped first).
+  - [x] Verify: `make build` clean; serial shows
+        `SMP: BSP cpuID=0 gsbase=0x...`;
+        `test_sendkey.sh 1 → pf=0 exit=3 cat=1`.
 
 - [ ] **2. Spinlock primitive**
   - `src/stubs.S`: add `spinlockAcquire` (xchg loop),
