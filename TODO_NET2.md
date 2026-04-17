@@ -20,7 +20,7 @@ listed verification passes.
       DNS-server global alongside `ourIP`/`ourNetmask`/`ourGateway` and
       prints it in `netDiag`. Verify: `make run-net` shows `DNS:
       0.0.0.0` before any configuration.
-- [ ] `feat(net): socketFd + socket syscalls (src/netsock.go)` — new
+- [x] `feat(net): socketFd + socket syscalls (src/netsock.go)` — new
       file with `socketFd` (`FileDesc` impl owning `recvCh`),
       `sys_socket`/`sys_bind`/`sys_sendto`/`sys_recvfrom`/
       `sys_net_config`/`sys_sendto_bcast` handlers. `sys_recvfrom`
