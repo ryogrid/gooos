@@ -46,14 +46,17 @@ lands and the listed verification passes.
       `etherTypeARP`=0x0806, broadcastMAC, isForUs). Dispatch lives in
       net.go to avoid cross-file forward references to arpHandle /
       ipv4Handle. Verify: `make build` clean.
-- [ ] `feat(net): ARP cache, resolve, gratuitous` — `src/arp.go` (16-entry
+- [x] `feat(net): ARP cache, resolve, gratuitous` — `src/arp.go` (16-entry
       LRU cache under `arpLock` rank 6, parse/build, `arpResolve` with
       2 s timeout via `afterTicks(200)`, `arpSendGratuitous`, `arpHandle`).
       Verify: `make build` clean.
-- [ ] `feat(net): netInit, RX dispatch loop, static IP config` —
+- [x] `feat(net): netInit, RX dispatch loop, static IP config` —
       `src/net.go` (ourIP/ourNetmask/ourGateway globals, `netInit`,
       `netRxLoop` polling version, `nextHopIP`). Verify: `make run-net`
-      shows `ARP: sent gratuitous`; `NET: initialized`.
+      shows `ARP: sent gratuitous`; `NET: initialized`. **Phase 2
+      end-to-end verified**: serial log contains `NET: initialized
+      IP=10.0.2.15 gw=10.0.2.2`, `ARP: sent gratuitous announcement for
+      10.0.2.15`, `NET: RX dispatch goroutine started`.
 
 ## Phase 3 — IPv4 + ICMP + UDP
 
