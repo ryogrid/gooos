@@ -110,7 +110,11 @@ func ioDelay(us int) {
 // smpInit discovers APs, boots them via INIT-SIPI-SIPI, and reports
 // the total core count on VGA and serial.
 func smpInit() {
-	// Map LAPIC MMIO page as identity-mapped, uncacheable.
+	// Map LAPIC MMIO page (0xFEE00000) as identity-mapped,
+	// uncacheable. This address is ABOVE the 1 GiB boot identity
+	// map, so a 4 KiB mapPage is required. The PML4[0] → PDP[3]
+	// entry is shared with child processes via newProcPML4's full
+	// PDP copy.
 	mapPage(lapicBase, lapicBase, pagePresent|pageWrite|pagePCD|pagePWT)
 
 	// Configure LVT LINT0 for ExtINT (PIC pass-through) and LINT1 for NMI
@@ -219,6 +223,12 @@ func apEntry(apIndex uint64) {
 
 	// Load per-CPU GDT + TSS for this AP.
 	gdtInitPerCPU(int(apIndex) + 1)
+
+	// Wait for BSP to finish LAPIC timer calibration, then start
+	// this AP's LAPIC timer at the calibrated rate.
+	for lapicCalibratedInitCnt == 0 {
+	}
+	lapicTimerInit()
 
 	serialPutChar('A')
 	serialPutChar('P')

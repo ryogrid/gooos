@@ -38,11 +38,17 @@ func captureBootPML4() {
 	bootPML4 = readCR3() &^ 0xFFF
 }
 
+// bootKernelPDP is the physical address of the boot PDP page
+// (the one PML4[0] points at). Captured once by captureKernelPDP.
+var bootKernelPDP uintptr
+
 // captureKernelPDP0 reads the boot PML4 (current CR3) and walks
 // its PML4[0] → PDP[0] entry. The PDP[0] entry is the pointer
 // to the boot PD covering 0..1 GiB identity. Per-process PDPs
 // install this same entry at their own PDP[0] so the kernel
-// half stays mapped. Idempotent.
+// half stays mapped. Also captures the full boot PDP address
+// so we can copy ALL PDP entries (needed for LAPIC at 0xFEE00000
+// which lives in PDP[3]). Idempotent.
 func captureKernelPDP0() {
 	if pml4SharedKernelPDP0 != 0 {
 		return
@@ -52,8 +58,8 @@ func captureKernelPDP0() {
 	if pml4Entry&uint64(pagePresent) == 0 {
 		return
 	}
-	bootPDP := uintptr(pml4Entry) &^ 0xFFF
-	pml4SharedKernelPDP0 = *(*uint64)(unsafe.Pointer(bootPDP))
+	bootKernelPDP = uintptr(pml4Entry) &^ 0xFFF
+	pml4SharedKernelPDP0 = *(*uint64)(unsafe.Pointer(bootKernelPDP))
 }
 
 // newProcPML4 allocates a fresh PML4 page AND a fresh
@@ -73,9 +79,15 @@ func newProcPML4() uintptr {
 	// user pages farther down are reachable from Ring 3 (the
 	// CPU ANDs U/S across levels).
 	*(*uint64)(unsafe.Pointer(pml4)) = uint64(pdp) | uint64(pagePresent|pageWrite|pageUser)
-	// PDP[0] entry: shared boot PDP[0] (= boot PD covering
-	// 0..1 GiB identity, with whatever flags boot.S set).
+	// PDP[0]: shared boot PD covering 0..1 GiB identity map.
 	*(*uint64)(unsafe.Pointer(pdp)) = pml4SharedKernelPDP0
+	// PDP[3]: LAPIC MMIO at 0xFEE00000 (3..4 GiB range).
+	// Copy from boot PDP if present so the LAPIC timer EOI
+	// works from child process context.
+	pdp3 := *(*uint64)(unsafe.Pointer(bootKernelPDP + 3*8))
+	if pdp3&uint64(pagePresent) != 0 {
+		*(*uint64)(unsafe.Pointer(pdp + 3*8)) = pdp3
+	}
 	return pml4
 }
 

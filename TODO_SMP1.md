@@ -77,10 +77,20 @@ One git commit per top-level item.
         `lapicRegTimerDivCfg` (0x3E0); `lapicSendEOI()`.
   - [x] Verify: `make build` clean.
 
-- [ ] **6. LAPIC timer calibration + per-AP init**
-  - `src/lapic_timer.go` (new): calibrate against PIT,
-    program periodic 100 Hz, per-CPU timer handler.
-  - Verify: serial shows calibration + AP heartbeats.
+- [x] **6. LAPIC timer calibration + per-AP init**
+  - [x] `src/lapic_timer.go` (new): `lapicTimerCalibrate()`
+        measures LAPIC timer against PIT using masked one-shot +
+        `hlt()` spin; `lapicTimerInit()` programs periodic mode
+        at 100 Hz; `handleLAPICTimer` sends LAPIC EOI.
+  - [x] `src/main.go`: register handler + calibrate + init on BSP.
+  - [x] `src/smp.go:apEntry`: APs spin on `lapicCalibratedInitCnt`
+        then call `lapicTimerInit()`.
+  - [x] `src/proc_pml4.go:newProcPML4`: copy boot PDP[3] into
+        child PDP so LAPIC at 0xFEE00000 is accessible from child
+        process PML4 (LAPIC timer EOI during Ring-3 exec).
+  - [x] Verify: `make build` clean; serial shows
+        `LAPIC timer: N ticks/10ms`;
+        `test_sendkey.sh 1 → pf=0 exit=3 cat=1`.
 
 - [ ] **7. IOAPIC discovery + redirection table**
   - `src/ioapic.go` (new): MADT type-1 parsing, MMIO,

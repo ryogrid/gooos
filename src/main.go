@@ -363,6 +363,13 @@ func main() {
 	vgaWriteLine(12, "GDT: Ring 3 + TSS loaded")
 	serialPrintln("GDT: Ring 3 + TSS loaded")
 
+	// Calibrate the LAPIC timer using PIT as reference, then start
+	// the BSP's LAPIC timer at 100 Hz and register the handler.
+	registerHandler(lapicTimerVector, handleLAPICTimer)
+	lapicTimerCalibrate()
+	lapicTimerInit()
+	serialPrintln("LAPIC timer: BSP initialized at 100 Hz")
+
 	// Phase B self-test: verify the TinyGo Task struct layout
 	// assumed by src/goroutine_tss.go before anything depends on it.
 	checkTaskOffset()
