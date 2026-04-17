@@ -116,9 +116,10 @@ stateDiagram-v2
 | `mapPageInto(pml4, va, pa, flags)` | Map into a specific PML4 | Used by `elfSpawn` for child processes |
 | `walkAndGetPaddrIn(pml4, va)` | Walk a per-process PML4 | Read-only |
 
-All allocation/mapping functions run with CLI set
-(`readFlags` + `restoreFlags`) so an ISR cannot observe
-half-written page tables.
+All allocation/mapping functions are protected by the
+`pageAllocLock` spinlock (SMP v2). The spinlock disables
+interrupts on the local CPU and uses xchg-based atomic
+locking for cross-CPU safety.
 
 ## Per-Process PML4
 

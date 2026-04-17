@@ -207,9 +207,14 @@ One git commit per top-level item.
 
 ### Phase 3 — Polish
 
-- [ ] **18. README.md + current_impl_doc updates**
-  - README.md SMP row: "Done (v1)" → "Done (v2)".
-  - `current_impl_doc/scheduler.md` + `memory.md`.
+- [x] **18. README.md + current_impl_doc updates**
+  - [x] README.md: SMP row updated from "Done (v1)" to
+        "Done (v2)" with description of per-CPU runqueues,
+        LAPIC timer, IOAPIC, IPI, work stealing, spinlocks.
+  - [x] `current_impl_doc/scheduler.md`: SMP v2 paragraph
+        replacing "APs do nothing" with per-CPU scheduler desc.
+  - [x] `current_impl_doc/memory.md`: page allocator protection
+        updated from cli/sti to pageAllocLock spinlock.
 
 - [ ] **19. Reviewer pass + completeness**
   - Reviewer subagent: CRITICAL=0, MAJOR=0.

@@ -179,10 +179,14 @@ sequenceDiagram
     BSP->>BSP: report "SMP: N cores online"
 ```
 
-APs do **nothing useful** after bring-up — they halt with
-interrupts enabled. The BSP runs every goroutine. SMP v2
-(per-CPU runqueues + work stealing + LAPIC IPI wakeup) is
-deferred; it would require a TinyGo runtime fork.
+**SMP v2**: APs now enter the TinyGo scheduler loop after
+per-CPU initialization (GS base, GDT/TSS, LAPIC timer). Each
+CPU has its own runqueue (`runqueues[cpuID()]`), systemStack,
+GDT, and TSS. When a CPU's local runqueue is empty, it steals
+work from peer CPUs' queues (round-robin `stealWork()`). LAPIC
+timer fires at 100 Hz on each CPU; IPI wakeup vector (0xFC)
+enables cross-CPU goroutine scheduling. See
+`impldoc/smp_*.md` for the full design set.
 
 ## Boot-Time Checks
 
