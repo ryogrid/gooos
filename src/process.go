@@ -192,12 +192,16 @@ func elfExecTrampoline() {
 // The pool slot is acquired here and released by processExit. See
 // impldoc/deferred_stack_reclaim.md.
 func ring3Wrapper(proc *Process) {
+	serialPrint("ring3Wrapper: cpuID=")
+	serialPrintln(utoa(uint64(cpuID())))
 	ring3WrapperHandle = taskCurrent()
 	idx, kernelStackTop := ring3StackAcquire()
+	serialPrintln("ring3Wrapper: stackAcquired")
 	proc.poolIdx = idx
 	setCurrentProc(proc)
 	registerRing3GWithStack(kernelStackTop, proc)
 	tssSetRSP0ForCurrentG()
+	serialPrintln("ring3Wrapper: jumping to Ring 3")
 	// Allow Ring 3 to trigger int 0x80 each time a Ring-3 goroutine
 	// enters; safe to call repeatedly.
 	setGateDPL3(0x80)
