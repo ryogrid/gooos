@@ -128,10 +128,12 @@ lands and the listed verification passes.
 - [x] `docs(README): networking milestone row` — add row to progress
       table after SMP reflecting e1000 + Ethernet/ARP/IPv4/ICMP/UDP
       completion.
-- [ ] `chore(net): reviewer pass (CRITICAL+MAJOR) + final completeness` —
+- [x] `chore(net): reviewer pass (CRITICAL+MAJOR) + final completeness` —
       run reviewer subagent, fix CRITICAL+MAJOR findings, record MINOR
       below, confirm every checked box has a commit and no new
-      TODO/FIXME/XXX markers in the diff.
+      TODO/FIXME/XXX markers in the diff. **Done.** Reviewer report: 0
+      CRITICAL, 4 MAJOR (all fixed in a follow-up commit), 12 MINOR
+      (recorded below).
 
 ## Deferred to Phase 5 (not in this TODO)
 
@@ -146,6 +148,90 @@ lands and the listed verification passes.
 - TCP, virtio-net, IPv6, IPv4 fragmentation/reassembly, ICMP Time
   Exceeded, IOAPIC routing for NIC IRQ.
 
-## Reviewer MINOR findings
+## Reviewer findings
 
-(Populated by the reviewer pass at end.)
+### CRITICAL
+
+None.
+
+### MAJOR (all fixed)
+
+1. **IMS unmasked before handleE1000IRQ registered** (`e1000.go` + `main.go`)
+   — `e1000Init` was unmasking RXT0+LSC at step 9, then `e1000WaitLinkUp`
+   slept up to 5 s before `main.go` eventually registered the handler.
+   Any early IRQ routed to `handleDefaultIRQ` which sent a PIC EOI but
+   never read `ICR`, leaving the NIC's level-triggered INTx# line
+   asserted → interrupt storm. Fix: `e1000Init` now leaves IMS masked;
+   `main.go` calls new `e1000EnableInterrupts()` after
+   `registerHandler`, which also reads ICR once to clear any stale
+   causes.
+
+2. **Dead `rxPacketCh` allocation** (`e1000.go`) — a cap=16 channel was
+   created in `e1000Init` but never written to or read from (Phase 4c
+   replaced the two-layer design with a direct drain in
+   `netRxLoop`). Removed to prevent a future re-introduction from
+   accidentally allocating in the ISR.
+
+3. **Missing runt/oversize frame validation** (`net.go`) —
+   `net_buffers_diagnostics.md §5.1` requires dropping frames
+   `< 60 || > 1518` bytes, but the code only rejected `< 14`. Fixed:
+   `ethernetDispatch` now checks `ethernetMinRxFrame` (60) and
+   `ethernetMaxRxFrame` (1518) with `RxDropped` incremented on
+   violation. `ethernet.go` constants renamed from
+   `ethernetMinFrame`/`ethernetMaxFrame` to the `…RxFrame` form so the
+   intent (post-FCS-strip receive-side limit) is explicit.
+
+4. **`ChecksumErr` not counted on UDP checksum mismatch** (`udp.go`) —
+   design `net_ipv4_icmp_udp.md §3.6` specifies `ChecksumErr++` on
+   UDP checksum failure so `netDiag` can distinguish it from a port-
+   unreach / runt frame. Added `statsInc(&netStats.ChecksumErr)` in
+   the `udpHandle` failure path.
+
+### MINOR (recorded; not fixed in this milestone)
+
+1. `netbuf.go` free-bitmap semantics are 0=free (allocator uses
+   `^netBufFree[word]`), while the design doc has 1=free. Functionally
+   equivalent; the inversion is an internal simplification but should
+   match the doc if the doc is treated as canonical.
+2. `arp.go:arpSendGratuitous` uses `broadcastMAC` as the THA. RFC 5227
+   and most reference implementations use `00:00:00:00:00:00`. Works
+   against QEMU/Linux; some stricter switches may log it.
+3. `arp.go:arpLookup` is called in a tight loop from `arpResolve`,
+   which inflates the `ArpMisses` counter by (roughly) `resolve_time /
+   yield_quantum` on a true miss. Consider an internal
+   `arpLookupSilent` that skips the stats bump.
+4. `arp.go:arpHandle` skips learning when the incoming SPA is 0 — the
+   defensible RFC-5227 probe-handling behaviour, not documented in the
+   design doc.
+5. `e1000.go` TX-buffer allocation is `allocPagesContig(int(e1000NumTxDesc) *
+   2048 / pageSize)` — the integer math is correct for the current
+   constants but silently truncates if anyone changes `e1000NumTxDesc`
+   to a value whose `* 2048` is not page-aligned. A static assertion
+   (`const _ = …`) would catch it.
+6. `udp.go:udpChecksumVerify` allocates a scratch slice on every RX
+   UDP packet (the straight-through path already avoids this by not
+   using the scratch). Worth revisiting alongside the netbuf wiring.
+7. `net.go:netDiag` releases and re-takes `arpLock` around each
+   `serialPrintln`. A concurrent `arpLearn` could produce a torn
+   snapshot. Copy the cache under lock into a local `[16]ARPEntry`
+   before printing.
+8. `netutil.go:macToString` uses running-index math instead of the
+   `buf[i*3]` / `buf[i*3+1]` / `buf[i*3-1]` form in the design. Style
+   nit.
+9. `net.go:ethernetDispatch` increments `RxUnknownEtherType` without
+   also counting it as `RxDropped`. The sum of all the per-cause
+   counters is therefore less than the difference between `RxPackets`
+   and "what was delivered upstack" — acceptable if documented.
+10. `test_net_tap.sh` is kept as a template; it will FAIL against the
+    current kernel IP (10.0.2.15) on a 10.0.0.0/24 TAP network. Header
+    documents the limitation, but `make test-net-tap` users will see a
+    FAIL line. Consider moving to `scripts/experimental/` until DHCP
+    lands.
+11. Test matrix T3.6 (bad IPv4 checksum injection), T3.7 (bad UDP
+    checksum), T3.8 (fragment drop) from `net_test_plan.md` do not
+    yet have in-kernel injection harnesses. Natural fit alongside the
+    Phase 5 socket API's raw-packet path.
+12. `ethernet.go:zeroMAC` is declared but only consumed by `arp.go`
+    for THA-padding; harmless.
+
+All MINOR items are documented for follow-up; none block Phase 1–4.

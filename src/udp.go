@@ -180,6 +180,7 @@ func udpHandle(hdr IPv4Header, inner []byte) {
 		return
 	}
 	if !udpChecksumVerify(hdr.SrcIP, hdr.DstIP, inner[:uh.Length]) {
+		statsInc(&netStats.ChecksumErr)
 		return
 	}
 	ch := udpLookupChannel(uh.DstPort)

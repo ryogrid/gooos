@@ -79,7 +79,10 @@ func drainRxRing() {
 // filter, and the EtherType switch. Called by netRxLoop for every RX
 // frame; in Phase 3 the IPv4 case wires in.
 func ethernetDispatch(frame []byte) {
-	if len(frame) < ethernetHeaderSize {
+	// Runt / oversize frames are dropped up front. The NIC already
+	// rejects most malformed traffic, but the design doc specifies
+	// explicit validation so RxDropped reflects the host policy.
+	if len(frame) < ethernetMinRxFrame || len(frame) > ethernetMaxRxFrame {
 		statsInc(&netStats.RxDropped)
 		return
 	}

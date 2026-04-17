@@ -377,10 +377,11 @@ func main() {
 	// PCI scan + e1000 NIC init (Phases 1-4 of the networking stack).
 	pciInit()
 	if e1000Found {
-		e1000Init()
+		e1000Init() // leaves IMS masked — we unmask after the handler.
 		e1000Vector := int(32 + e1000PCI.IRQLine)
 		registerHandler(e1000Vector, handleE1000IRQ)
 		serialPrintln("e1000: IRQ handler registered at vector " + utoa(uint64(e1000Vector)))
+		e1000EnableInterrupts() // safe now that the handler is live.
 		serialPrintln("e1000: NIC initialized")
 		netInit()
 		testNetBuf()

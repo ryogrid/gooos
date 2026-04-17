@@ -131,10 +131,6 @@ var (
 	// MAC address read from RAL0/RAH0.
 	e1000MAC [6]byte
 
-	// rxPacketCh delivers received frames to the RX dispatch goroutine.
-	// Phase 2+ (net.go netRxLoop) drains this channel; Phase 1 may leave
-	// it unread — the buffered channel absorbs spurious RX packets.
-	rxPacketCh chan []byte
 )
 
 // ---------------------------------------------------------------------
@@ -317,11 +313,14 @@ func e1000WaitLinkUp() bool {
 // e1000Init brings the NIC from reset to a configured, link-up state.
 // Must be called after pciInit has populated e1000PCI and before any
 // IRQ handler runs. Callers must guard with `if e1000Found`.
+//
+// e1000Init leaves all NIC interrupt sources MASKED. The caller is
+// responsible for registering the IRQ handler and then calling
+// e1000EnableInterrupts — unmasking IMS before the handler is live
+// would route interrupts to the fallback dispatcher, which does not
+// read ICR and therefore cannot clear the NIC's level-triggered
+// INTx# line, producing an interrupt storm.
 func e1000Init() {
-	// Channel exists before the poll-loop goroutine starts so early
-	// frames have somewhere to land.
-	rxPacketCh = make(chan []byte, 16)
-
 	e1000MapMMIO(e1000PCI.BAR0)
 	e1000AllocRings()
 
@@ -360,11 +359,21 @@ func e1000Init() {
 		e1000Write(e1000MTA+i*4, 0)
 	}
 
-	// 9) Unmask RX-timer + link-status-change interrupts.
-	e1000Write(e1000IMS, e1000ICRRXT0|e1000ICRLSC)
-
-	// 10) Wait for link.
+	// 9) Wait for link. IMS stays masked — the caller unmasks it after
+	//    installing handleE1000IRQ (see e1000EnableInterrupts).
 	e1000WaitLinkUp()
+}
+
+// e1000EnableInterrupts unmasks the RX-timer + link-status-change
+// interrupt sources. Must be called only after handleE1000IRQ has
+// been registered at vector 32+IRQLine — otherwise early IRQs are
+// routed to the default handler, which cannot clear ICR.
+func e1000EnableInterrupts() {
+	// A read of ICR clears any stale causes that accumulated during
+	// reset / init; without this the first unmasked IRQ can fire
+	// immediately for something that's already been handled.
+	_ = e1000Read(e1000ICR)
+	e1000Write(e1000IMS, e1000ICRRXT0|e1000ICRLSC)
 }
 
 // ---------------------------------------------------------------------

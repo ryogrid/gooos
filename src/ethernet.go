@@ -10,8 +10,11 @@ package main
 
 const (
 	ethernetHeaderSize = 14
-	ethernetMinFrame   = 14 // Our floor; QEMU's RX strips CRC so 14 is the absolute minimum.
-	ethernetMaxFrame   = 1518
+	// ethernetMinRxFrame is the IEEE 802.3 minimum on the wire after
+	// the e1000 strips the 4-byte FCS (RCTL.SECRC is set). 64-byte
+	// frame − 4-byte CRC = 60 bytes payload visible to us.
+	ethernetMinRxFrame = 60
+	ethernetMaxRxFrame = 1518
 
 	etherTypeIPv4 = uint16(0x0800)
 	etherTypeARP  = uint16(0x0806)
