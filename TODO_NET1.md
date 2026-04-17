@@ -12,7 +12,7 @@ lands and the listed verification passes.
       config read/write via 0xCF8/0xCFC, bus 0..31.0..7 scan, decode BAR0,
       enable bus master (Command reg bit 2), capture IRQ Line. Verify:
       `make build` clean.
-- [ ] `feat(net): e1000 driver init, descriptor rings, TX/RX` —
+- [x] `feat(net): e1000 driver init, descriptor rings, TX/RX` —
       `src/e1000.go`. Register constants, MMIO helpers (via `mapPage` with
       PCD+PWT above 1 GiB), reset, config, RX ring (64 descriptors) + RX
       buffers (32 pages via `allocPagesContig`), TX ring (32 descriptors) +
