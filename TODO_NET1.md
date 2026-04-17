@@ -41,10 +41,11 @@ lands and the listed verification passes.
 - [x] `feat(net): byte-order and address format helpers` —
       `src/netutil.go` (htons/ntohs/htonl/ntohl, macToString, ipToString,
       parseIPv4). Verify: `make build` clean.
-- [ ] `feat(net): Ethernet framing and EtherType dispatch` —
+- [x] `feat(net): Ethernet framing and EtherType dispatch` —
       `src/ethernet.go` (frame parse/build, `etherTypeIPv4`=0x0800,
-      `etherTypeARP`=0x0806, broadcastMAC, `ethernetDispatch`). Verify:
-      `make build` clean.
+      `etherTypeARP`=0x0806, broadcastMAC, isForUs). Dispatch lives in
+      net.go to avoid cross-file forward references to arpHandle /
+      ipv4Handle. Verify: `make build` clean.
 - [ ] `feat(net): ARP cache, resolve, gratuitous` — `src/arp.go` (16-entry
       LRU cache under `arpLock` rank 6, parse/build, `arpResolve` with
       2 s timeout via `afterTicks(200)`, `arpSendGratuitous`, `arpHandle`).
