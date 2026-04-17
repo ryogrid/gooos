@@ -60,7 +60,7 @@ lands and the listed verification passes.
 
 ## Phase 3 — IPv4 + ICMP + UDP
 
-- [ ] `feat(net): IPv4 parse, build, checksum, dispatch` — `src/ipv4.go`
+- [x] `feat(net): IPv4 parse, build, checksum, dispatch` — `src/ipv4.go`
       (header parse/build, ones-complement checksum with odd-length
       zero-pad, `ipv4Send`, `ipv4Handle` protocol dispatch, drop on bad
       version/IHL/checksum/fragment/TTL=0; `ipv4ID` counter). Verify:

@@ -78,7 +78,7 @@ func ethernetDispatch(frame []byte) {
 	case etherTypeARP:
 		arpHandle(hdr.Src, payload)
 	case etherTypeIPv4:
-		// Phase 3 (ipv4.go) wires this in via a follow-up edit.
+		ipv4Handle(payload)
 	default:
 		// Unknown EtherType — drop silently.
 	}
