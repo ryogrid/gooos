@@ -12,11 +12,18 @@ import "unsafe"
 const (
 	lapicBase    = uintptr(0xFEE00000) // Default LAPIC MMIO base address
 	lapicRegID   = uintptr(0x020)      // APIC ID register (bits 24-31)
+	lapicRegEOI  = uintptr(0x0B0)      // End-of-Interrupt register
 	lapicRegSVR  = uintptr(0x0F0)      // Spurious Interrupt Vector Register
 	lapicRegICRL = uintptr(0x300)      // Interrupt Command Register (low)
 	lapicRegICRH = uintptr(0x310)      // Interrupt Command Register (high)
 	lapicRegLVT0 = uintptr(0x350)      // LVT LINT0 register
 	lapicRegLVT1 = uintptr(0x360)      // LVT LINT1 register
+
+	// LAPIC timer registers (SMP v2).
+	lapicRegLVTTimer     = uintptr(0x320) // LVT Timer register
+	lapicRegTimerInitCnt = uintptr(0x380) // Timer initial count
+	lapicRegTimerCurrCnt = uintptr(0x390) // Timer current count (read-only)
+	lapicRegTimerDivCfg  = uintptr(0x3E0) // Timer divide configuration
 
 	// Page table flags for MMIO (uncacheable).
 	pagePCD = uintptr(1 << 4) // Page Cache Disable
@@ -77,6 +84,14 @@ func lapicRead(reg uintptr) uint32 {
 // lapicWrite writes a 32-bit Local APIC register via MMIO.
 func lapicWrite(reg uintptr, val uint32) {
 	*(*uint32)(unsafe.Pointer(lapicBase + reg)) = val
+}
+
+// lapicSendEOI signals end-of-interrupt to the Local APIC.
+// Must be called at the end of every LAPIC-routed interrupt handler.
+//
+//go:nosplit
+func lapicSendEOI() {
+	lapicWrite(lapicRegEOI, 0)
 }
 
 // lapicWaitICR spins until the ICR delivery status bit (12) is idle.

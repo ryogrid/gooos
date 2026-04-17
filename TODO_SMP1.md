@@ -70,10 +70,12 @@ One git commit per top-level item.
 
 ### Phase 1 — Kernel SMP
 
-- [ ] **5. LAPIC register definitions + EOI**
-  - `src/smp.go`: add missing LAPIC register constants +
-    `lapicSendEOI()`.
-  - Verify: `make build` clean.
+- [x] **5. LAPIC register definitions + EOI**
+  - [x] `src/smp.go`: add `lapicRegEOI` (0x0B0),
+        `lapicRegLVTTimer` (0x320), `lapicRegTimerInitCnt`
+        (0x380), `lapicRegTimerCurrCnt` (0x390),
+        `lapicRegTimerDivCfg` (0x3E0); `lapicSendEOI()`.
+  - [x] Verify: `make build` clean.
 
 - [ ] **6. LAPIC timer calibration + per-AP init**
   - `src/lapic_timer.go` (new): calibrate against PIT,
