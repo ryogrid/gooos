@@ -29,7 +29,7 @@ listed verification passes.
 - [x] `feat(net): wire syscalls 22-27 in userspace.go` — add syscall
       number constants and dispatch `case` entries. Verify: `make build`
       clean.
-- [ ] `feat(net): userspace SDK user/gooos/net.go` — high-level
+- [x] `feat(net): userspace SDK user/gooos/net.go` — high-level
       `Socket`/`Bind`/`UDPSendTo`/`UDPRecvFrom`/`UDPRecvFromTimeout`/
       `UDPSendBroadcast` + `GetIP`/`SetIP`/`GetNetmask`/`SetNetmask`/
       `GetGateway`/`SetGateway`/`GetMAC`/`ApplyNetConfig`/`GetDNS`/
