@@ -247,14 +247,25 @@ func apEntry(apIndex uint64) {
 	serialPutChar('\r')
 	serialPutChar('\n')
 
-	// Idle: enable interrupts and halt until an IPI arrives. v1 does
-	// not send IPIs; SMP v2 will use them for cross-CPU goroutine
-	// wakeups.
+	// Enter the TinyGo scheduler loop on this AP. The AP will pop
+	// tasks from its local runqueue, steal from peers when idle,
+	// and sleep via sti+hlt when no work is available.
+	// This never returns.
 	sti()
+	apSchedulerEntry()
+
+	// Safety net — apSchedulerEntry should never return.
 	for {
 		hlt()
 	}
 }
+
+// apSchedulerEntry bridges into TinyGo's apScheduler() function
+// which enters the scheduler loop without reinitializing the heap
+// or calling main.
+//
+//go:linkname apSchedulerEntry runtime.apScheduler
+func apSchedulerEntry()
 
 // ---------- ACPI MADT Parsing ----------
 

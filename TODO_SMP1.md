@@ -136,10 +136,19 @@ One git commit per top-level item.
         primitive). Tasks currently pushed to local queue only.
   - [x] Verify: `make build` clean; channel ops work.
 
-- [ ] **11. AP scheduler spawn**
-  - `src/smp.go:apEntry` reworked → scheduler loop.
-  - Goroutines start running on APs.
-  - Verify: goroutines on multiple CPUs; `-smp 4` boots.
+- [x] **11. AP scheduler spawn**
+  - [x] `runtime/scheduler.go`: added `apScheduler()` entry
+        point (calls `scheduler()` without reinitializing heap
+        or main); added `stealWork()` for round-robin work
+        stealing from peer CPUs' runqueues.
+  - [x] `src/smp.go:apEntry`: replaced `sti; hlt` idle loop
+        with `sti(); apSchedulerEntry()`. Added
+        `apSchedulerEntry` linkname bridge to
+        `runtime.apScheduler`.
+  - [x] `scripts/tinygo_runtime.patch`: regenerated (534 lines).
+  - [x] Verify: `-smp 4` boots, shell commands work (ls, cat,
+        echo all execute correctly); `pf=0`;
+        `test_sendkey.sh 1 → pf=0 exit=3 cat=1` (single CPU).
 
 - [ ] **12. Shared data audit fixes**
   - Atomic: `pitTicks`, `nextPID`, kbd head/tail.

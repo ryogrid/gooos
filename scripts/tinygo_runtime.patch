@@ -424,7 +424,7 @@ index 0000000..0835d65
 +	exit(0)
 +}
 diff --git a/src/runtime/scheduler.go b/src/runtime/scheduler.go
-index 30b2da8..05b3a91 100644
+index 30b2da8..a3eb9af 100644
 --- a/src/runtime/scheduler.go
 +++ b/src/runtime/scheduler.go
 @@ -23,14 +23,26 @@ const asyncScheduler = GOOS == "js"
@@ -477,16 +477,20 @@ index 30b2da8..05b3a91 100644
  		}
  
  		// Check for expired timers to trigger.
-@@ -190,7 +202,7 @@ func scheduler() {
+@@ -190,7 +202,11 @@ func scheduler() {
  			tn.callback(tn, delay)
  		}
  
 -		t := runqueue.Pop()
 +		t := runqueues[gooosCpuID()].Pop()
++		if t == nil {
++			// SMP v2: try to steal work from other CPUs' runqueues.
++			t = stealWork()
++		}
  		if t == nil {
  			if sleepQueue == nil && timerQueue == nil {
  				if asyncScheduler {
-@@ -245,7 +257,7 @@ func scheduler() {
+@@ -245,7 +261,7 @@ func scheduler() {
  func minSched() {
  	scheduleLog("start nested scheduler")
  	for !schedulerDone {
@@ -495,7 +499,7 @@ index 30b2da8..05b3a91 100644
  		if t == nil {
  			break
  		}
-@@ -257,6 +269,6 @@ func minSched() {
+@@ -257,6 +273,31 @@ func minSched() {
  }
  
  func Gosched() {
@@ -503,3 +507,28 @@ index 30b2da8..05b3a91 100644
 +	runqueues[gooosCpuID()].Push(task.Current())
  	task.Pause()
  }
++
++// stealWork attempts to steal a task from another CPU's runqueue.
++// Round-robin scan starting from the CPU after the current one.
++// Returns nil if no work is available on any other CPU.
++func stealWork() *task.Task {
++	me := gooosCpuID()
++	for i := uint32(1); i < gooosSMPMaxCPUs; i++ {
++		peer := (me + i) % gooosSMPMaxCPUs
++		t := runqueues[peer].Pop()
++		if t != nil {
++			return t
++		}
++	}
++	return nil
++}
++
++// apScheduler is the TinyGo scheduler entry for AP cores.
++// Called from gooos after per-CPU init (GS base, GDT, TSS,
++// LAPIC timer). Does not reinitialize the heap or call main.
++// The system stack for this AP is the stack we are running on
++// (the AP boot stack from smpInit). It will be saved into
++// systemStacks[cpuID()] on the first resume() call.
++func apScheduler() {
++	scheduler()
++}
