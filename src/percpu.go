@@ -67,6 +67,14 @@ func rdmsr(msr uint32) uint64
 //go:linkname cpuID cpuID
 func cpuID() uint32
 
+// gooosPause executes the x86 PAUSE instruction as a hint for
+// spin-wait loops. Reduces power consumption and bus contention.
+// Implemented in stubs.S.
+//
+//go:nosplit
+//go:linkname gooosPause gooosPause
+func gooosPause()
+
 // percpuInitBSPEarly sets the BSP's GS base to point at its per-CPU
 // data block. Must be called BEFORE interrupts are enabled — the ISR
 // prologue uses %gs:4 to increment the per-CPU interrupt depth counter.

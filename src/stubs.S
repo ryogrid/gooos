@@ -446,6 +446,16 @@ readInterruptDepth:
     movl    %gs:4, %eax
     ret
 
+    /* ---- pause: x86 spin-wait hint ----------------------------------- */
+    /* pause()                                                           */
+    /* CPU pipeline hint for spin-wait loops. Reduces power and avoids   */
+    /* bus contention. Also acts as a compiler barrier (Go function      */
+    /* call prevents loop elision).                                      */
+    .global gooosPause
+gooosPause:
+    pause
+    ret
+
     /* ---- Heap region (4 MiB, NOBITS) -------------------------------- */
     /* Defined here as an @nobits section so the linker places it in a    */
     /* PT_LOAD segment with memsz > filesz, causing the ELF loader to    */

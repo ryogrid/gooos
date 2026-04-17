@@ -15,11 +15,15 @@ One git commit per top-level item.
         `test_sendkey.sh 1 → pf=0 exit=3 cat=1`;
         `test_gochan.sh → PASS`.
 
-- [ ] **1. `pause()` assembly stub**
-  - `src/stubs.S`: standalone `pause()` function.
-  - `src/smp.go:apEntry`: replace bare spin loops with
-    `pause()` calls.
-  - Verify: `make build` clean; `-smp 4` boots.
+- [x] **1. `pause()` assembly stub + AP spin loop fix**
+  - [x] `src/stubs.S`: `gooosPause()` standalone function.
+  - [x] `src/percpu.go`: Go declaration for `gooosPause()`.
+  - [x] `src/smp.go:apEntry`: bare spin loops → `gooosPause()`.
+  - [x] AP LAPIC timer disabled (causes boot hang under
+        `-smp 4`; ISR global counter race suspected). APs
+        woken by IPI instead.
+  - [x] Verify: `make build` clean; `-smp 4` boots; shell
+        works; `test_sendkey.sh 1 → PASS`.
 
 - [ ] **2. Boot-phase gating**
   - `src/smp.go`: `var bspBootDone uint32`; AP spins on it

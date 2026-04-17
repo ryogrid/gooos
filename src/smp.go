@@ -218,8 +218,11 @@ func apEntry(apIndex uint64) {
 	percpuInitAP(apIndex)
 
 	// Wait for BSP to finish gdtInit (populates canonical gdtTable
-	// entries that gdtInitPerCPU copies from).
+	// entries that gdtInitPerCPU copies from). gooosPause() provides
+	// an x86 pipeline hint and acts as a compiler barrier to prevent
+	// loop elision.
 	for gdtReady == 0 {
+		gooosPause()
 	}
 
 	// Load per-CPU GDT + TSS for this AP.
@@ -230,11 +233,13 @@ func apEntry(apIndex uint64) {
 	svr := lapicRead(lapicRegSVR)
 	lapicWrite(lapicRegSVR, svr|(1<<8)|0xFF)
 
-	// Wait for BSP to finish LAPIC timer calibration, then start
-	// this AP's LAPIC timer at the calibrated rate.
+	// Wait for BSP to finish LAPIC timer calibration.
 	for lapicCalibratedInitCnt == 0 {
+		gooosPause()
 	}
-	lapicTimerInit()
+	// AP LAPIC timer deferred — enabling it causes boot hang.
+	// APs will be woken by IPI or PIC passthrough timer tick.
+	// lapicTimerInit()
 
 	serialPutChar('A')
 	serialPutChar('P')
