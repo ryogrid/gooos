@@ -691,7 +691,9 @@ func sysWaitHandler(frame *SyscallFrame) {
 		return
 	}
 	pid := uint32(frame.RDI)
+	fl := procLock.Acquire()
 	child := procByPID[pid]
+	procLock.Release(fl)
 	if child == nil || child.parent != parent {
 		frame.RAX = sysFail(fdErrBad)
 		return

@@ -116,11 +116,10 @@ func allocPage() uintptr {
 // contiguity) and always bump-allocates. Used for kernel stacks and other
 // multi-page structures accessed as a single flat region via the identity map.
 func allocPagesContig(n int) uintptr {
-	flags := readFlags()
-	cli()
+	flags := pageAllocLock.Acquire()
 	base := nextFreePage
 	nextFreePage += uintptr(n) * pageSize
-	restoreFlags(flags)
+	pageAllocLock.Release(flags)
 
 	total := uintptr(n) * pageSize
 	for i := uintptr(0); i < total; i += 8 {
@@ -360,8 +359,9 @@ func walkAndGetPaddrIn(pml4, vaddr uintptr) uintptr {
 //go:nosplit
 func handlePageFault(vector uint64) {
 	faultAddr := readCR2()
-	errCode := lastErrorCode
-	frame := (*SyscallFrame)(unsafe.Pointer(lastFramePtr))
+	idx := cpuID()
+	errCode := lastErrorCodes[idx]
+	frame := (*SyscallFrame)(unsafe.Pointer(lastFramePtrs[idx]))
 	faultRIP := frame.RIP
 
 	off := 0

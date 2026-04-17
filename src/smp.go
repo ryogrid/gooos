@@ -224,6 +224,11 @@ func apEntry(apIndex uint64) {
 	// Load per-CPU GDT + TSS for this AP.
 	gdtInitPerCPU(int(apIndex) + 1)
 
+	// Enable this AP's LAPIC (software-enable bit + spurious vector).
+	// The BSP does this in smpInit; APs must do it themselves.
+	svr := lapicRead(lapicRegSVR)
+	lapicWrite(lapicRegSVR, svr|(1<<8)|0xFF)
+
 	// Wait for BSP to finish LAPIC timer calibration, then start
 	// this AP's LAPIC timer at the calibrated rate.
 	for lapicCalibratedInitCnt == 0 {

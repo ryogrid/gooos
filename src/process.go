@@ -245,10 +245,14 @@ func elfSpawn(filename, args string, parent *Process) (*Process, bool) {
 		parent:  parent,
 		exitCh:  make(chan uintptr, 1),
 		poolIdx: -1,
-		pid:     allocPID(),
 	}
 	child.pml4 = newProcPML4()
-	procByPID[child.pid] = child
+	{
+		fl := procLock.Acquire()
+		child.pid = allocPID()
+		procByPID[child.pid] = child
+		procLock.Release(fl)
+	}
 
 	// fd inheritance — shallow copy of parent's table with a
 	// refcount bump for each pipe end so the pipe survives
@@ -337,7 +341,11 @@ func processWait(proc *Process) uintptr {
 	setForegroundProc(proc)
 	exitCode := <-proc.exitCh
 	setForegroundProc(prevForeground)
-	delete(procByPID, proc.pid)
+	{
+		fl := procLock.Acquire()
+		delete(procByPID, proc.pid)
+		procLock.Release(fl)
+	}
 	if !firstExecAudited {
 		firstExecAudited = true
 		stackSizeAudit()

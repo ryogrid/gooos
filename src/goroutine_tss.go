@@ -34,9 +34,12 @@ type gInfo struct {
 	proc     *Process
 }
 
+// gInfoLock protects gInfoByTask for SMP safety. Lock ordering rank 3.
+var gInfoLock Spinlock
+
 // gInfoByTask maps task pointers to Ring-3 mapping entries. Only
 // goroutines that execute Ring-3 code (i.e., ring3Wrapper) register
-// here. Single-CPU v1 has no locking requirement.
+// here. Protected by gInfoLock under SMP.
 var gInfoByTask = make(map[uintptr]*gInfo)
 
 // taskCurrent bridges to internal/task.Current(). The TinyGo scheduler
@@ -101,7 +104,9 @@ func registerRing3G() {
 	if t == 0 {
 		return
 	}
+	fl := gInfoLock.Acquire()
 	gInfoByTask[t] = &gInfo{stackTop: taskStackTop(t)}
+	gInfoLock.Release(fl)
 }
 
 // registerRing3GWithStack is like registerRing3G but uses a
@@ -116,7 +121,9 @@ func registerRing3GWithStack(stackTop uintptr, proc *Process) {
 	if t == 0 {
 		return
 	}
+	fl := gInfoLock.Acquire()
 	gInfoByTask[t] = &gInfo{stackTop: stackTop, proc: proc}
+	gInfoLock.Release(fl)
 }
 
 func unregisterRing3G() {
@@ -124,7 +131,9 @@ func unregisterRing3G() {
 	if t == 0 {
 		return
 	}
+	fl := gInfoLock.Acquire()
 	delete(gInfoByTask, t)
+	gInfoLock.Release(fl)
 }
 
 // tssSetRSP0ForCurrentG installs the current goroutine's stack top as
@@ -135,7 +144,9 @@ func tssSetRSP0ForCurrentG() {
 	if t == 0 {
 		return
 	}
+	fl := gInfoLock.Acquire()
 	gi := gInfoByTask[t]
+	gInfoLock.Release(fl)
 	if gi == nil {
 		return
 	}
@@ -177,7 +188,9 @@ func gooosOnResume() {
 	if t == 0 {
 		return
 	}
+	fl := gInfoLock.Acquire()
 	gi := gInfoByTask[t]
+	gInfoLock.Release(fl)
 	if gi == nil {
 		return
 	}
