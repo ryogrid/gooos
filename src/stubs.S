@@ -132,6 +132,26 @@ inb:
     movzbl  %al, %eax
     ret
 
+    /* ---- outl: write 32-bit word to I/O port ------------------------- */
+    /* outl(port uint16, val uint32)                                     */
+    /* SysV ABI: di = port, esi = val                                    */
+    /* Used for PCI config cycles (0xCF8 address, 0xCFC data).           */
+    .global outl
+outl:
+    movw    %di, %dx
+    movl    %esi, %eax
+    outl    %eax, %dx
+    ret
+
+    /* ---- inl: read 32-bit word from I/O port ------------------------- */
+    /* inl(port uint16) uint32                                           */
+    /* SysV ABI: di = port; returns eax                                  */
+    .global inl
+inl:
+    movw    %di, %dx
+    inl     %dx, %eax
+    ret
+
     /* ---- readFlags: return RFLAGS register ------------------------------ */
     /* readFlags() uintptr                                                  */
     .global readFlags
