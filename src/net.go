@@ -10,8 +10,6 @@
 
 package main
 
-import "runtime"
-
 // Static IP configuration — matches the QEMU user-mode slirp defaults
 // (guest = 10.0.2.15, gateway / DNS / TFTP server = 10.0.2.2).
 var (
@@ -47,16 +45,29 @@ func netInit() {
 	go udpEchoServer()
 }
 
-// netRxLoop pulls one completed RX descriptor at a time and runs the
-// Ethernet dispatcher on it. Yields the CPU when the ring is empty so
-// the scheduler can run other goroutines; Phase 4 replaces the poll
-// with a channel wait on rxSignalCh.
+// netRxLoop drives the receive side. It drains the RX descriptor
+// ring once on entry (to catch frames that arrived during boot), then
+// blocks on rxSignalCh — the wake channel fed by the e1000 ISR on
+// each RXT0 interrupt — and drains again on every wake.
+//
+// The ISR uses a non-blocking select with cap=4 on rxSignalCh, so
+// bursts are coalesced rather than lost; a single wake is enough
+// because we drain every ready descriptor before blocking again.
 func netRxLoop() {
+	drainRxRing()
+	for {
+		<-rxSignalCh
+		drainRxRing()
+	}
+}
+
+// drainRxRing consumes every DD-marked RX descriptor currently
+// available and runs the Ethernet dispatcher on each frame.
+func drainRxRing() {
 	for {
 		frame := e1000TryReceive()
 		if frame == nil {
-			runtime.Gosched()
-			continue
+			return
 		}
 		statsInc(&netStats.RxPackets)
 		statsAdd(&netStats.RxBytes, uint64(len(frame)))

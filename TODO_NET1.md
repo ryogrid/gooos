@@ -93,10 +93,12 @@ lands and the listed verification passes.
       NetStats, `statsInc`, `netStatsSnapshot`, `statsLock` rank 8). Wire
       counters into ethernet/arp/ipv4/icmp/udp dispatch. Verify:
       `make build` clean.
-- [ ] `feat(net): interrupt-driven RX` — replace poll loop in
+- [x] `feat(net): interrupt-driven RX` — replace poll loop in
       `e1000.go`/`net.go` with `rxSignalCh`-driven `netRxLoop` that
       drains descriptor ring on each signal. Verify: `make run-net` under
       UDP echo traffic; packet counts rise without busy-looping.
+      **Verified**: UDP echo round-trip (`echo -n irq-test-123 | nc -u -w2
+      127.0.0.1 9999`) succeeds with the rxSignalCh-driven loop.
 - [ ] `feat(net): netDiag + boot-time auto-dump` — `netDiag()` in
       `net.go` prints link / MAC / IP / ARP cache / all counters; goroutine
       in main.go calls `<-afterTicks(500); netDiag()` after `netInit`.
