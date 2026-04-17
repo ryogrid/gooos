@@ -11,7 +11,7 @@ listed verification passes.
       assembly wrapper in `user/rt0.S` and its Go declaration in
       `user/gooos/syscall.go`. Needed because `sys_sendto` takes five
       args (fd, buf, len, dstIP, dstPort). Verify: `make -C user` clean.
-- [ ] `feat(net): udpBindWithChannel + udpSendRaw (src/udp.go)` — add a
+- [x] `feat(net): udpBindWithChannel + udpSendRaw (src/udp.go)` — add a
       bind variant that accepts an externally-owned channel (so
       `socketFd` can own its receive queue) and `udpSendRaw` that builds
       a frame with explicit src/dst IPs and a fixed destination MAC,

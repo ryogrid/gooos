@@ -149,6 +149,34 @@ func udpBind(port uint16) chan UDPDatagram {
 	return nil
 }
 
+// udpBindWithChannel is the Phase-5 variant used by socketFd: the
+// caller supplies its own receive channel (so the same cap=16 channel
+// can move with the socket across bind/close). Returns false on port
+// collision or table exhaustion.
+func udpBindWithChannel(port uint16, ch chan UDPDatagram) bool {
+	if ch == nil {
+		return false
+	}
+	flags := udpLock.Acquire()
+	defer udpLock.Release(flags)
+	for i := 0; i < udpMaxBinds; i++ {
+		if udpBindings[i].Active && udpBindings[i].Port == port {
+			return false
+		}
+	}
+	for i := 0; i < udpMaxBinds; i++ {
+		if !udpBindings[i].Active {
+			udpBindings[i] = UDPBinding{
+				Port:   port,
+				Ch:     ch,
+				Active: true,
+			}
+			return true
+		}
+	}
+	return false
+}
+
 // udpUnbind releases `port`'s slot. No-op if the port is not bound.
 func udpUnbind(port uint16) {
 	flags := udpLock.Acquire()
@@ -227,6 +255,52 @@ func udpSend(dstIP uint32, dstPort, srcPort uint16, data []byte) bool {
 	packet[7] = byte(csum)
 
 	ok := ipv4Send(ipProtoUDP, dstIP, packet)
+	if ok {
+		statsInc(&netStats.UdpSend)
+	}
+	return ok
+}
+
+// udpSendRaw transmits a UDP packet with caller-chosen source / dest
+// IPs, skipping ARP and hard-wiring the destination MAC to the
+// broadcast address. Intended for DHCP, where the client must send
+// from 0.0.0.0:68 to 255.255.255.255:67 before it has either an IP of
+// its own or an ARP binding for the server.
+//
+// Returns false on payload-too-large or TX-ring-full.
+func udpSendRaw(srcIP, dstIP uint32, srcPort, dstPort uint16, data []byte) bool {
+	if !e1000Found {
+		return false
+	}
+	udpLen := udpHeaderSize + len(data)
+	if udpLen+ipv4HeaderMinSize > ipv4MTU {
+		return false
+	}
+	packet := make([]byte, udpLen)
+	packet[0] = byte(srcPort >> 8)
+	packet[1] = byte(srcPort)
+	packet[2] = byte(dstPort >> 8)
+	packet[3] = byte(dstPort)
+	packet[4] = byte(udpLen >> 8)
+	packet[5] = byte(udpLen)
+	packet[6] = 0
+	packet[7] = 0
+	copy(packet[udpHeaderSize:], data)
+	csum := udpChecksum(srcIP, dstIP, packet)
+	packet[6] = byte(csum >> 8)
+	packet[7] = byte(csum)
+
+	totalLen := ipv4HeaderMinSize + udpLen
+	frame := make([]byte, ethernetHeaderSize+totalLen)
+	copy(frame[0:6], broadcastMAC[:])
+	copy(frame[6:12], e1000MAC[:])
+	frame[12] = byte(etherTypeIPv4 >> 8)
+	frame[13] = byte(etherTypeIPv4 & 0xFF)
+
+	ipv4BuildHeader(frame[ethernetHeaderSize:], ipProtoUDP, srcIP, dstIP, udpLen)
+	copy(frame[ethernetHeaderSize+ipv4HeaderMinSize:], packet)
+
+	ok := e1000Transmit(frame)
 	if ok {
 		statsInc(&netStats.UdpSend)
 	}
