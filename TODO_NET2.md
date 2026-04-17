@@ -47,12 +47,12 @@ listed verification passes.
 - [x] `feat(net): user/gooos/fs.go WriteFile helper` — wraps
       `sys_fs_write` for file-create-and-write. Used by DHCP client to
       record `/network.conf`. Verify: `make -C user` clean.
-- [ ] `feat(net): user/cmd/dhcp DHCP client` — full DORA exchange:
+- [x] `feat(net): user/cmd/dhcp DHCP client` — full DORA exchange:
       generate XID, build + broadcast DHCPDISCOVER, recv DHCPOFFER,
       build + broadcast DHCPREQUEST, recv DHCPACK, apply via
       `sys_net_config`, write `/network.conf`, print summary. Uses
       4-second timeout on recvfrom per QEMU slirp expectation.
-- [ ] `feat(net): embed udpecho.elf + dhcp.elf in kernel` — add both to
+- [x] `feat(net): embed udpecho.elf + dhcp.elf in kernel` — add both to
       `user/Makefile` CMDS and the `main.go` fsCreate/fsWrite block so
       the shell sees them. Verify: `ls` in-shell shows `udpecho.elf`
       and `dhcp.elf`; `make build` clean.
