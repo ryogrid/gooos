@@ -71,12 +71,15 @@ lands and the listed verification passes.
       `ipv4Handle` and verifies reply is transmitted (prints
       `TEST: icmp echo reply PASS`). **Verified**: serial log shows
       `TEST: icmp echo reply PASS` on boot.
-- [ ] `feat(net): UDP parse, checksum, bind table, echo server` —
+- [x] `feat(net): UDP parse, checksum, bind table, echo server` —
       `src/udp.go` (pseudo-header checksum, `udpChecksumVerify`, 8-entry
       bind table under `udpLock` rank 7, `udpBind`/`udpUnbind`/`udpSend`,
       `udpEchoServer` goroutine on port 7). Wire `go udpEchoServer()` in
       main.go after `netInit`. Verify: `echo hi | nc -u 127.0.0.1 9999`
-      echoes via hostfwd.
+      echoes via hostfwd. **Phase 3 end-to-end verified**: host-side
+      `echo -n hello-gooos | nc -u -w2 127.0.0.1 9999` → received
+      `hello-gooos` back (full Ethernet + IP + UDP round-trip through
+      QEMU slirp hostfwd 9999 → guest 7).
 
 ## Phase 4 — Robustness, buffers, diagnostics
 

@@ -193,8 +193,7 @@ func ipv4Handle(payload []byte) {
 	case ipProtoICMP:
 		icmpHandle(hdr, inner)
 	case ipProtoUDP:
-		// Phase 3c wires udpHandle here.
-		_ = inner
+		udpHandle(hdr, inner)
 	default:
 		// Unknown protocol — drop.
 	}

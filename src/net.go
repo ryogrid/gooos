@@ -43,6 +43,8 @@ func netInit() {
 
 	go netRxLoop()
 	serialPrintln("NET: RX dispatch goroutine started")
+
+	go udpEchoServer()
 }
 
 // netRxLoop pulls one completed RX descriptor at a time and runs the
