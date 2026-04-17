@@ -125,7 +125,7 @@ lands and the listed verification passes.
       the kernel IP is currently hard-coded to 10.0.2.15, so TAP runs
       require either `GOOOS_NET_TAP_TARGET` override or a subnet match;
       runtime IP reconfiguration is deferred to Phase 5 DHCP.
-- [ ] `docs(README): networking milestone row` — add row to progress
+- [x] `docs(README): networking milestone row` — add row to progress
       table after SMP reflecting e1000 + Ethernet/ARP/IPv4/ICMP/UDP
       completion.
 - [ ] `chore(net): reviewer pass (CRITICAL+MAJOR) + final completeness` —
