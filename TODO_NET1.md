@@ -6,9 +6,9 @@ lands and the listed verification passes.
 
 ## Phase 1 — e1000 NIC driver
 
-- [ ] `feat(net): add outl/inl 32-bit port I/O stubs` — extend `src/stubs.S`
+- [x] `feat(net): add outl/inl 32-bit port I/O stubs` — extend `src/stubs.S`
       with `outl`/`inl` mirroring `outb`/`inb`. Verify: `make build` clean.
-- [ ] `feat(net): PCI bus scan and e1000 discovery` — `src/pci.go` with
+- [x] `feat(net): PCI bus scan and e1000 discovery` — `src/pci.go` with
       config read/write via 0xCF8/0xCFC, bus 0..31.0..7 scan, decode BAR0,
       enable bus master (Command reg bit 2), capture IRQ Line. Verify:
       `make build` clean.
