@@ -407,6 +407,33 @@ cpuID:
     movl    %gs:0, %eax
     ret
 
+    /* ---- spinlockAcquire: xchg-based spinlock acquire ----------------- */
+    /* spinlockAcquire(lock *uint32)                                     */
+    /* SysV ABI: rdi = pointer to lock word. Spins until acquired.       */
+    .global spinlockAcquire
+spinlockAcquire:
+    movl    $1, %eax
+.Lspin_retry:
+    xchgl   %eax, (%rdi)
+    testl   %eax, %eax
+    jnz     .Lspin_wait
+    ret
+.Lspin_wait:
+    pause                       /* hint: spin-wait loop */
+    movl    (%rdi), %eax        /* test without xchg (TTAS pattern) */
+    testl   %eax, %eax
+    jnz     .Lspin_wait
+    jmp     .Lspin_retry
+
+    /* ---- spinlockRelease: release spinlock with memory fence ---------- */
+    /* spinlockRelease(lock *uint32)                                      */
+    /* SysV ABI: rdi = pointer to lock word.                              */
+    .global spinlockRelease
+spinlockRelease:
+    movl    $0, (%rdi)
+    mfence
+    ret
+
     /* ---- readInterruptDepth: per-CPU interrupt depth counter --------- */
     /* readInterruptDepth() uint32                                       */
     /* Reads %gs:4 (pcpuOffInterruptDepth).                             */

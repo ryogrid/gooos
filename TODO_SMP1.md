@@ -28,12 +28,13 @@ One git commit per top-level item.
         `SMP: BSP cpuID=0 gsbase=0x...`;
         `test_sendkey.sh 1 → pf=0 exit=3 cat=1`.
 
-- [ ] **2. Spinlock primitive**
-  - `src/stubs.S`: add `spinlockAcquire` (xchg loop),
-    `spinlockRelease` (mov + mfence).
-  - `src/spinlock.go` (new): `Spinlock` type, `Acquire()`,
-    `Release(flags)`.
-  - Verify: `make build` clean.
+- [x] **2. Spinlock primitive**
+  - [x] `src/stubs.S`: add `spinlockAcquire` (TTAS xchg loop
+        with pause hint), `spinlockRelease` (mov + mfence).
+  - [x] `src/spinlock.go` (new): `Spinlock` type, `Acquire()`
+        returns saved RFLAGS, `Release(flags)`.
+  - [x] Lock ordering documented in spinlock.go header.
+  - [x] Verify: `make build` clean.
 
 - [ ] **3. Per-CPU GDT + TSS**
   - `src/gdt.go`: `perCPUGDT`, `perCPUTSS` arrays,
