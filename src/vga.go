@@ -74,23 +74,27 @@ func vgaConsoleScroll() {
 }
 
 // vgaConsolePrint writes a string to the VGA console at the current
-// cursor position.
+// cursor position. Protected by vgaLock for SMP safety.
 func vgaConsolePrint(s string) {
+	flags := vgaLock.Acquire()
 	for i := 0; i < len(s); i++ {
 		vgaConsolePutChar(s[i])
 	}
+	vgaLock.Release(flags)
 }
 
 // vgaConsoleClear fills the entire VGA text buffer with spaces and
 // resets the cursor to the top-left corner. Also disables the VGA
 // hardware cursor — set-cursor is opt-in via sys_vga_set_cursor,
 // so TUI programs (like the editor) that enabled it leave the
-// screen clean for the shell on exit.
+// screen clean for the shell on exit. Protected by vgaLock for SMP safety.
 func vgaConsoleClear() {
+	flags := vgaLock.Acquire()
 	vgaClear()
 	vgaCursorRow = 0
 	vgaCursorCol = 0
 	// Disable hardware cursor: set bit 5 of CRTC register 0x0A.
 	outb(0x3D4, 0x0A)
 	outb(0x3D5, 0x20)
+	vgaLock.Release(flags)
 }

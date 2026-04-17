@@ -10,6 +10,9 @@ package main
 // all serial helpers call stubs.S via package-level //go:linkname
 // declarations on their own.
 
+// serialLock protects serial port output for SMP safety.
+var serialLock Spinlock
+
 // COM1 port addresses.
 const (
 	com1Port      = 0x3F8
@@ -51,17 +54,25 @@ func serialPutChar(c byte) {
 }
 
 // serialPrint sends a string to COM1.
+// Protected by serialLock for SMP safety.
 func serialPrint(s string) {
+	flags := serialLock.Acquire()
 	for i := 0; i < len(s); i++ {
 		serialPutChar(s[i])
 	}
+	serialLock.Release(flags)
 }
 
 // serialPrintln sends a string followed by a newline to COM1.
+// Protected by serialLock for SMP safety.
 func serialPrintln(s string) {
-	serialPrint(s)
+	flags := serialLock.Acquire()
+	for i := 0; i < len(s); i++ {
+		serialPutChar(s[i])
+	}
 	serialPutChar('\r')
 	serialPutChar('\n')
+	serialLock.Release(flags)
 }
 
 // serialPrintBytes is the allocation-free sibling of serialPrint.
