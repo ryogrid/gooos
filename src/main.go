@@ -472,6 +472,11 @@ func main() {
 	vgaWriteLine(14, "Scheduler: TinyGo goroutines active")
 	serialPrintln("Scheduler: TinyGo goroutines active")
 
+	// Signal APs that boot-time initialization is complete.
+	// APs are spinning on bspBootDone in apEntry and will now
+	// enter the scheduler via apSchedulerEntry().
+	bspBootDone = 1
+
 	// Load shell and jump to Ring 3. Does not return.
 	setupUserspace()
 }
