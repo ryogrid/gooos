@@ -3,6 +3,7 @@
 
 # Scratch / build output
 tmp/
+user/build/
 
 TODO.md
 
