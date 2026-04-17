@@ -65,7 +65,8 @@ if [[ -f "$RG" && -f "$RGU" && -f "$IG" && -f "$IGU" ]] \
     && grep -q 'gooosOnResume' "$TS64" \
     && grep -q 'runqueues' "$SCHED" \
     && grep -q 'systemStacks' "$TS64" \
-    && grep -q 'gooosCpuID' "$CHAN"; then
+    && grep -q 'gooosCpuID' "$CHAN" \
+    && grep -q 'gooos_spinlockAcquire' "$TINYGO_SRC/internal/task/queue.go"; then
     echo "already-applied: tinygo runtime patch (SMP v2) present at $TINYGO_SRC"
     echo "(delete the gooos* runtime files and the in-place changes to re-run)"
     exit 0

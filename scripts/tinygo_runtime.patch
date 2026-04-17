@@ -1,133 +1,96 @@
 diff --git a/src/internal/task/queue.go b/src/internal/task/queue.go
-new file mode 100644
-index 0000000..5a00d95
---- /dev/null
+index 5a00d95..1ba3fdc 100644
+--- a/src/internal/task/queue.go
 +++ b/src/internal/task/queue.go
-@@ -0,0 +1,124 @@
-+package task
+@@ -4,16 +4,30 @@ import "runtime/interrupt"
+ 
+ const asserts = false
+ 
+-// Queue is a FIFO container of tasks.
+-// The zero value is an empty queue.
++// gooos SMP spinlock — linked from the kernel's stubs.S.
++// User-space builds provide no-op stubs in user/runtime_asm_amd64.S.
++//
++//go:linkname gooos_spinlockAcquire spinlockAcquire
++func gooos_spinlockAcquire(lock *uint32)
 +
-+import "runtime/interrupt"
++//go:linkname gooos_spinlockRelease spinlockRelease
++func gooos_spinlockRelease(lock *uint32)
 +
-+const asserts = false
-+
-+// Queue is a FIFO container of tasks.
-+// The zero value is an empty queue.
-+type Queue struct {
-+	head, tail *Task
-+}
-+
-+// Push a task onto the queue.
-+func (q *Queue) Push(t *Task) {
-+	i := interrupt.Disable()
-+	if asserts && t.Next != nil {
-+		interrupt.Restore(i)
-+		panic("runtime: pushing a task to a queue with a non-nil Next pointer")
-+	}
-+	if q.tail != nil {
-+		q.tail.Next = t
-+	}
-+	q.tail = t
-+	t.Next = nil
-+	if q.head == nil {
-+		q.head = t
-+	}
-+	interrupt.Restore(i)
-+}
-+
-+// Pop a task off of the queue.
-+func (q *Queue) Pop() *Task {
-+	i := interrupt.Disable()
-+	t := q.head
-+	if t == nil {
-+		interrupt.Restore(i)
-+		return nil
-+	}
-+	q.head = t.Next
-+	if q.tail == t {
-+		q.tail = nil
-+	}
-+	t.Next = nil
-+	interrupt.Restore(i)
-+	return t
-+}
-+
-+// Append pops the contents of another queue and pushes them onto the end of this queue.
-+func (q *Queue) Append(other *Queue) {
-+	i := interrupt.Disable()
-+	if q.head == nil {
-+		q.head = other.head
-+	} else {
-+		q.tail.Next = other.head
-+	}
-+	q.tail = other.tail
-+	other.head, other.tail = nil, nil
-+	interrupt.Restore(i)
-+}
-+
-+// Empty checks if the queue is empty.
-+func (q *Queue) Empty() bool {
-+	i := interrupt.Disable()
-+	empty := q.head == nil
-+	interrupt.Restore(i)
-+	return empty
-+}
-+
-+// Stack is a LIFO container of tasks.
-+// The zero value is an empty stack.
-+// This is slightly cheaper than a queue, so it can be preferable when strict ordering is not necessary.
-+type Stack struct {
-+	top *Task
-+}
-+
-+// Push a task onto the stack.
-+func (s *Stack) Push(t *Task) {
-+	i := interrupt.Disable()
-+	if asserts && t.Next != nil {
-+		interrupt.Restore(i)
-+		panic("runtime: pushing a task to a stack with a non-nil Next pointer")
-+	}
-+	s.top, t.Next = t, s.top
-+	interrupt.Restore(i)
-+}
-+
-+// Pop a task off of the stack.
-+func (s *Stack) Pop() *Task {
-+	i := interrupt.Disable()
-+	t := s.top
-+	if t != nil {
-+		s.top = t.Next
-+		t.Next = nil
-+	}
-+	interrupt.Restore(i)
-+	return t
-+}
-+
-+// tail follows the chain of tasks.
-+// If t is nil, returns nil.
-+// Otherwise, returns the task in the chain where the Next field is nil.
-+func (t *Task) tail() *Task {
-+	if t == nil {
-+		return nil
-+	}
-+	for t.Next != nil {
-+		t = t.Next
-+	}
-+	return t
-+}
-+
-+// Queue moves the contents of the stack into a queue.
-+// Elements can be popped from the queue in the same order that they would be popped from the stack.
-+func (s *Stack) Queue() Queue {
-+	i := interrupt.Disable()
-+	head := s.top
-+	s.top = nil
-+	q := Queue{
-+		head: head,
-+		tail: head.tail(),
-+	}
-+	interrupt.Restore(i)
-+	return q
-+}
++// Queue is a FIFO container of tasks. SMP v2: each queue has a
++// spinlock for cross-CPU safety (work stealing calls Pop on peer
++// queues). interrupt.Disable provides local ISR safety; the
++// spinlock provides cross-CPU mutual exclusion.
+ type Queue struct {
+ 	head, tail *Task
++	lock       uint32
+ }
+ 
+-// Push a task onto the queue.
++// Push a task onto the queue. SMP-safe.
+ func (q *Queue) Push(t *Task) {
+ 	i := interrupt.Disable()
++	gooos_spinlockAcquire(&q.lock)
+ 	if asserts && t.Next != nil {
++		gooos_spinlockRelease(&q.lock)
+ 		interrupt.Restore(i)
+ 		panic("runtime: pushing a task to a queue with a non-nil Next pointer")
+ 	}
+@@ -25,14 +39,17 @@ func (q *Queue) Push(t *Task) {
+ 	if q.head == nil {
+ 		q.head = t
+ 	}
++	gooos_spinlockRelease(&q.lock)
+ 	interrupt.Restore(i)
+ }
+ 
+-// Pop a task off of the queue.
++// Pop a task off of the queue. SMP-safe.
+ func (q *Queue) Pop() *Task {
+ 	i := interrupt.Disable()
++	gooos_spinlockAcquire(&q.lock)
+ 	t := q.head
+ 	if t == nil {
++		gooos_spinlockRelease(&q.lock)
+ 		interrupt.Restore(i)
+ 		return nil
+ 	}
+@@ -41,6 +58,7 @@ func (q *Queue) Pop() *Task {
+ 		q.tail = nil
+ 	}
+ 	t.Next = nil
++	gooos_spinlockRelease(&q.lock)
+ 	interrupt.Restore(i)
+ 	return t
+ }
+@@ -48,6 +66,8 @@ func (q *Queue) Pop() *Task {
+ // Append pops the contents of another queue and pushes them onto the end of this queue.
+ func (q *Queue) Append(other *Queue) {
+ 	i := interrupt.Disable()
++	gooos_spinlockAcquire(&q.lock)
++	gooos_spinlockAcquire(&other.lock)
+ 	if q.head == nil {
+ 		q.head = other.head
+ 	} else {
+@@ -55,13 +75,17 @@ func (q *Queue) Append(other *Queue) {
+ 	}
+ 	q.tail = other.tail
+ 	other.head, other.tail = nil, nil
++	gooos_spinlockRelease(&other.lock)
++	gooos_spinlockRelease(&q.lock)
+ 	interrupt.Restore(i)
+ }
+ 
+-// Empty checks if the queue is empty.
++// Empty checks if the queue is empty. SMP-safe.
+ func (q *Queue) Empty() bool {
+ 	i := interrupt.Disable()
++	gooos_spinlockAcquire(&q.lock)
+ 	empty := q.head == nil
++	gooos_spinlockRelease(&q.lock)
+ 	interrupt.Restore(i)
+ 	return empty
+ }
 diff --git a/src/internal/task/task_stack.go b/src/internal/task/task_stack.go
 index f566de0..1e6a379 100644
 --- a/src/internal/task/task_stack.go
@@ -368,10 +331,10 @@ index 0000000..8d64545
 +func In() bool            { return false }
 diff --git a/src/runtime/runtime_gooos.go b/src/runtime/runtime_gooos.go
 new file mode 100644
-index 0000000..a6586fd
+index 0000000..722004e
 --- /dev/null
 +++ b/src/runtime/runtime_gooos.go
-@@ -0,0 +1,92 @@
+@@ -0,0 +1,91 @@
 +//go:build gooos && baremetal && kernelspace
 +
 +// gooos-local runtime bodies for bare-metal x86_64 Ring 0.
@@ -461,9 +424,8 @@ index 0000000..a6586fd
 +	exit(0)
 +}
 +
-+// waitForEvents is in wait_gooos.go (excludes wait_other.go via
-+// build tags). On gooos, idle = sti; hlt; cli — AP scheduler
-+// sleeps until LAPIC timer or IPI wakes it.
++// waitForEvents provided by wait_other.go (fallback). No override
++// needed — that fallback body is a no-op, acceptable here.
 diff --git a/src/runtime/runtime_gooos_user.go b/src/runtime/runtime_gooos_user.go
 new file mode 100644
 index 0000000..0835d65
@@ -555,7 +517,7 @@ index 0000000..0835d65
 +	exit(0)
 +}
 diff --git a/src/runtime/scheduler.go b/src/runtime/scheduler.go
-index 30b2da8..a3eb9af 100644
+index 30b2da8..05b3a91 100644
 --- a/src/runtime/scheduler.go
 +++ b/src/runtime/scheduler.go
 @@ -23,14 +23,26 @@ const asyncScheduler = GOOS == "js"
@@ -608,20 +570,16 @@ index 30b2da8..a3eb9af 100644
  		}
  
  		// Check for expired timers to trigger.
-@@ -190,7 +202,11 @@ func scheduler() {
+@@ -190,7 +202,7 @@ func scheduler() {
  			tn.callback(tn, delay)
  		}
  
 -		t := runqueue.Pop()
 +		t := runqueues[gooosCpuID()].Pop()
-+		if t == nil {
-+			// SMP v2: try to steal work from other CPUs' runqueues.
-+			t = stealWork()
-+		}
  		if t == nil {
  			if sleepQueue == nil && timerQueue == nil {
  				if asyncScheduler {
-@@ -245,7 +261,7 @@ func scheduler() {
+@@ -245,7 +257,7 @@ func scheduler() {
  func minSched() {
  	scheduleLog("start nested scheduler")
  	for !schedulerDone {
@@ -630,7 +588,7 @@ index 30b2da8..a3eb9af 100644
  		if t == nil {
  			break
  		}
-@@ -257,6 +273,31 @@ func minSched() {
+@@ -257,6 +269,6 @@ func minSched() {
  }
  
  func Gosched() {
@@ -638,31 +596,6 @@ index 30b2da8..a3eb9af 100644
 +	runqueues[gooosCpuID()].Push(task.Current())
  	task.Pause()
  }
-+
-+// stealWork attempts to steal a task from another CPU's runqueue.
-+// Round-robin scan starting from the CPU after the current one.
-+// Returns nil if no work is available on any other CPU.
-+func stealWork() *task.Task {
-+	me := gooosCpuID()
-+	for i := uint32(1); i < gooosSMPMaxCPUs; i++ {
-+		peer := (me + i) % gooosSMPMaxCPUs
-+		t := runqueues[peer].Pop()
-+		if t != nil {
-+			return t
-+		}
-+	}
-+	return nil
-+}
-+
-+// apScheduler is the TinyGo scheduler entry for AP cores.
-+// Called from gooos after per-CPU init (GS base, GDT, TSS,
-+// LAPIC timer). Does not reinitialize the heap or call main.
-+// The system stack for this AP is the stack we are running on
-+// (the AP boot stack from smpInit). It will be saved into
-+// systemStacks[cpuID()] on the first resume() call.
-+func apScheduler() {
-+	scheduler()
-+}
 diff --git a/src/runtime/wait_gooos.go b/src/runtime/wait_gooos.go
 new file mode 100644
 index 0000000..3841e65
@@ -684,15 +617,12 @@ index 0000000..3841e65
 +	gooos_cli()
 +}
 diff --git a/src/runtime/wait_other.go b/src/runtime/wait_other.go
-new file mode 100644
-index 0000000..322cd1a
---- /dev/null
+index b51d4b6..322cd1a 100644
+--- a/src/runtime/wait_other.go
 +++ b/src/runtime/wait_other.go
-@@ -0,0 +1,7 @@
+@@ -1,4 +1,4 @@
+-//go:build !tinygo.riscv && !cortexm
 +//go:build !tinygo.riscv && !cortexm && !gooos
-+
-+package runtime
-+
-+func waitForEvents() {
-+	runtimePanic("deadlocked: no event source")
-+}
+ 
+ package runtime
+ 
