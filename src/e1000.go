@@ -295,24 +295,6 @@ func e1000ReadMAC() {
 	e1000MAC[5] = byte(rah >> 8)
 }
 
-// macHexString formats a MAC address as XX:XX:XX:XX:XX:XX without
-// allocating via fmt / strconv.
-func macHexString(mac [6]byte) string {
-	const hex = "0123456789ABCDEF"
-	var buf [17]byte
-	j := 0
-	for i := 0; i < 6; i++ {
-		if i > 0 {
-			buf[j] = ':'
-			j++
-		}
-		buf[j] = hex[mac[i]>>4]
-		buf[j+1] = hex[mac[i]&0xF]
-		j += 2
-	}
-	return string(buf[:17])
-}
-
 // e1000WaitLinkUp polls STATUS.LU for up to 5 seconds at 100 Hz PIT.
 // Returns whether link came up. In QEMU with `-netdev user` the link
 // is up as soon as the NIC exits reset; this is a safety net.
@@ -355,7 +337,7 @@ func e1000Init() {
 
 	// 3) MAC address.
 	e1000ReadMAC()
-	serialPrintln("e1000: MAC=" + macHexString(e1000MAC))
+	serialPrintln("e1000: MAC=" + macToString(e1000MAC))
 
 	// 4) Descriptor rings.
 	e1000InitRxRing()

@@ -38,7 +38,7 @@ lands and the listed verification passes.
 
 ## Phase 2 — Ethernet + ARP
 
-- [ ] `feat(net): byte-order and address format helpers` —
+- [x] `feat(net): byte-order and address format helpers` —
       `src/netutil.go` (htons/ntohs/htonl/ntohl, macToString, ipToString,
       parseIPv4). Verify: `make build` clean.
 - [ ] `feat(net): Ethernet framing and EtherType dispatch` —
