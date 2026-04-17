@@ -383,6 +383,7 @@ func main() {
 		serialPrintln("e1000: IRQ handler registered at vector " + utoa(uint64(e1000Vector)))
 		serialPrintln("e1000: NIC initialized")
 		netInit()
+		testICMPEchoReply()
 	}
 
 	// Register IPI handlers before IOAPIC (which enables interrupt

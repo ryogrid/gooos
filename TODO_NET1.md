@@ -65,11 +65,12 @@ lands and the listed verification passes.
       zero-pad, `ipv4Send`, `ipv4Handle` protocol dispatch, drop on bad
       version/IHL/checksum/fragment/TTL=0; `ipv4ID` counter). Verify:
       `make build` clean.
-- [ ] `feat(net): ICMP echo reply + kernel self-test` — `src/icmp.go`
+- [x] `feat(net): ICMP echo reply + kernel self-test` — `src/icmp.go`
       (`icmpHandle` flips type to 0, recomputes checksum, sends via
       `ipv4Send`). In-kernel self-test feeds synthetic echo-request into
       `ipv4Handle` and verifies reply is transmitted (prints
-      `TEST: icmp echo reply PASS`). Verify: self-test PASS in serial.
+      `TEST: icmp echo reply PASS`). **Verified**: serial log shows
+      `TEST: icmp echo reply PASS` on boot.
 - [ ] `feat(net): UDP parse, checksum, bind table, echo server` —
       `src/udp.go` (pseudo-header checksum, `udpChecksumVerify`, 8-entry
       bind table under `udpLock` rank 7, `udpBind`/`udpUnbind`/`udpSend`,

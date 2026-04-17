@@ -189,12 +189,12 @@ func ipv4Handle(payload []byte) {
 	if hdr.DstIP != ourIP {
 		return
 	}
-	_ = inner // placeholder — used once icmpHandle / udpHandle wire in.
 	switch hdr.Protocol {
 	case ipProtoICMP:
-		// Phase 3b wires icmpHandle here.
+		icmpHandle(hdr, inner)
 	case ipProtoUDP:
 		// Phase 3c wires udpHandle here.
+		_ = inner
 	default:
 		// Unknown protocol — drop.
 	}
