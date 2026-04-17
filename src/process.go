@@ -426,8 +426,7 @@ func processExit(exitCode uintptr) {
 	// This goroutine was entered from an int 0x80 ISR, so the ISR
 	// prologue bumped both the global and per-CPU interrupt depth.
 	// The ISR epilogue on this goroutine's kernel stack will never
-	// run (taskPause below parks forever). Decrement both counters
-	// by 1 to represent leaving THIS ISR frame.
+	// run (taskPause below parks forever). Decrement both counters.
 	if gooosInInterruptDepth > 0 {
 		gooosInInterruptDepth--
 	}

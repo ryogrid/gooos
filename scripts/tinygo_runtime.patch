@@ -218,10 +218,46 @@ index 269f5a0..ca78d9b 100644
  	return src
  }
 diff --git a/src/runtime/gc_blocks.go b/src/runtime/gc_blocks.go
-index 7db6b7a..f730161 100644
+index 7db6b7a..60750dd 100644
 --- a/src/runtime/gc_blocks.go
 +++ b/src/runtime/gc_blocks.go
-@@ -425,30 +425,27 @@ func runGC() (freeBytes uintptr) {
+@@ -48,6 +48,17 @@ const (
+ 	markStackSize      = 4 * unsafe.Sizeof((*int)(nil)) // number of to-be-marked blocks to queue before forcing a rescan
+ )
+ 
++// gooos SMP heap lock — protects alloc/free and GC mark/sweep
++// from concurrent access across CPUs.
++//
++//go:linkname gooos_heapSpinlockAcquire spinlockAcquire
++func gooos_heapSpinlockAcquire(lock *uint32)
++
++//go:linkname gooos_heapSpinlockRelease spinlockRelease
++func gooos_heapSpinlockRelease(lock *uint32)
++
++var heapLock uint32
++
+ var (
+ 	metadataStart unsafe.Pointer // pointer to the start of the heap metadata
+ 	nextAlloc     gcBlock        // the next block that should be tried by the allocator
+@@ -281,6 +292,9 @@ func alloc(size uintptr, layout unsafe.Pointer) unsafe.Pointer {
+ 		runtimePanicAt(returnAddress(0), "heap alloc in interrupt")
+ 	}
+ 
++	// SMP: serialize all heap operations across CPUs.
++	gooos_heapSpinlockAcquire(&heapLock)
++
+ 	gcTotalAlloc += uint64(size)
+ 	gcMallocs++
+ 
+@@ -374,6 +388,7 @@ func alloc(size uintptr, layout unsafe.Pointer) unsafe.Pointer {
+ 				size -= add
+ 			}
+ 			memzero(pointer, size)
++			gooos_heapSpinlockRelease(&heapLock)
+ 			return pointer
+ 		}
+ 	}
+@@ -425,30 +440,27 @@ func runGC() (freeBytes uintptr) {
  	if baremetal && hasScheduler {
  		// Channel operations in interrupts may move task pointers around while we are marking.
  		// Therefore we need to scan the runqueue separately.
@@ -233,10 +269,6 @@ index 7db6b7a..f730161 100644
 -
 -			// Mark the task if it has not already been marked.
 -			markRoot(uintptr(unsafe.Pointer(&runqueue)), uintptr(unsafe.Pointer(t)))
--
--			// Push the task onto our temporary queue.
--			markedTaskQueue.Push(t)
--		}
 +		// SMP v2: scan all per-CPU runqueues. For now, only BSP runs GC;
 +		// stop-the-world coordination across CPUs is deferred.
 +		for rqIdx := 0; rqIdx < gooosSMPMaxCPUs; rqIdx++ {
@@ -248,9 +280,13 @@ index 7db6b7a..f730161 100644
 +				markedTaskQueue.Push(t)
 +			}
  
--		finishMark()
+-			// Push the task onto our temporary queue.
+-			markedTaskQueue.Push(t)
+-		}
 +			finishMark()
  
+-		finishMark()
+-
 -		// Restore the runqueue.
 -		i := interrupt.Disable()
 -		if !runqueue.Empty() {
@@ -271,10 +307,10 @@ index 7db6b7a..f730161 100644
  	}
 diff --git a/src/runtime/interrupt/interrupt_gooos.go b/src/runtime/interrupt/interrupt_gooos.go
 new file mode 100644
-index 0000000..1a6297e
+index 0000000..69cc88a
 --- /dev/null
 +++ b/src/runtime/interrupt/interrupt_gooos.go
-@@ -0,0 +1,34 @@
+@@ -0,0 +1,35 @@
 +//go:build gooos && baremetal && kernelspace
 +
 +package interrupt
@@ -288,10 +324,11 @@ index 0000000..1a6297e
 +//go:linkname gooos_cli cli
 +func gooos_cli()
 +
-+// Counter bumped by the gooos common ISR prologue / epilogue
-+// (src/isr.S), defined as a .bss symbol there to avoid TinyGo's
-+// dead-code elimination of Go-level vars only referenced from
-+// assembly. Linkname target: unqualified "gooos_in_interrupt_depth".
++// Global interrupt depth counter, bumped by the ISR prologue/
++// epilogue in src/isr.S. Used by In() because it works reliably
++// during early boot (before per-CPU GS base may be fully set up).
++// The per-CPU counter (%gs:4) is available for SMP-safe kernel
++// checks via readInterruptDepth().
 +//
 +//go:linkname gooos_inInterruptDepth gooos_in_interrupt_depth
 +var gooos_inInterruptDepth uint32

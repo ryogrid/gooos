@@ -103,10 +103,10 @@ isr_common:
     pushq   %r14
     pushq   %r15
 
-    /* Bump BOTH the global and per-CPU interrupt depth counters.
-     * The global (gooos_in_interrupt_depth) is read by TinyGo's
-     * interrupt.In() via linkname. The per-CPU counter (%gs:4)
-     * provides SMP-correct depth for future multi-CPU use. */
+    /* Bump per-CPU interrupt depth counter (%gs:4) for SMP-safe
+     * kernel-side checks, and the global counter for TinyGo's
+     * interrupt.In() (which needs to work during early boot
+     * before per-CPU GS base may be fully reliable). */
     incl    gooos_in_interrupt_depth(%rip)
     incl    %gs:4
 
@@ -125,9 +125,7 @@ isr_common:
 
     movq    %rbx, %rsp              /* restore original RSP */
 
-    /* Leave ISR context — decrement both counters before popping
-     * regs so pagefaults on the pop sequence (should never happen)
-     * would still see depth=0 when the kernel halts. */
+    /* Leave ISR context — decrement both counters. */
     decl    gooos_in_interrupt_depth(%rip)
     decl    %gs:4
 

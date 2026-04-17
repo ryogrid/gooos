@@ -262,16 +262,18 @@ func apEntry(apIndex uint64) {
 	serialPutChar('\r')
 	serialPutChar('\n')
 
-	// Idle: enable interrupts and halt until an IPI arrives.
-	// AP scheduler entry requires deeper TinyGo runtime
-	// synchronization (sleepQueue/timerQueue locks, GC
-	// stop-the-world, allocator safety) beyond what's currently
-	// implemented. The SMP infrastructure is in place (per-CPU
-	// GDT/TSS/runqueues/spinlocks/IPI) but full AP scheduling
-	// is deferred to a future session.
+	// AP scheduler entry: gated behind bspBootDone. APs enter the
+	// scheduler after BSP boot is complete and steal work via IPI
+	// wakeup from elfSpawn. Requires heap spinlock + Queue spinlock
+	// for SMP safety.
 	//
-	// Boot-phase gating (bspBootDone) is implemented but AP
-	// scheduler entry is gated behind it for future use.
+	// CURRENTLY DISABLED: despite heap lock and Queue spinlocks,
+	// APs crash from remaining unsynchronized TinyGo runtime
+	// internals (scheduler state, map operations, etc.). Full
+	// resolution requires comprehensive TinyGo SMP fork.
+	//
+	// for bspBootDone == 0 { gooosPause() }
+	// apSchedulerEntry()
 	sti()
 	for {
 		hlt()
