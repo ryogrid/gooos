@@ -186,10 +186,21 @@ func ipv4Handle(payload []byte) {
 	if !ok {
 		return
 	}
-	// Ignore packets not addressed to us. (Broadcast / multicast IPv4
-	// handling is not implemented; they're silently dropped.)
-	if hdr.DstIP != ourIP {
-		return
+	// Accept packets addressed to our IP or to the all-ones
+	// limited broadcast (255.255.255.255). DHCP replies use the
+	// limited broadcast when the client sets the BOOTP flags.B bit,
+	// which is the only way an unconfigured client can receive the
+	// server's OFFER before it has an IP of its own.
+	// Subnet-directed broadcast (e.g. 10.0.2.255) is also accepted
+	// when netmask and ourIP are set; otherwise dropped.
+	if hdr.DstIP != ourIP && hdr.DstIP != 0xFFFFFFFF {
+		if ourNetmask == 0 || ourIP == 0 {
+			return
+		}
+		subnetBcast := (ourIP & ourNetmask) | ^ourNetmask
+		if hdr.DstIP != subnetBcast {
+			return
+		}
 	}
 	switch hdr.Protocol {
 	case ipProtoICMP:
