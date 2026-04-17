@@ -36,11 +36,17 @@ One git commit per top-level item.
   - [x] Lock ordering documented in spinlock.go header.
   - [x] Verify: `make build` clean.
 
-- [ ] **3. Per-CPU GDT + TSS**
-  - `src/gdt.go`: `perCPUGDT`, `perCPUTSS` arrays,
-    `gdtInitPerCPU(cpuIdx)`, `tssSetRSP0` rewrite.
-  - `src/smp.go:apEntry`: call `gdtInitPerCPU(apIndex+1)`.
-  - Verify: `make build` clean; `test_sendkey.sh 1` PASS.
+- [x] **3. Per-CPU GDT + TSS**
+  - [x] `src/gdt.go`: `perCPUGDT [17]`, `perCPUTSS [17]`,
+        `perCPUGDTPtr [17]` arrays; `gdtInitPerCPU(cpuIdx)`;
+        `tssSetRSP0` rewritten for `perCPUTSS[cpuID()]`.
+  - [x] `gdtInit()` calls `gdtInitPerCPU(0)` for BSP.
+  - [x] `gdtInitPerCPU` restores GS base after `lgdtReload`
+        (lgdtReload reloads GS to flat selector, wiping MSR).
+  - [x] `src/smp.go:apEntry`: spins on `gdtReady` flag, then
+        calls `gdtInitPerCPU(apIndex+1)`.
+  - [x] Verify: `make build` clean;
+        `test_sendkey.sh 1 → pf=0 exit=3 cat=1`.
 
 - [ ] **4. Per-CPU interrupt depth**
   - `src/isr.S`: `%gs:4` instead of

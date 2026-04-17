@@ -45,6 +45,11 @@ const (
 
 const smpMaxAPs = 16
 
+// gdtReady is set to 1 by the BSP after gdtInit completes.
+// APs spin on this before calling gdtInitPerCPU so they see
+// a fully populated gdtTable template.
+var gdtReady uint32
+
 // apStacks holds per-AP stack top pointers. The trampoline indexes
 // into this array using the atomically claimed AP index.
 var apStacks [smpMaxAPs]uintptr
@@ -191,6 +196,14 @@ func smpInit() {
 func apEntry(apIndex uint64) {
 	// Initialize per-CPU storage for this AP before any per-CPU access.
 	percpuInitAP(apIndex)
+
+	// Wait for BSP to finish gdtInit (populates canonical gdtTable
+	// entries that gdtInitPerCPU copies from).
+	for gdtReady == 0 {
+	}
+
+	// Load per-CPU GDT + TSS for this AP.
+	gdtInitPerCPU(int(apIndex) + 1)
 
 	serialPutChar('A')
 	serialPutChar('P')

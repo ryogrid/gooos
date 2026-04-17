@@ -354,7 +354,9 @@ func main() {
 	percpuInitBSP()
 
 	// Set up new GDT with Ring 3 code/data segments and TSS.
+	// gdtInit also calls gdtInitPerCPU(0) for the BSP.
 	gdtInit()
+	gdtReady = 1 // Signal APs that gdtTable template is populated
 	vgaWriteLine(12, "GDT: Ring 3 + TSS loaded")
 	serialPrintln("GDT: Ring 3 + TSS loaded")
 
