@@ -103,11 +103,12 @@ isr_common:
     pushq   %r14
     pushq   %r15
 
-    /* Bump gooos_in_interrupt_depth so interrupt.In() reports true for any
-     * TinyGo runtime code that runs on this stack. The counter is defined
-     * in .bss below and linkname-bridged into runtime/interrupt via
-     * src/goroutine_irq.go. */
+    /* Bump per-CPU interrupt depth counter (%gs:4) for SMP-safe
+     * kernel-side checks, and the global counter for TinyGo's
+     * interrupt.In() (which needs to work during early boot
+     * before per-CPU GS base may be fully reliable). */
     incl    gooos_in_interrupt_depth(%rip)
+    incl    %gs:4
 
     /* Vector number is at RSP + 15*8 = RSP + 120 */
     /* Error code  is at RSP + 15*8 + 8 = RSP + 128 */
@@ -124,10 +125,9 @@ isr_common:
 
     movq    %rbx, %rsp              /* restore original RSP */
 
-    /* Leave ISR context — decrement before popping regs so pagefaults
-     * on the pop sequence (should never happen) would still see depth=0
-     * when the kernel halts. */
+    /* Leave ISR context — decrement both counters. */
     decl    gooos_in_interrupt_depth(%rip)
+    decl    %gs:4
 
     /* Restore all general-purpose registers */
     popq    %r15

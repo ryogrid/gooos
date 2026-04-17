@@ -12,11 +12,18 @@ import "unsafe"
 const (
 	lapicBase    = uintptr(0xFEE00000) // Default LAPIC MMIO base address
 	lapicRegID   = uintptr(0x020)      // APIC ID register (bits 24-31)
+	lapicRegEOI  = uintptr(0x0B0)      // End-of-Interrupt register
 	lapicRegSVR  = uintptr(0x0F0)      // Spurious Interrupt Vector Register
 	lapicRegICRL = uintptr(0x300)      // Interrupt Command Register (low)
 	lapicRegICRH = uintptr(0x310)      // Interrupt Command Register (high)
 	lapicRegLVT0 = uintptr(0x350)      // LVT LINT0 register
 	lapicRegLVT1 = uintptr(0x360)      // LVT LINT1 register
+
+	// LAPIC timer registers (SMP v2).
+	lapicRegLVTTimer     = uintptr(0x320) // LVT Timer register
+	lapicRegTimerInitCnt = uintptr(0x380) // Timer initial count
+	lapicRegTimerCurrCnt = uintptr(0x390) // Timer current count (read-only)
+	lapicRegTimerDivCfg  = uintptr(0x3E0) // Timer divide configuration
 
 	// Page table flags for MMIO (uncacheable).
 	pagePCD = uintptr(1 << 4) // Page Cache Disable
@@ -44,6 +51,16 @@ const (
 )
 
 const smpMaxAPs = 16
+
+// gdtReady is set to 1 by the BSP after gdtInit completes.
+// APs spin on this before calling gdtInitPerCPU so they see
+// a fully populated gdtTable template.
+var gdtReady uint32
+
+// bspBootDone is set to 1 by the BSP after the full boot
+// sequence completes (services running, filesystem populated).
+// APs spin on this before entering the scheduler.
+var bspBootDone uint32
 
 // apStacks holds per-AP stack top pointers. The trampoline indexes
 // into this array using the atomically claimed AP index.
@@ -74,6 +91,14 @@ func lapicWrite(reg uintptr, val uint32) {
 	*(*uint32)(unsafe.Pointer(lapicBase + reg)) = val
 }
 
+// lapicSendEOI signals end-of-interrupt to the Local APIC.
+// Must be called at the end of every LAPIC-routed interrupt handler.
+//
+//go:nosplit
+func lapicSendEOI() {
+	lapicWrite(lapicRegEOI, 0)
+}
+
 // lapicWaitICR spins until the ICR delivery status bit (12) is idle.
 func lapicWaitICR() {
 	for lapicRead(lapicRegICRL)&(1<<12) != 0 {
@@ -90,7 +115,11 @@ func ioDelay(us int) {
 // smpInit discovers APs, boots them via INIT-SIPI-SIPI, and reports
 // the total core count on VGA and serial.
 func smpInit() {
-	// Map LAPIC MMIO page as identity-mapped, uncacheable.
+	// Map LAPIC MMIO page (0xFEE00000) as identity-mapped,
+	// uncacheable. This address is ABOVE the 1 GiB boot identity
+	// map, so a 4 KiB mapPage is required. The PML4[0] → PDP[3]
+	// entry is shared with child processes via newProcPML4's full
+	// PDP copy.
 	mapPage(lapicBase, lapicBase, pagePresent|pageWrite|pagePCD|pagePWT)
 
 	// Configure LVT LINT0 for ExtINT (PIC pass-through) and LINT1 for NMI
@@ -189,6 +218,33 @@ func smpInit() {
 //
 //export apEntry
 func apEntry(apIndex uint64) {
+	// Initialize per-CPU storage for this AP before any per-CPU access.
+	percpuInitAP(apIndex)
+
+	// Wait for BSP to finish gdtInit (populates canonical gdtTable
+	// entries that gdtInitPerCPU copies from). gooosPause() provides
+	// an x86 pipeline hint and acts as a compiler barrier to prevent
+	// loop elision.
+	for gdtReady == 0 {
+		gooosPause()
+	}
+
+	// Load per-CPU GDT + TSS for this AP.
+	gdtInitPerCPU(int(apIndex) + 1)
+
+	// Enable this AP's LAPIC (software-enable bit + spurious vector).
+	// The BSP does this in smpInit; APs must do it themselves.
+	svr := lapicRead(lapicRegSVR)
+	lapicWrite(lapicRegSVR, svr|(1<<8)|0xFF)
+
+	// Wait for BSP to finish LAPIC timer calibration.
+	for lapicCalibratedInitCnt == 0 {
+		gooosPause()
+	}
+	// AP LAPIC timer deferred — enabling it causes boot hang.
+	// APs will be woken by IPI or PIC passthrough timer tick.
+	// lapicTimerInit()
+
 	serialPutChar('A')
 	serialPutChar('P')
 	serialPutChar(' ')
@@ -206,14 +262,27 @@ func apEntry(apIndex uint64) {
 	serialPutChar('\r')
 	serialPutChar('\n')
 
-	// Idle: enable interrupts and halt until an IPI arrives. v1 does
-	// not send IPIs; SMP v2 will use them for cross-CPU goroutine
-	// wakeups.
+	// Wait for BSP to complete its full boot sequence.
+	for bspBootDone == 0 {
+		gooosPause()
+	}
+
+	// Enter the TinyGo scheduler loop on this AP.
 	sti()
+	apSchedulerEntry()
+
+	// Safety net.
 	for {
 		hlt()
 	}
 }
+
+// apSchedulerEntry bridges into TinyGo's apScheduler() function
+// which enters the scheduler loop without reinitializing the heap
+// or calling main.
+//
+//go:linkname apSchedulerEntry runtime.apScheduler
+func apSchedulerEntry()
 
 // ---------- ACPI MADT Parsing ----------
 
@@ -307,6 +376,14 @@ func parseMADT(madtAddr uintptr, bspAPICID uint32) int {
 			flags := *(*uint32)(unsafe.Pointer(madtAddr + offset + 4))
 			if flags&1 != 0 && uint32(apicID) != bspAPICID {
 				apCount++
+			}
+		}
+		if entryType == 1 && entryLen >= 12 {
+			// Type 1: IOAPIC entry.
+			// Offset 4: IOAPIC MMIO base address (4 bytes).
+			addr := uintptr(*(*uint32)(unsafe.Pointer(madtAddr + offset + 4)))
+			if ioapicBase == 0 && addr != 0 {
+				ioapicBase = addr
 			}
 		}
 		offset += entryLen

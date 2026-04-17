@@ -278,12 +278,16 @@ tinygo_scanstack:
 lgdtReload:
     lgdt    (%rdi)
 
-    /* Reload data segments with kernel data selector (0x10). */
+    /* Reload data segments with kernel data selector (0x10).
+     * Skip GS — its base is managed via IA32_GS_BASE MSR for
+     * per-CPU storage. Loading the GS selector would zero the
+     * MSR value, breaking %gs:offset access in ISR prologues
+     * and readInterruptDepth(). */
     movw    $0x10, %ax
     movw    %ax, %ds
     movw    %ax, %es
     movw    %ax, %fs
-    movw    %ax, %gs
+    /* movw    %ax, %gs — intentionally skipped (SMP v2) */
     movw    %ax, %ss
 
     /* Reload CS via far return: push selector + return address, then lretq. */
@@ -373,6 +377,84 @@ __ehdr_start:
     .quad   0                        /* p_filesz: (unused by findGlobals) */
     .quad   _globals_size            /* p_memsz: size of globals region */
     .quad   0                        /* p_align: (unused) */
+
+    /* ---- wrmsr: write a 64-bit value to an MSR ----------------------- */
+    /* wrmsr(msr uint32, val uint64)                                    */
+    /* SysV ABI: edi = MSR number, rsi = value.                         */
+    /* x86 wrmsr: ECX = MSR, EDX:EAX = value.                          */
+    .text
+    .global wrmsr
+wrmsr:
+    movl    %edi, %ecx          /* MSR number */
+    movl    %esi, %eax          /* low 32 bits of val */
+    shrq    $32, %rsi
+    movl    %esi, %edx          /* high 32 bits of val */
+    wrmsr
+    ret
+
+    /* ---- rdmsr: read a 64-bit value from an MSR ---------------------- */
+    /* rdmsr(msr uint32) uint64                                          */
+    /* SysV ABI: edi = MSR number. Returns value in rax.                 */
+    .global rdmsr
+rdmsr:
+    movl    %edi, %ecx
+    rdmsr
+    shlq    $32, %rdx
+    orq     %rdx, %rax
+    ret
+
+    /* ---- cpuID: return current CPU index from per-CPU storage -------- */
+    /* cpuID() uint32                                                    */
+    /* Reads %gs:0 (pcpuOffCPUIndex). Must be called after percpuInit.  */
+    .global cpuID
+cpuID:
+    movl    %gs:0, %eax
+    ret
+
+    /* ---- spinlockAcquire: xchg-based spinlock acquire ----------------- */
+    /* spinlockAcquire(lock *uint32)                                     */
+    /* SysV ABI: rdi = pointer to lock word. Spins until acquired.       */
+    .global spinlockAcquire
+spinlockAcquire:
+    movl    $1, %eax
+.Lspin_retry:
+    xchgl   %eax, (%rdi)
+    testl   %eax, %eax
+    jnz     .Lspin_wait
+    ret
+.Lspin_wait:
+    pause                       /* hint: spin-wait loop */
+    movl    (%rdi), %eax        /* test without xchg (TTAS pattern) */
+    testl   %eax, %eax
+    jnz     .Lspin_wait
+    jmp     .Lspin_retry
+
+    /* ---- spinlockRelease: release spinlock with memory fence ---------- */
+    /* spinlockRelease(lock *uint32)                                      */
+    /* SysV ABI: rdi = pointer to lock word.                              */
+    .global spinlockRelease
+spinlockRelease:
+    movl    $0, (%rdi)
+    mfence
+    ret
+
+    /* ---- readInterruptDepth: per-CPU interrupt depth counter --------- */
+    /* readInterruptDepth() uint32                                       */
+    /* Reads %gs:4 (pcpuOffInterruptDepth).                             */
+    .global readInterruptDepth
+readInterruptDepth:
+    movl    %gs:4, %eax
+    ret
+
+    /* ---- pause: x86 spin-wait hint ----------------------------------- */
+    /* pause()                                                           */
+    /* CPU pipeline hint for spin-wait loops. Reduces power and avoids   */
+    /* bus contention. Also acts as a compiler barrier (Go function      */
+    /* call prevents loop elision).                                      */
+    .global gooosPause
+gooosPause:
+    pause
+    ret
 
     /* ---- Heap region (4 MiB, NOBITS) -------------------------------- */
     /* Defined here as an @nobits section so the linker places it in a    */

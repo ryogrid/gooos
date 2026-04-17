@@ -103,8 +103,12 @@ func handleDivisionError(vector uint64) {
 // not have a specific handler registered. Sends EOI so the PIC is not
 // left stuck.
 func handleDefaultIRQ(vector uint64) {
-	irq := uint8(vector - 32)
-	picSendEOI(irq)
+	if ioapicActive {
+		lapicSendEOI()
+	} else {
+		irq := uint8(vector - 32)
+		picSendEOI(irq)
+	}
 }
 
 // hlt executes the HLT instruction. Implemented in stubs.S.
@@ -141,6 +145,10 @@ func main() {
 	for i := 32; i <= 47; i++ {
 		registerHandler(i, handleDefaultIRQ)
 	}
+
+	// Set up per-CPU GS base for BSP BEFORE interrupts are enabled.
+	// The ISR prologue uses %gs:4 for the per-CPU interrupt depth counter.
+	percpuInitBSPEarly()
 
 	// Initialize PIT channel 0 at ~100 Hz and register the timer IRQ handler.
 	pitInit()
@@ -346,12 +354,40 @@ func main() {
 	}()
 
 	// Boot Application Processors via INIT-SIPI-SIPI.
+	// smpInit maps the LAPIC MMIO page, so per-CPU init must follow.
 	smpInit()
 
+	// Fill in BSP's APIC ID (requires LAPIC MMIO mapped by smpInit).
+	percpuInitBSPLate()
+
 	// Set up new GDT with Ring 3 code/data segments and TSS.
+	// gdtInit also calls gdtInitPerCPU(0) for the BSP.
 	gdtInit()
+	gdtReady = 1 // Signal APs that gdtTable template is populated
 	vgaWriteLine(12, "GDT: Ring 3 + TSS loaded")
 	serialPrintln("GDT: Ring 3 + TSS loaded")
+
+	// Calibrate the LAPIC timer using PIT as reference, then start
+	// the BSP's LAPIC timer at 100 Hz and register the handler.
+	registerHandler(lapicTimerVector, handleLAPICTimer)
+	lapicTimerCalibrate()
+	lapicTimerInit()
+	serialPrintln("LAPIC timer: BSP initialized at 100 Hz")
+
+	// Register IPI handlers before IOAPIC (which enables interrupt
+	// delivery to APs).
+	registerHandler(ipiWakeupVector, handleWakeupIPI)
+	serialPrintln("IPI: wakeup handler registered at vector 0xFC")
+
+	// IOAPIC initialization disabled: QEMU's IOAPIC IRQ0
+	// redirection does not deliver PIT timer interrupts correctly
+	// when switching from PIC pass-through, causing afterTicks and
+	// sys_sleep to hang. PIC pass-through via LINT0 (ExtINT)
+	// continues to work. IOAPIC support deferred until the IRQ
+	// routing issue is resolved.
+	//
+	// ioapicInit()
+	serialPrintln("IOAPIC: disabled (PIC pass-through active)")
 
 	// Phase B self-test: verify the TinyGo Task struct layout
 	// assumed by src/goroutine_tss.go before anything depends on it.
@@ -412,6 +448,10 @@ func main() {
 	fsWrite("edit.elf", userElf_edit[:])
 	serialPrintln("  edit.elf: " + utoa(uint64(len(userElf_edit))) + " bytes")
 
+	fsCreate("smpprobe.elf")
+	fsWrite("smpprobe.elf", userElf_smpprobe[:])
+	serialPrintln("  smpprobe.elf: " + utoa(uint64(len(userElf_smpprobe))) + " bytes")
+
 	// Store a test file for cat/wc demos.
 	fsCreate("hello.txt")
 	fsWrite("hello.txt", []byte("Hello from the gooos filesystem!\nThis is a test file.\n"))
@@ -431,6 +471,11 @@ func main() {
 
 	vgaWriteLine(14, "Scheduler: TinyGo goroutines active")
 	serialPrintln("Scheduler: TinyGo goroutines active")
+
+	// Signal APs that BSP boot is complete. All services are
+	// running, filesystem populated. APs will now enter the
+	// scheduler and begin work-stealing.
+	bspBootDone = 1
 
 	// Load shell and jump to Ring 3. Does not return.
 	setupUserspace()

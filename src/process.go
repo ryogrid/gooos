@@ -63,6 +63,10 @@ type Process struct {
 	pid uint32
 }
 
+// procLock protects procByTask, procByPID, nextPID, and
+// foregroundProc for SMP safety. Lock ordering rank 2.
+var procLock Spinlock
+
 var (
 	// procByTask maps a goroutine's *task.Task (as uintptr) to its
 	// *Process. Populated by ring3Wrapper; consulted by any syscall
@@ -81,6 +85,7 @@ var (
 )
 
 // allocPID returns a fresh PID and bumps the counter.
+// Caller must hold procLock.
 func allocPID() uint32 {
 	pid := nextPID
 	nextPID++
@@ -97,13 +102,20 @@ func allocPID() uint32 {
 var foregroundProc *Process
 
 // setForegroundProc installs p as the keyboard owner.
+// Protected by procLock.
 func setForegroundProc(p *Process) {
+	flags := procLock.Acquire()
 	foregroundProc = p
+	procLock.Release(flags)
 }
 
 // getForegroundProc returns the current foreground (or nil).
+// Protected by procLock.
 func getForegroundProc() *Process {
-	return foregroundProc
+	flags := procLock.Acquire()
+	p := foregroundProc
+	procLock.Release(flags)
+	return p
 }
 
 // Argument page virtual address: kernel writes arg string here
@@ -115,20 +127,30 @@ const userStackBase = uintptr(0x7FFF0000)
 
 // currentProc returns the Process for the currently running
 // goroutine, or nil if this is not a Ring-3-hosting goroutine.
+// Protected by procLock.
 func currentProc() *Process {
-	return procByTask[taskCurrent()]
+	flags := procLock.Acquire()
+	p := procByTask[taskCurrent()]
+	procLock.Release(flags)
+	return p
 }
 
 // setCurrentProc records proc as the Process for the current
 // goroutine. Called once by ring3Wrapper per goroutine.
+// Protected by procLock.
 func setCurrentProc(proc *Process) {
+	flags := procLock.Acquire()
 	procByTask[taskCurrent()] = proc
+	procLock.Release(flags)
 }
 
 // clearCurrentProc removes the current goroutine's Process mapping.
 // Called by processExit before the child goroutine halts.
+// Protected by procLock.
 func clearCurrentProc() {
+	flags := procLock.Acquire()
 	delete(procByTask, taskCurrent())
+	procLock.Release(flags)
 }
 
 // processRecordPage records a virtual-to-physical mapping in the
@@ -170,12 +192,16 @@ func elfExecTrampoline() {
 // The pool slot is acquired here and released by processExit. See
 // impldoc/deferred_stack_reclaim.md.
 func ring3Wrapper(proc *Process) {
+	serialPrint("ring3Wrapper: cpuID=")
+	serialPrintln(utoa(uint64(cpuID())))
 	ring3WrapperHandle = taskCurrent()
 	idx, kernelStackTop := ring3StackAcquire()
+	serialPrintln("ring3Wrapper: stackAcquired")
 	proc.poolIdx = idx
 	setCurrentProc(proc)
 	registerRing3GWithStack(kernelStackTop, proc)
 	tssSetRSP0ForCurrentG()
+	serialPrintln("ring3Wrapper: jumping to Ring 3")
 	// Allow Ring 3 to trigger int 0x80 each time a Ring-3 goroutine
 	// enters; safe to call repeatedly.
 	setGateDPL3(0x80)
@@ -223,10 +249,14 @@ func elfSpawn(filename, args string, parent *Process) (*Process, bool) {
 		parent:  parent,
 		exitCh:  make(chan uintptr, 1),
 		poolIdx: -1,
-		pid:     allocPID(),
 	}
 	child.pml4 = newProcPML4()
-	procByPID[child.pid] = child
+	{
+		fl := procLock.Acquire()
+		child.pid = allocPID()
+		procByPID[child.pid] = child
+		procLock.Release(fl)
+	}
 
 	// fd inheritance — shallow copy of parent's table with a
 	// refcount bump for each pipe end so the pipe survives
@@ -315,7 +345,11 @@ func processWait(proc *Process) uintptr {
 	setForegroundProc(proc)
 	exitCode := <-proc.exitCh
 	setForegroundProc(prevForeground)
-	delete(procByPID, proc.pid)
+	{
+		fl := procLock.Acquire()
+		delete(procByPID, proc.pid)
+		procLock.Release(fl)
+	}
 	if !firstExecAudited {
 		firstExecAudited = true
 		stackSizeAudit()
@@ -394,12 +428,15 @@ func processExit(exitCode uintptr) {
 		proc.poolIdx = -1
 	}
 	// This goroutine was entered from an int 0x80 ISR, so the ISR
-	// prologue bumped gooos_in_interrupt_depth. The ISR epilogue on
-	// this goroutine's kernel stack will never run (taskPause below
-	// parks forever). Decrement by 1 to represent leaving THIS
-	// ISR frame without underflowing any outer nesting level.
+	// prologue bumped both the global and per-CPU interrupt depth.
+	// The ISR epilogue on this goroutine's kernel stack will never
+	// run (taskPause below parks forever). Decrement both counters.
 	if gooosInInterruptDepth > 0 {
 		gooosInInterruptDepth--
+	}
+	if readInterruptDepth() > 0 {
+		idx := cpuID()
+		perCPUBlocks[idx].InterruptDepth--
 	}
 	taskPause() // never returns for this goroutine
 	for {

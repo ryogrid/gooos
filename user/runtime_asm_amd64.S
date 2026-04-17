@@ -57,5 +57,30 @@ tinygo_scanCurrentStack:
 tinygo_scanstack:
     retq
 
+/* ---------- SMP stubs for user-space builds --------------------------------
+ *
+ * The TinyGo runtime's Queue (internal/task/queue.go) uses
+ * spinlockAcquire/spinlockRelease and cpuID for SMP safety.
+ * In user-space (single-threaded Ring-3 processes), these are
+ * no-ops: interrupts are not relevant (user code runs with IF=1
+ * always), and cpuID returns 0 (only one "CPU" per process).
+ */
+
+.section .text.spinlockAcquire
+.global spinlockAcquire
+spinlockAcquire:
+    ret
+
+.section .text.spinlockRelease
+.global spinlockRelease
+spinlockRelease:
+    ret
+
+.section .text.cpuID
+.global cpuID
+cpuID:
+    xorl    %eax, %eax
+    ret
+
     /* Non-executable stack marker (matches rt0.S). */
     .section .note.GNU-stack,"",@progbits

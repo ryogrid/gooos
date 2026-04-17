@@ -36,6 +36,12 @@ var (
 	gdtTable [gdtEntries]uint64
 	tss      [tssSize]byte
 	gdtPtr   [10]byte // packed descriptor for lgdt: 2-byte limit + 8-byte base
+
+	// Per-CPU GDT and TSS arrays for SMP v2. Each CPU loads its
+	// own GDT (with its own TSS descriptor) via lgdt + ltr.
+	perCPUGDT    [maxCPUs][gdtEntries]uint64
+	perCPUTSS    [maxCPUs][tssSize]byte
+	perCPUGDTPtr [maxCPUs][10]byte
 )
 
 // lgdtReload loads a new GDT and reloads all segment registers.
@@ -118,11 +124,79 @@ func gdtInit() {
 
 	// Load the Task State Segment into the Task Register.
 	ltr(selectorTSS)
+
+	// Build the BSP's per-CPU GDT + TSS (SMP v2). This copies
+	// the canonical gdtTable entries into perCPUGDT[0] and
+	// installs a per-CPU TSS descriptor. From this point on,
+	// tssSetRSP0 writes perCPUTSS[0] (via cpuID()).
+	gdtInitPerCPU(0)
 }
 
-// tssSetRSP0 updates the TSS RSP0 field (offset 4) to point to the
-// given kernel stack top. Called during context switches so each task
-// has its own kernel stack for Ring 3 → Ring 0 transitions.
+// tssSetRSP0 updates the current CPU's TSS RSP0 field (offset 4) to
+// point to the given kernel stack top. Called during context switches
+// so each task has its own kernel stack for Ring 3 → Ring 0
+// transitions.
+//
+//go:nosplit
 func tssSetRSP0(rsp0 uintptr) {
-	*(*uint64)(unsafe.Pointer(&tss[4])) = uint64(rsp0)
+	idx := cpuID()
+	*(*uint64)(unsafe.Pointer(&perCPUTSS[idx][4])) = uint64(rsp0)
+}
+
+// gdtInitPerCPU builds a per-CPU GDT with the same segment layout
+// as the BSP's boot GDT, but with a TSS descriptor pointing at the
+// per-CPU TSS. Loads the new GDT via lgdt and the TSS via ltr.
+//
+// cpuIdx: 0 for BSP, apIndex+1 for APs.
+func gdtInitPerCPU(cpuIdx int) {
+	// Copy segment descriptors from the BSP's canonical GDT.
+	// Entries 0-4 are identical for all CPUs.
+	perCPUGDT[cpuIdx][gdtNull] = gdtTable[gdtNull]
+	perCPUGDT[cpuIdx][gdtKernelCode] = gdtTable[gdtKernelCode]
+	perCPUGDT[cpuIdx][gdtKernelData] = gdtTable[gdtKernelData]
+	perCPUGDT[cpuIdx][gdtUserCode] = gdtTable[gdtUserCode]
+	perCPUGDT[cpuIdx][gdtUserData] = gdtTable[gdtUserData]
+
+	// Zero this CPU's TSS, set IOPB offset.
+	for i := 0; i < tssSize; i++ {
+		perCPUTSS[cpuIdx][i] = 0
+	}
+	*(*uint16)(unsafe.Pointer(&perCPUTSS[cpuIdx][102])) = tssSize
+
+	// Build TSS descriptor pointing at this CPU's TSS.
+	tssBase := uint64(uintptr(unsafe.Pointer(&perCPUTSS[cpuIdx][0])))
+	tssLimit := uint64(tssSize - 1)
+
+	var low uint64
+	low |= tssLimit & 0xFFFF
+	low |= ((tssBase & 0xFFFF) << 16)
+	low |= ((tssBase >> 16) & 0xFF) << 32
+	low |= uint64(0x89) << 40
+	low |= ((tssLimit >> 16) & 0xF) << 48
+	low |= ((tssBase >> 24) & 0xFF) << 56
+	perCPUGDT[cpuIdx][gdtTSSLow] = low
+	perCPUGDT[cpuIdx][gdtTSSHigh] = tssBase >> 32
+
+	// Pack GDT pointer.
+	limit := uint16(unsafe.Sizeof(perCPUGDT[cpuIdx]) - 1)
+	base := uint64(uintptr(unsafe.Pointer(&perCPUGDT[cpuIdx][0])))
+	perCPUGDTPtr[cpuIdx][0] = byte(limit)
+	perCPUGDTPtr[cpuIdx][1] = byte(limit >> 8)
+	perCPUGDTPtr[cpuIdx][2] = byte(base)
+	perCPUGDTPtr[cpuIdx][3] = byte(base >> 8)
+	perCPUGDTPtr[cpuIdx][4] = byte(base >> 16)
+	perCPUGDTPtr[cpuIdx][5] = byte(base >> 24)
+	perCPUGDTPtr[cpuIdx][6] = byte(base >> 32)
+	perCPUGDTPtr[cpuIdx][7] = byte(base >> 40)
+	perCPUGDTPtr[cpuIdx][8] = byte(base >> 48)
+	perCPUGDTPtr[cpuIdx][9] = byte(base >> 56)
+
+	// Load the per-CPU GDT and reload segment registers.
+	// NOTE: lgdtReload reloads GS to the flat data selector (0x10),
+	// which clears the GS base. Re-set it immediately after.
+	lgdtReload(uintptr(unsafe.Pointer(&perCPUGDTPtr[cpuIdx][0])))
+	wrmsr(ia32GSBASE, uint64(uintptr(unsafe.Pointer(&perCPUBlocks[cpuIdx]))))
+
+	// Load the per-CPU TSS.
+	ltr(selectorTSS)
 }

@@ -40,5 +40,9 @@ func pitInit() {
 //go:nosplit
 func handleTimer(vector uint64) {
 	pitTicks++
-	picSendEOI(0)
+	if ioapicActive {
+		lapicSendEOI()
+	} else {
+		picSendEOI(0)
+	}
 }

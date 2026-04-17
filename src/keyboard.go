@@ -93,7 +93,11 @@ func keyboardInit() {}
 //go:nosplit
 func handleKeyboard(vector uint64) {
 	scancode := inb(kbdDataPort)
-	picSendEOI(1)
+	if ioapicActive {
+		lapicSendEOI()
+	} else {
+		picSendEOI(1)
+	}
 
 	// Extended key prefix (0xE0): consume and set flag for the
 	// next scancode. Arrow keys, Home, End, Delete, right-Ctrl

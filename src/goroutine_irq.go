@@ -1,13 +1,10 @@
-// src/goroutine_irq.go — Go-side reference to the ISR-depth counter
-// defined as a .bss symbol in src/isr.S (`gooos_in_interrupt_depth`).
+// src/goroutine_irq.go — ISR-depth counter accessors.
 //
-// The TinyGo runtime's interrupt package (patched via
-// scripts/patch_tinygo_runtime.sh) reads this counter to implement
-// interrupt.In(). src/isr.S increments it in the common ISR prologue
-// and decrements in the epilogue. The symbol must be defined in
-// assembly because TinyGo's dead-code eliminator strips Go-defined
-// variables that are only referenced from assembly and across the
-// //go:linkname boundary.
+// Dual-counter approach: the ISR prologue/epilogue in src/isr.S
+// increments BOTH the global gooos_in_interrupt_depth (used by
+// TinyGo's interrupt.In() for reliable early-boot checks) and
+// the per-CPU %gs:4 counter (SMP-safe, used by kernel code via
+// readInterruptDepth).
 
 package main
 
@@ -16,10 +13,24 @@ package main
 //go:linkname gooosInInterruptDepth gooos_in_interrupt_depth
 var gooosInInterruptDepth uint32
 
-// Reference prevents the Go toolchain from dropping the linkname on
-// the var, which in turn keeps the cross-unit reference resolvable.
+// Reference prevents the Go toolchain from dropping the linkname.
 //
 //go:noinline
 func readInInterruptDepth() uint32 { return gooosInInterruptDepth }
 
 var _ = readInInterruptDepth
+
+// readInterruptDepth reads the per-CPU interrupt depth counter
+// from %gs:4. Implemented in stubs.S.
+//
+//go:nosplit
+//go:linkname readInterruptDepth readInterruptDepth
+func readInterruptDepth() uint32
+
+// interruptIn returns true if the current CPU is inside an ISR.
+// Uses the per-CPU counter (SMP-safe).
+//
+//go:nosplit
+func interruptIn() bool {
+	return readInterruptDepth() != 0
+}

@@ -47,4 +47,5 @@ const (
 	sysReadKey     = 18
 	sysVgaWriteAt  = 19
 	sysVgaSetCursor = 20
+	sysGetcpuid     = 21
 )

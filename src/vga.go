@@ -9,6 +9,9 @@ package main
 
 import "unsafe"
 
+// vgaLock protects VGA console state for SMP safety. Lock ordering rank 4.
+var vgaLock Spinlock
+
 // VGA console state.
 var (
 	vgaCursorRow int // current cursor row (0-24)

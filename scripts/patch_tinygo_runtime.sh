@@ -54,12 +54,20 @@ TS64="$TINYGO_SRC/internal/task/task_stack_amd64.go"
 # Canonical "clean" state: all four runtime files present, both
 # runtime_gooos.go variants carry their kernelspace discriminator,
 # and the task_stack.go hunks are in place.
+SCHED="$TINYGO_SRC/runtime/scheduler.go"
+CHAN="$TINYGO_SRC/runtime/chan.go"
+GCBLK="$TINYGO_SRC/runtime/gc_blocks.go"
+
 if [[ -f "$RG" && -f "$RGU" && -f "$IG" && -f "$IGU" ]] \
     && grep -q '&& kernelspace' "$RG" \
     && grep -q '&& !kernelspace' "$RGU" \
     && grep -q 'gooosStackOverflow' "$TS" \
-    && grep -q 'gooosOnResume' "$TS64"; then
-    echo "already-applied: tinygo runtime patch present at $TINYGO_SRC"
+    && grep -q 'gooosOnResume' "$TS64" \
+    && grep -q 'runqueues' "$SCHED" \
+    && grep -q 'systemStacks' "$TS64" \
+    && grep -q 'gooosCpuID' "$CHAN" \
+    && grep -q 'gooos_spinlockAcquire' "$TINYGO_SRC/internal/task/queue.go"; then
+    echo "already-applied: tinygo runtime patch (SMP v2) present at $TINYGO_SRC"
     echo "(delete the gooos* runtime files and the in-place changes to re-run)"
     exit 0
 fi
@@ -86,7 +94,10 @@ fi
 # expected outcome, not a failure; clear the residuals so future
 # runs don't confuse the state.
 rm -f "$TINYGO_SRC/internal/task/task_stack.go.rej" \
-      "$TINYGO_SRC/internal/task/task_stack_amd64.go.rej"
+      "$TINYGO_SRC/internal/task/task_stack_amd64.go.rej" \
+      "$TINYGO_SRC/runtime/scheduler.go.rej" \
+      "$TINYGO_SRC/runtime/chan.go.rej" \
+      "$TINYGO_SRC/runtime/gc_blocks.go.rej"
 
 # Post-condition: every expected artifact is in place and carries
 # the right discriminator. Any miss means the tree is in an
@@ -112,6 +123,19 @@ if ! grep -q 'gooosStackOverflow' "$TS"; then
 fi
 if ! grep -q 'gooosOnResume' "$TS64"; then
     echo "error: $TS64 is missing the gooosOnResume hook" >&2
+    fail=1
+fi
+# SMP v2 post-conditions.
+if ! grep -q 'runqueues' "$SCHED"; then
+    echo "error: $SCHED is missing per-CPU runqueues" >&2
+    fail=1
+fi
+if ! grep -q 'systemStacks' "$TS64"; then
+    echo "error: $TS64 is missing per-CPU systemStacks" >&2
+    fail=1
+fi
+if ! grep -q 'gooosCpuID' "$CHAN"; then
+    echo "error: $CHAN is missing gooosCpuID calls" >&2
     fail=1
 fi
 if (( fail )); then

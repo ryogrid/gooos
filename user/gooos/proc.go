@@ -59,6 +59,13 @@ func Sleep(ms int) {
 	syscall1(sysSleep, uintptr(ticks))
 }
 
+// GetCpuID returns the CPU index this process is currently
+// running on (0 = BSP, 1+ = APs). The value may change between
+// calls if the scheduler migrates the process to a different core.
+func GetCpuID() int {
+	return int(syscall0(sysGetcpuid))
+}
+
 // Spawn starts a child process running the named program and
 // returns its PID immediately. The caller invokes Wait(pid)
 // later to retrieve the exit code. Returns (-1, -errno) on

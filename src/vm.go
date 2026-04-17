@@ -85,11 +85,14 @@ func vmInit() {
 	nextFreePage = (end + pageSize - 1) &^ (pageSize - 1)
 }
 
+// pageAllocLock protects the page allocator (free stack + bump
+// pointer) for SMP safety. Lock ordering rank 1 (outermost).
+var pageAllocLock Spinlock
+
 // allocPage returns the physical address of a zeroed 4 KiB page.
 // Prefers the LIFO free stack; falls back to the bump allocator.
 func allocPage() uintptr {
-	flags := readFlags()
-	cli()
+	flags := pageAllocLock.Acquire()
 
 	var page uintptr
 	if freeStackLen > 0 {
@@ -100,7 +103,7 @@ func allocPage() uintptr {
 		nextFreePage += pageSize
 	}
 
-	restoreFlags(flags)
+	pageAllocLock.Release(flags)
 
 	for i := uintptr(0); i < pageSize; i += 8 {
 		*(*uint64)(unsafe.Pointer(page + i)) = 0
@@ -113,11 +116,10 @@ func allocPage() uintptr {
 // contiguity) and always bump-allocates. Used for kernel stacks and other
 // multi-page structures accessed as a single flat region via the identity map.
 func allocPagesContig(n int) uintptr {
-	flags := readFlags()
-	cli()
+	flags := pageAllocLock.Acquire()
 	base := nextFreePage
 	nextFreePage += uintptr(n) * pageSize
-	restoreFlags(flags)
+	pageAllocLock.Release(flags)
 
 	total := uintptr(n) * pageSize
 	for i := uintptr(0); i < total; i += 8 {
@@ -138,13 +140,12 @@ func freePage(paddr uintptr) {
 		*(*uint64)(unsafe.Pointer(paddr + i)) = 0
 	}
 
-	flags := readFlags()
-	cli()
+	flags := pageAllocLock.Acquire()
 	if freeStackLen < freeStackCap {
 		freeStack[freeStackLen] = paddr
 		freeStackLen++
 	}
-	restoreFlags(flags)
+	pageAllocLock.Release(flags)
 }
 
 // mapPage maps a 4 KiB virtual page to a physical page.
@@ -358,8 +359,9 @@ func walkAndGetPaddrIn(pml4, vaddr uintptr) uintptr {
 //go:nosplit
 func handlePageFault(vector uint64) {
 	faultAddr := readCR2()
-	errCode := lastErrorCode
-	frame := (*SyscallFrame)(unsafe.Pointer(lastFramePtr))
+	idx := cpuID()
+	errCode := lastErrorCodes[idx]
+	frame := (*SyscallFrame)(unsafe.Pointer(lastFramePtrs[idx]))
 	faultRIP := frame.RIP
 
 	off := 0

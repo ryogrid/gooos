@@ -15,12 +15,10 @@ type InterruptHandler func(vector uint64)
 // handlers is the table of registered interrupt handlers, indexed by vector.
 var handlers [256]InterruptHandler
 
-// lastErrorCode holds the error code from the most recent interrupt.
-// Safe to read from a handler because interrupt gates disable IF.
-var lastErrorCode uint64
-
-// lastFramePtr holds the register frame pointer from the most recent interrupt.
-var lastFramePtr uintptr
+// Per-CPU last error code and frame pointer. Under SMP, each CPU
+// has its own ISR context; using globals would race between CPUs.
+var lastErrorCodes [maxCPUs]uint64
+var lastFramePtrs  [maxCPUs]uintptr
 
 // registerHandler registers a Go function for a given interrupt vector.
 func registerHandler(vector int, handler InterruptHandler) {
@@ -33,8 +31,9 @@ func registerHandler(vector int, handler InterruptHandler) {
 //
 //export go_interrupt_handler
 func go_interrupt_handler(vector uint64, errorCode uint64, framePtr uintptr) {
-	lastErrorCode = errorCode
-	lastFramePtr = framePtr
+	idx := cpuID()
+	lastErrorCodes[idx] = errorCode
+	lastFramePtrs[idx] = framePtr
 	if vector == 0x80 {
 		syscallDispatch((*SyscallFrame)(unsafe.Pointer(framePtr)))
 		return
