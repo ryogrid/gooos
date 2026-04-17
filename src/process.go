@@ -63,6 +63,10 @@ type Process struct {
 	pid uint32
 }
 
+// procLock protects procByTask, procByPID, nextPID, and
+// foregroundProc for SMP safety. Lock ordering rank 2.
+var procLock Spinlock
+
 var (
 	// procByTask maps a goroutine's *task.Task (as uintptr) to its
 	// *Process. Populated by ring3Wrapper; consulted by any syscall
@@ -81,6 +85,7 @@ var (
 )
 
 // allocPID returns a fresh PID and bumps the counter.
+// Caller must hold procLock.
 func allocPID() uint32 {
 	pid := nextPID
 	nextPID++
@@ -97,13 +102,20 @@ func allocPID() uint32 {
 var foregroundProc *Process
 
 // setForegroundProc installs p as the keyboard owner.
+// Protected by procLock.
 func setForegroundProc(p *Process) {
+	flags := procLock.Acquire()
 	foregroundProc = p
+	procLock.Release(flags)
 }
 
 // getForegroundProc returns the current foreground (or nil).
+// Protected by procLock.
 func getForegroundProc() *Process {
-	return foregroundProc
+	flags := procLock.Acquire()
+	p := foregroundProc
+	procLock.Release(flags)
+	return p
 }
 
 // Argument page virtual address: kernel writes arg string here
@@ -115,20 +127,30 @@ const userStackBase = uintptr(0x7FFF0000)
 
 // currentProc returns the Process for the currently running
 // goroutine, or nil if this is not a Ring-3-hosting goroutine.
+// Protected by procLock.
 func currentProc() *Process {
-	return procByTask[taskCurrent()]
+	flags := procLock.Acquire()
+	p := procByTask[taskCurrent()]
+	procLock.Release(flags)
+	return p
 }
 
 // setCurrentProc records proc as the Process for the current
 // goroutine. Called once by ring3Wrapper per goroutine.
+// Protected by procLock.
 func setCurrentProc(proc *Process) {
+	flags := procLock.Acquire()
 	procByTask[taskCurrent()] = proc
+	procLock.Release(flags)
 }
 
 // clearCurrentProc removes the current goroutine's Process mapping.
 // Called by processExit before the child goroutine halts.
+// Protected by procLock.
 func clearCurrentProc() {
+	flags := procLock.Acquire()
 	delete(procByTask, taskCurrent())
+	procLock.Release(flags)
 }
 
 // processRecordPage records a virtual-to-physical mapping in the

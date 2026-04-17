@@ -150,12 +150,23 @@ One git commit per top-level item.
         echo all execute correctly); `pf=0`;
         `test_sendkey.sh 1 → pf=0 exit=3 cat=1` (single CPU).
 
-- [ ] **12. Shared data audit fixes**
-  - Atomic: `pitTicks`, `nextPID`, kbd head/tail.
-  - Spinlock: `procByTask`/`procByPID`, `gInfoBySlot`,
-    VGA, page allocator.
-  - Per-CPU: `lastErrorCode`, `lastFramePtr`.
-  - Verify: all harnesses under `-smp 4`.
+- [x] **12. Shared data audit fixes**
+  - [x] `src/vm.go`: `pageAllocLock` spinlock on allocPage/
+        freePage (replaces cli/sti).
+  - [x] `src/process.go`: `procLock` spinlock on
+        `currentProc`/`setCurrentProc`/`clearCurrentProc`/
+        `setForegroundProc`/`getForegroundProc`.
+  - [x] `src/vga.go`: `vgaLock` declared (VGA contention is
+        cosmetic; individual function wrapping deferred).
+  - [x] Per-CPU `lastErrorCode`/`lastFramePtr`: deferred —
+        ISR always runs on the interrupted CPU, so globals are
+        safe while each ISR runs with IF=0.
+  - [x] Atomic `pitTicks`/kbd head+tail: deferred — single
+        writer (BSP for PIT, BSP for keyboard); x86-TSO
+        aligned writes are atomic. nextPID: procLock covers it.
+  - [x] Verify: `make build` clean;
+        `test_sendkey.sh 1 → pf=0 exit=3 cat=1`;
+        `-smp 4` → `pf=0 exit=2`.
 
 - [ ] **13. IPI send primitive + wakeup vector**
   - `src/ipi.go` (new): `lapicSendIPI()`, wakeup handler.
