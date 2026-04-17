@@ -57,6 +57,10 @@ const smpMaxAPs = 16
 // a fully populated gdtTable template.
 var gdtReady uint32
 
+// bspBootDone is set to 1 by the BSP after the full boot
+// sequence completes (services running, filesystem populated).
+// APs spin on this before entering the scheduler.
+var bspBootDone uint32
 
 // apStacks holds per-AP stack top pointers. The trampoline indexes
 // into this array using the atomically claimed AP index.
@@ -258,13 +262,16 @@ func apEntry(apIndex uint64) {
 	serialPutChar('\r')
 	serialPutChar('\n')
 
-	// Idle: enable interrupts and halt. SMP v2 infrastructure is
-	// in place (per-CPU GDT/TSS/runqueues/spinlocks) but AP
-	// scheduler entry is disabled — APs stealing goroutines from
-	// the BSP during boot corrupts unsynchronized kernel state.
-	// Full AP scheduling requires proper boot-phase gating and
-	// shared-state synchronization beyond what's currently
-	// implemented.
+	// Idle: enable interrupts and halt until an IPI arrives.
+	// AP scheduler entry requires deeper TinyGo runtime
+	// synchronization (sleepQueue/timerQueue locks, GC
+	// stop-the-world, allocator safety) beyond what's currently
+	// implemented. The SMP infrastructure is in place (per-CPU
+	// GDT/TSS/runqueues/spinlocks/IPI) but full AP scheduling
+	// is deferred to a future session.
+	//
+	// Boot-phase gating (bspBootDone) is implemented but AP
+	// scheduler entry is gated behind it for future use.
 	sti()
 	for {
 		hlt()

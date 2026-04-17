@@ -517,7 +517,7 @@ index 0000000..0835d65
 +	exit(0)
 +}
 diff --git a/src/runtime/scheduler.go b/src/runtime/scheduler.go
-index 30b2da8..05b3a91 100644
+index 30b2da8..099a2d5 100644
 --- a/src/runtime/scheduler.go
 +++ b/src/runtime/scheduler.go
 @@ -23,14 +23,26 @@ const asyncScheduler = GOOS == "js"
@@ -549,7 +549,7 @@ index 30b2da8..05b3a91 100644
  // Simple logging, for debugging.
  func scheduleLog(msg string) {
  	if schedulerDebug {
-@@ -75,9 +87,9 @@ func Goexit() {
+@@ -75,9 +87,18 @@ func Goexit() {
  	deadlock()
  }
  
@@ -558,10 +558,19 @@ index 30b2da8..05b3a91 100644
  func runqueuePushBack(t *task.Task) {
 -	runqueue.Push(t)
 +	runqueues[gooosCpuID()].Push(t)
++}
++
++// runqueuePushTo pushes a task to a specific CPU's run queue.
++// Used by the gooos kernel to distribute user processes to APs.
++func runqueuePushTo(t *task.Task, cpuIdx uint32) {
++	if cpuIdx >= gooosSMPMaxCPUs {
++		cpuIdx = 0
++	}
++	runqueues[cpuIdx].Push(t)
  }
  
  // Add this task to the sleep queue, assuming its state is set to sleeping.
-@@ -175,7 +187,7 @@ func scheduler() {
+@@ -175,7 +196,7 @@ func scheduler() {
  			sleepQueueBaseTime += timeUnit(t.Data)
  			sleepQueue = t.Next
  			t.Next = nil
@@ -570,16 +579,20 @@ index 30b2da8..05b3a91 100644
  		}
  
  		// Check for expired timers to trigger.
-@@ -190,7 +202,7 @@ func scheduler() {
+@@ -190,7 +211,11 @@ func scheduler() {
  			tn.callback(tn, delay)
  		}
  
 -		t := runqueue.Pop()
 +		t := runqueues[gooosCpuID()].Pop()
++		if t == nil {
++			// SMP v2: try to steal work from other CPUs.
++			t = stealWork()
++		}
  		if t == nil {
  			if sleepQueue == nil && timerQueue == nil {
  				if asyncScheduler {
-@@ -245,7 +257,7 @@ func scheduler() {
+@@ -245,7 +270,7 @@ func scheduler() {
  func minSched() {
  	scheduleLog("start nested scheduler")
  	for !schedulerDone {
@@ -588,7 +601,7 @@ index 30b2da8..05b3a91 100644
  		if t == nil {
  			break
  		}
-@@ -257,6 +269,6 @@ func minSched() {
+@@ -257,6 +282,28 @@ func minSched() {
  }
  
  func Gosched() {
@@ -596,6 +609,28 @@ index 30b2da8..05b3a91 100644
 +	runqueues[gooosCpuID()].Push(task.Current())
  	task.Pause()
  }
++
++// stealWork attempts to steal a task from another CPU's runqueue.
++// Round-robin scan starting from the CPU after the current one.
++// Returns nil if no work is available on any other CPU.
++func stealWork() *task.Task {
++	me := gooosCpuID()
++	for i := uint32(1); i < gooosSMPMaxCPUs; i++ {
++		peer := (me + i) % gooosSMPMaxCPUs
++		t := runqueues[peer].Pop()
++		if t != nil {
++			return t
++		}
++	}
++	return nil
++}
++
++// apScheduler is the TinyGo scheduler entry for AP cores.
++// Called from gooos after per-CPU init (GS base, GDT, TSS).
++// Does not reinitialize the heap or call main.
++func apScheduler() {
++	scheduler()
++}
 diff --git a/src/runtime/wait_gooos.go b/src/runtime/wait_gooos.go
 new file mode 100644
 index 0000000..3841e65
