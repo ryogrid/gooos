@@ -83,10 +83,12 @@ lands and the listed verification passes.
 
 ## Phase 4 — Robustness, buffers, diagnostics
 
-- [ ] `feat(net): packet buffer pool (128×2048)` — `src/netbuf.go`
+- [x] `feat(net): packet buffer pool (128×2048)` — `src/netbuf.go`
       (allocPagesContig(64), [2]uint64 free bitmap, `ctz64`, `netBufAlloc`/
       `netBufFreeIdx`/`netBufSlice`, `netBufLock` rank 5). Verify:
-      `make build` clean.
+      `make build` clean. **Verified**: serial log shows `TEST: netbuf
+      lifecycle PASS` (fills pool, rejects 129th alloc, reclaims freed
+      slot).
 - [ ] `feat(net): network statistics` — `src/netstats.go` (18-counter
       NetStats, `statsInc`, `netStatsSnapshot`, `statsLock` rank 8). Wire
       counters into ethernet/arp/ipv4/icmp/udp dispatch. Verify:
