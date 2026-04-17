@@ -133,6 +133,19 @@ run-net: $(KERNEL_ISO) check-multiboot
 	  -device e1000,netdev=n0 \
 	  -netdev user,id=n0,hostfwd=udp::9999-:7
 
+# test-net boots the kernel with an e1000 NIC under user-mode networking,
+# greps serial markers (PCI/MAC/link/NET init/ARP gratuitous/ICMP+netbuf
+# self-tests/UDP listener/netDiag), and round-trips a payload through
+# the hostfwd UDP echo path. Exits 0 on PASS.
+test-net: $(KERNEL_ISO) check-multiboot
+	bash scripts/test_net.sh
+
+# test-net-tap is the TAP-mode integration test (ping + nc against a
+# live 10.0.0.2 guest). Requires root / CAP_NET_ADMIN to set up tap0.
+# Not part of the per-phase gate; available for users with TAP.
+test-net-tap: $(KERNEL_ISO) check-multiboot
+	bash scripts/test_net_tap.sh
+
 clean:
 	rm -rf $(TMP_DIR)
 	$(MAKE) -C user clean

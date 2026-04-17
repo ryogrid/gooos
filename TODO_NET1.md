@@ -111,11 +111,12 @@ lands and the listed verification passes.
 - [x] `chore(spinlock): document net lock ordering ranks 5-8` — extend
       comment header in `src/spinlock.go` (5 netBufLock, 6 arpLock,
       7 udpLock, 8 statsLock). Verify: `make build` clean.
-- [ ] `test(net): user-mode smoke test script` — `scripts/test_net.sh`
+- [x] `test(net): user-mode smoke test script` — `scripts/test_net.sh`
       boots QEMU with `run-net` to serial file, greps markers (PCI, MAC,
       link up, NET init, ARP gratuitous, UDP listening, netDiag),
       performs a `nc -u 127.0.0.1 9999` round-trip, exits 0 on all-pass.
-      Add `test-net` Makefile target.
+      Add `test-net` Makefile target. **Verified**: `result: PASS` with
+      all 9 markers + echo match.
 - [ ] `test(net): TAP integration test script` —
       `scripts/test_net_tap.sh` sets up `tap0`, runs QEMU with
       `-netdev tap`, asserts `ping -c 5 10.0.0.2` and
