@@ -261,7 +261,18 @@ func elfSpawn(filename, args string, parent *Process) (*Process, bool) {
 	// fd inheritance — shallow copy of parent's table with a
 	// refcount bump for each pipe end so the pipe survives
 	// until the child closes on processExit.
+	//
+	// *socketFd slots are NOT inherited: the socket owns a
+	// receive channel registered with udpBindWithChannel, and
+	// whichever process exits first would call socketFd.Close →
+	// udpUnbind and pull the binding out from under the other.
+	// See impldoc/net_socket_api.md §12.4 and the Phase-5
+	// reviewer pass. The child gets an empty slot instead.
 	for i := 0; i < procMaxFDs; i++ {
+		if _, isSock := parent.fds[i].(*socketFd); isSock {
+			child.fds[i] = nil
+			continue
+		}
 		child.fds[i] = parent.fds[i]
 		fdAddRef(parent.fds[i])
 	}

@@ -18,6 +18,15 @@
 //   sys_sendto_bcast bypasses ARP and forces source IP 0.0.0.0, used
 //   by the DHCP client's DISCOVER/REQUEST broadcasts before it has an
 //   IP or a learned gateway MAC.
+//
+// Concurrency: socketFd fields (bound, localPort, recvCh) are mutated
+// without an internal lock. The file relies on gooos's current
+// single-BSP cooperative-yield scheduling — handlers never preempt
+// each other, and Close is guaranteed not to run concurrently with
+// Read / sys_recvfrom because sockets are NOT inherited on spawn
+// (see process.go's fd-inheritance loop, which drops *socketFd
+// slots). If gooos ever schedules goroutines truly in parallel on
+// multiple CPUs, socketFd needs a per-instance Spinlock.
 
 package main
 
@@ -45,10 +54,34 @@ const (
 	netConfigSetDNS     = 9
 )
 
-// userAddrMin is the lower bound below which a user-supplied pointer
-// is rejected as clearly invalid. The user code / data / heap all
-// live above 0x40000000 (see user/linker_user.ld).
-const userAddrMin = uintptr(0x40000000)
+// userAddrMin / userAddrMax bracket the range a user-supplied pointer
+// must lie inside. Lower bound: the user code / data / heap base set
+// by user/linker_user.ld (0x40000000). Upper bound: just above the
+// user stack top (0x7FFF2000 in linker_user.ld), rounded up to 2 GiB
+// so a future stack bump has headroom without revisiting this file.
+// Pointers outside this window would dereference kernel memory or
+// unmapped pages and panic the kernel during the syscall copy loop.
+const (
+	userAddrMin = uintptr(0x40000000)
+	userAddrMax = uintptr(0x80000000)
+)
+
+// userBufInRange returns true when the half-open byte range
+// [ptr, ptr+length) lies entirely within the user virtual address
+// window, with overflow guarded. Zero-length ranges are always valid.
+func userBufInRange(ptr, length uintptr) bool {
+	if length == 0 {
+		return true
+	}
+	if ptr < userAddrMin {
+		return false
+	}
+	end := ptr + length
+	if end < ptr { // wrap
+		return false
+	}
+	return end <= userAddrMax
+}
 
 // socketFd is the FileDesc implementation behind every Ring-3 socket.
 // recvCh is owned by the socketFd — udpBindWithChannel is given the
@@ -171,12 +204,12 @@ func sysSendtoHandler(frame *SyscallFrame) {
 	dstIP := uint32(frame.R10)
 	dstPort := uint16(frame.R8)
 
-	if bufLen > 0 && bufPtr < userAddrMin {
+	if !userBufInRange(bufPtr, bufLen) {
 		frame.RAX = sysFail(fdErrBad)
 		return
 	}
 	// Hard ceiling matches ipv4MaxPayload - udpHeaderSize.
-	if bufLen > 1472 {
+	if bufLen > uintptr(ipv4MaxPayload-udpHeaderSize) {
 		frame.RAX = sysFail(fdErrBad)
 		return
 	}
@@ -219,11 +252,11 @@ func sysRecvfromHandler(frame *SyscallFrame) {
 	infoPtr := frame.R10
 	timeoutTicks := uint64(frame.R8)
 
-	if bufMax > 0 && bufPtr < userAddrMin {
+	if bufMax < 0 || !userBufInRange(bufPtr, uintptr(bufMax)) {
 		frame.RAX = sysFail(fdErrBad)
 		return
 	}
-	if infoPtr != 0 && infoPtr < userAddrMin {
+	if infoPtr != 0 && !userBufInRange(infoPtr, 8) {
 		frame.RAX = sysFail(fdErrBad)
 		return
 	}
@@ -265,6 +298,14 @@ func sysRecvfromHandler(frame *SyscallFrame) {
 
 // sys_net_config (26): RDI=op, RSI=a1, RDX=a2, R10=a3.
 func sysNetConfigHandler(frame *SyscallFrame) {
+	// currentProc() is not strictly needed for the SET/GET ops today,
+	// but we call it for contract symmetry with the other handlers
+	// and so that a future proc-scoped op (e.g. per-process overrides)
+	// fails cleanly when called from a context without a Process.
+	if currentProc() == nil {
+		frame.RAX = sysFail(fdErrBad)
+		return
+	}
 	switch frame.RDI {
 	case netConfigGetIP:
 		frame.RAX = uintptr(ourIP)
@@ -283,7 +324,7 @@ func sysNetConfigHandler(frame *SyscallFrame) {
 		frame.RAX = 0
 	case netConfigGetMAC:
 		ptr := frame.RSI
-		if ptr < userAddrMin {
+		if !userBufInRange(ptr, 6) {
 			frame.RAX = sysFail(fdErrBad)
 			return
 		}
@@ -326,11 +367,11 @@ func sysSendtoBcastHandler(frame *SyscallFrame) {
 	bufLen := frame.RDX
 	dstPort := uint16(frame.R10)
 
-	if bufLen > 0 && bufPtr < userAddrMin {
+	if !userBufInRange(bufPtr, bufLen) {
 		frame.RAX = sysFail(fdErrBad)
 		return
 	}
-	if bufLen > 1472 {
+	if bufLen > uintptr(ipv4MaxPayload-udpHeaderSize) {
 		frame.RAX = sysFail(fdErrBad)
 		return
 	}

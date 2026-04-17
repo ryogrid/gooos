@@ -73,10 +73,12 @@ listed verification passes.
       (c) `netDiag` auto-dump reports `DNS: 10.0.2.3` after the
       lease is applied;
       (d) `scripts/test_net.sh` still PASSes (Phase 1-4 regression).
-- [ ] `chore(net): reviewer pass (CRITICAL+MAJOR) + final completeness
+- [x] `chore(net): reviewer pass (CRITICAL+MAJOR) + final completeness
       for Phase 5` — run reviewer subagent, fix CRITICAL+MAJOR, record
       MINOR below, confirm every checked box has a commit and no new
-      TODO/FIXME/XXX in the diff.
+      TODO/FIXME/XXX in the diff. **Done.** Reviewer: 0 CRITICAL, 3
+      MAJOR (all fixed in a follow-up commit), 9 MINOR (recorded
+      below).
 - [x] `docs(README): Phase 5 milestone row` — add a "Socket API + DHCP"
       progress-table row referencing syscalls 22-27 and the
       `user/cmd/dhcp` program.
@@ -95,4 +97,84 @@ listed verification passes.
 
 ## Reviewer findings
 
-(Populated by the reviewer pass at end.)
+### CRITICAL
+
+None.
+
+### MAJOR (all fixed)
+
+1. **`socketFd` inheritance on spawn was unsafe** (`src/process.go` fd
+   loop, `src/netsock.go:Close`) — shallow-copied sockets would share a
+   single kernel bind-table entry; first child to exit would run
+   `socketFd.Close → udpUnbind` and tear the port binding out from
+   under the surviving process. Fix: the fd-inheritance loop now
+   explicitly drops `*socketFd` slots (child gets `nil`), documented in
+   the comment above the loop and in the `src/netsock.go` concurrency
+   header.
+
+2. **User pointer bounds check had no upper bound** (`src/netsock.go`,
+   every syscall handler) — the previous check only rejected
+   `bufPtr < 0x40000000`. A user passing a kernel-half pointer
+   (≥ 0x8000000000000000) would cause the kernel copy loop to fault
+   during the syscall. Fix: introduced `userAddrMax = 0x80000000` (2
+   GiB, above the user stack at 0x7FFF2000 in `linker_user.ld`) and a
+   `userBufInRange(ptr, length)` helper that validates `[ptr, ptr+length)`
+   with overflow guard. All handlers (`sys_sendto`, `sys_recvfrom`
+   bufPtr+infoPtr, `sys_sendto_bcast`, `netConfigGetMAC` ptr) now use
+   the helper. Also replaced magic-number `1472` with
+   `ipv4MaxPayload - udpHeaderSize` so MTU changes don't silently drift.
+
+3. **`socketFd` fields mutated without synchronization** —
+   `sock.bound` / `sock.localPort` / `sock.recvCh` are read/written
+   across `sys_bind` / `sys_recvfrom` / `Close`. Under gooos's single-
+   BSP cooperative scheduling this is safe today (handlers don't
+   preempt each other and sockets are no longer cross-process shared
+   per MAJOR#1). Fix: added a concurrency-assumptions block to the
+   `src/netsock.go` header documenting the single-BSP contract and
+   what would need to change (per-socket `Spinlock`) if true SMP
+   preemption is ever enabled.
+
+   Also added a `currentProc()==nil` guard to `sysNetConfigHandler`
+   for contract symmetry with the other handlers (MINOR#4 from the
+   reviewer report, folded into this commit).
+
+### MINOR (recorded; not fixed in this milestone)
+
+1. `src/netsock.go:afterTicks` timeout goroutine in `sys_recvfrom`
+   keeps spinning (runtime.Gosched loop) until its deadline even when
+   `<-sock.recvCh` won the select. Benign (self-terminates, no alloc);
+   fix is a cancelable timer primitive, worth doing alongside any
+   future `sys_sleep` / deadline-plumbing refactor.
+2. `src/netsock.go:socketFd.Write` returns `fdErrBad` with no
+   discriminator distinguishing "use sys_sendto instead" from a
+   transient error. Documentation-only; userspace SDK already routes
+   around it.
+3. `user/cmd/dhcp:recvDHCP` cannot distinguish `UDPRecvFromTimeout`
+   returning 0 (timeout) from "server sent garbage we couldn't parse".
+   Both map to "no valid OFFER/ACK received". Improve by adding a
+   ticked return value in the SDK or a separate sentinel.
+4. `user/cmd/dhcp:recvDHCP` XID check runs AFTER the msgType/NAK
+   check. A NAK with a wrong XID would print "server returned NAK"
+   and bail. Reorder to XID-first for principled rejection.
+5. Sock constants `sockAFInet` / `sockSockDgram` (kernel
+   `src/netsock.go`) and `AF_INET` / `SOCK_DGRAM` (SDK
+   `user/gooos/net.go`) are duplicated without a compile-time drift
+   check. Values match today; a future divergence would be silent.
+6. No scripted Phase-5 regression (`scripts/test_net.sh` covers
+   Phase 1–4 only). Phase 5 was hand-verified under QEMU. An
+   automated harness — boot QEMU, `sendkey udpecho\\n`, round-trip,
+   `sendkey dhcp\\n`, grep `"dhcp: network configured"` — would
+   lock this in.
+7. `sys_sendto` / `sys_sendto_bcast` unsafe copy loops use
+   `bufPtr + i` without wraparound check. Today `bufLen ≤ 1472` +
+   userAddrMax bound make wraparound impossible; flagged for future
+   audit if the cap changes.
+8. `src/netsock.go:socketFd.Close` drains `recvCh` with a
+   `select{case<-recvCh:default:}` loop that spins until empty. After
+   a 16-element burst this is cheap; still, `for len(ch) > 0` would
+   be clearer if TinyGo supports it on buffered channels (needs
+   verification).
+9. DHCP client never records the `secs` field of the BOOTP header
+   (offset 8-9). Some pedantic servers care; QEMU slirp doesn't.
+
+All MINOR items are documented for follow-up; none block Phase 5.
