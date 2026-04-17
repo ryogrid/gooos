@@ -77,7 +77,7 @@ listed verification passes.
       for Phase 5` — run reviewer subagent, fix CRITICAL+MAJOR, record
       MINOR below, confirm every checked box has a commit and no new
       TODO/FIXME/XXX in the diff.
-- [ ] `docs(README): Phase 5 milestone row` — add a "Socket API + DHCP"
+- [x] `docs(README): Phase 5 milestone row` — add a "Socket API + DHCP"
       progress-table row referencing syscalls 22-27 and the
       `user/cmd/dhcp` program.
 
