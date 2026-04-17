@@ -325,6 +325,19 @@ func elfSpawn(filename, args string, parent *Process) (*Process, bool) {
 
 	serialPrintln("elfSpawn: loaded " + filename)
 	go ring3Wrapper(child)
+
+	// Wake an idle AP so it can steal the newly-spawned goroutine.
+	// Round-robin target selection: pick the next CPU after the
+	// current one. If only the BSP exists (onlineCPUs <= 1), skip.
+	if onlineCPUs > 1 {
+		me := cpuID()
+		target := (me + 1) % onlineCPUs
+		if target == me {
+			target = (me + 2) % onlineCPUs
+		}
+		gooosWakeupCPU(target)
+	}
+
 	return child, true
 }
 

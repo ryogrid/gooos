@@ -52,6 +52,11 @@ const (
 
 const smpMaxAPs = 16
 
+// onlineCPUs is the total number of CPUs (BSP + APs) detected
+// during smpInit. Used by elfSpawn to pick a target AP for IPI
+// wakeup. Set once during boot; read-only afterwards.
+var onlineCPUs uint32
+
 // gdtReady is set to 1 by the BSP after gdtInit completes.
 // APs spin on this before calling gdtInitPerCPU so they see
 // a fully populated gdtTable template.
@@ -209,6 +214,7 @@ func smpInit() {
 
 	apCount := *(*uint32)(unsafe.Pointer(trampPhys + trampOffCounter))
 	totalCores := uint64(apCount) + 1 // +1 for BSP
+	onlineCPUs = uint32(totalCores)
 
 	msg := "SMP: " + utoa(totalCores) + " cores online"
 	vgaWriteLine(19, msg)
