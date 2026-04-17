@@ -55,21 +55,16 @@ func ethernetParse(frame []byte) (EthernetHeader, []byte, bool) {
     var hdr EthernetHeader
     copy(hdr.Dst[:], frame[0:6])
     copy(hdr.Src[:], frame[6:12])
-    hdr.EtherType = ntohs(uint16(frame[12])<<8 | uint16(frame[13]))
+    hdr.EtherType = uint16(frame[12])<<8 | uint16(frame[13])
     return hdr, frame[ethernetHeaderSize:], true
 }
 ```
 
 Note: `frame[12]` is the high byte of EtherType (big-endian on
-wire), so `uint16(frame[12])<<8 | uint16(frame[13])` gives the
-value in big-endian, and `ntohs()` converts to host order.
-Since x86 is little-endian and EtherType is stored big-endian
-on wire, the simplest approach:
-```go
-hdr.EtherType = uint16(frame[12])<<8 | uint16(frame[13])
-```
-This directly produces host byte order without needing `ntohs`
-(since we manually assemble from individual bytes).
+wire), so `uint16(frame[12])<<8 | uint16(frame[13])` directly
+produces host byte order without needing `ntohs` (since we
+manually assemble from individual bytes rather than casting a
+multi-byte value).
 
 ### 1.4 Building
 

@@ -94,9 +94,9 @@ func ipv4Parse(payload []byte) (IPv4Header, []byte, bool) {
     }
 
     // Drop fragments (not supported)
-    mf := (hdr.FlagsOffset >> 13) & 1
+    moreFragments := (hdr.FlagsOffset >> 13) & 1
     fragOff := hdr.FlagsOffset & 0x1FFF
-    if mf != 0 || fragOff != 0 {
+    if moreFragments != 0 || fragOff != 0 {
         netStats.RxDropped++
         return IPv4Header{}, nil, false
     }

@@ -497,13 +497,14 @@ func e1000ReadMAC() {
 
 ```go
 func e1000WaitLinkUp() {
+    const linkUpTimeoutTicks = 500 // 5 seconds at 100 Hz
     start := pitTicks
     for {
         if e1000Read(e1000STATUS) & e1000StatusLU != 0 {
             serialPrintln("e1000: link up")
             return
         }
-        if pitTicks - start > 500 { // 5 second timeout
+        if pitTicks - start > linkUpTimeoutTicks {
             serialPrintln("e1000: link up timeout")
             return
         }
