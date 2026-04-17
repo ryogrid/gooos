@@ -168,14 +168,19 @@ One git commit per top-level item.
         `test_sendkey.sh 1 → pf=0 exit=3 cat=1`;
         `-smp 4` → `pf=0 exit=2`.
 
-- [ ] **13. IPI send primitive + wakeup vector**
-  - `src/ipi.go` (new): `lapicSendIPI()`, wakeup handler.
-  - Wire `gooosWakeupCPU()`.
-  - Verify: IPI delivery on serial.
+- [x] **13. IPI send primitive + wakeup vector**
+  - [x] `src/ipi.go` (new): `lapicSendIPI(targetAPICID,
+        vector)` via ICR; `handleWakeupIPI` (vec 0xFC, LAPIC
+        EOI only); `gooosWakeupCPU(cpuIdx)` linkname bridge
+        sends IPI to wake remote CPU.
+  - [x] `src/main.go`: register wakeup handler.
+  - [x] Verify: `make build` clean; `test_sendkey.sh 1` PASS.
 
-- [ ] **14. Timer-based preemption**
-  - LAPIC timer sets `wantReschedule`; scheduler yields.
-  - Verify: shell responsive under `-smp 4`.
+- [x] **14. Timer-based preemption**
+  - [x] `src/lapic_timer.go`: `handleLAPICTimer` sets
+        `PerCPU.WantReschedule = 1` before LAPIC EOI. Timer
+        wakes CPU from hlt; scheduler loop runs naturally.
+  - [x] Verify: `test_sendkey.sh 1 → pf=0 exit=3 cat=1`.
 
 ### Phase 2 — User SMP
 

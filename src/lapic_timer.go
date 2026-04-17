@@ -67,10 +67,14 @@ func lapicTimerInit() {
 }
 
 // handleLAPICTimer is the per-CPU LAPIC timer handler (vector 0xFE).
-// For now it just sends LAPIC EOI. Timer-based preemption (setting
-// wantReschedule flag) will be added in item 14.
+// Sets the wantReschedule flag so the scheduler yields on the next
+// opportunity, and sends LAPIC EOI. The actual preemption happens
+// when the CPU returns from hlt — the scheduler loop checks the
+// local runqueue and steals from peers.
 //
 //go:nosplit
 func handleLAPICTimer(vector uint64) {
+	idx := cpuID()
+	perCPUBlocks[idx].WantReschedule = 1
 	lapicSendEOI()
 }

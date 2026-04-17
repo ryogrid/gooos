@@ -374,6 +374,11 @@ func main() {
 	lapicTimerInit()
 	serialPrintln("LAPIC timer: BSP initialized at 100 Hz")
 
+	// Register IPI handlers before IOAPIC (which enables interrupt
+	// delivery to APs).
+	registerHandler(ipiWakeupVector, handleWakeupIPI)
+	serialPrintln("IPI: wakeup handler registered at vector 0xFC")
+
 	// Initialize IOAPIC if discovered from MADT. This replaces PIC
 	// routing with LAPIC-based delivery. Must happen after LAPIC
 	// timer setup so the PIT→vec32 redirection maintains timer ticks.
