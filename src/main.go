@@ -103,8 +103,12 @@ func handleDivisionError(vector uint64) {
 // not have a specific handler registered. Sends EOI so the PIC is not
 // left stuck.
 func handleDefaultIRQ(vector uint64) {
-	irq := uint8(vector - 32)
-	picSendEOI(irq)
+	if ioapicActive {
+		lapicSendEOI()
+	} else {
+		irq := uint8(vector - 32)
+		picSendEOI(irq)
+	}
 }
 
 // hlt executes the HLT instruction. Implemented in stubs.S.
@@ -369,6 +373,11 @@ func main() {
 	lapicTimerCalibrate()
 	lapicTimerInit()
 	serialPrintln("LAPIC timer: BSP initialized at 100 Hz")
+
+	// Initialize IOAPIC if discovered from MADT. This replaces PIC
+	// routing with LAPIC-based delivery. Must happen after LAPIC
+	// timer setup so the PIT→vec32 redirection maintains timer ticks.
+	ioapicInit()
 
 	// Phase B self-test: verify the TinyGo Task struct layout
 	// assumed by src/goroutine_tss.go before anything depends on it.

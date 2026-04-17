@@ -350,6 +350,14 @@ func parseMADT(madtAddr uintptr, bspAPICID uint32) int {
 				apCount++
 			}
 		}
+		if entryType == 1 && entryLen >= 12 {
+			// Type 1: IOAPIC entry.
+			// Offset 4: IOAPIC MMIO base address (4 bytes).
+			addr := uintptr(*(*uint32)(unsafe.Pointer(madtAddr + offset + 4)))
+			if ioapicBase == 0 && addr != 0 {
+				ioapicBase = addr
+			}
+		}
 		offset += entryLen
 	}
 	return apCount

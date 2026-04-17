@@ -92,11 +92,19 @@ One git commit per top-level item.
         `LAPIC timer: N ticks/10ms`;
         `test_sendkey.sh 1 → pf=0 exit=3 cat=1`.
 
-- [ ] **7. IOAPIC discovery + redirection table**
-  - `src/ioapic.go` (new): MADT type-1 parsing, MMIO,
-    redirection table (IRQ0→vec32, IRQ1→vec33), PIC mask.
-  - EOI switch to LAPIC in timer + keyboard handlers.
-  - Verify: keyboard + timer still work under IOAPIC.
+- [x] **7. IOAPIC discovery + redirection table**
+  - [x] `src/ioapic.go` (new): IOAPIC register read/write via
+        IOREGSEL/IOWIN; `ioapicSetRedirection()`;
+        `ioapicMaskIRQ()`; `ioapicInit()` discovers base from
+        MADT type-1, maps MMIO page, programs IRQ0→vec32 and
+        IRQ1→vec33 to BSP, disables 8259A PIC.
+  - [x] `src/smp.go:parseMADT`: capture IOAPIC base from
+        type-1 entries.
+  - [x] `src/pit.go`, `src/keyboard.go`, `src/main.go`:
+        EOI switched to `lapicSendEOI()` when `ioapicActive`.
+  - [x] Verify: serial shows `IOAPIC: base=0xFEC00000 ver=32
+        max_redir=23`; `test_sendkey.sh 1 → pf=0 exit=3 cat=1`;
+        keyboard + timer work under IOAPIC routing.
 
 - [ ] **8. TinyGo patch: per-CPU runqueues + systemStack**
   - `runtime/scheduler.go`: `runqueues [17]task.Queue`.
