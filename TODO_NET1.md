@@ -108,7 +108,7 @@ lands and the listed verification passes.
 
 ## Cross-cutting
 
-- [ ] `chore(spinlock): document net lock ordering ranks 5-8` — extend
+- [x] `chore(spinlock): document net lock ordering ranks 5-8` — extend
       comment header in `src/spinlock.go` (5 netBufLock, 6 arpLock,
       7 udpLock, 8 statsLock). Verify: `make build` clean.
 - [ ] `test(net): user-mode smoke test script` — `scripts/test_net.sh`

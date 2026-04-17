@@ -9,6 +9,10 @@
 //   2. procLock       — procByTask / procByPID (src/process.go)
 //   3. gInfoLock      — gInfoBySlot (src/goroutine_tss.go)
 //   4. vgaLock        — VGA console output (src/vga.go)
+//   5. netBufLock     — packet buffer pool bitmap (src/netbuf.go)
+//   6. arpLock        — ARP cache (src/arp.go)
+//   7. udpLock        — UDP bind table (src/udp.go)
+//   8. statsLock      — network statistics counters (src/netstats.go)
 //
 // A function holding lock N must not acquire lock M where M < N.
 //
