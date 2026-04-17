@@ -44,7 +44,7 @@ listed verification passes.
 
 ## Part B — DHCP Client (depends on Part A)
 
-- [ ] `feat(net): user/gooos/fs.go WriteFile helper` — wraps
+- [x] `feat(net): user/gooos/fs.go WriteFile helper` — wraps
       `sys_fs_write` for file-create-and-write. Used by DHCP client to
       record `/network.conf`. Verify: `make -C user` clean.
 - [ ] `feat(net): user/cmd/dhcp DHCP client` — full DORA exchange:
