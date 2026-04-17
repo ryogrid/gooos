@@ -117,12 +117,14 @@ lands and the listed verification passes.
       performs a `nc -u 127.0.0.1 9999` round-trip, exits 0 on all-pass.
       Add `test-net` Makefile target. **Verified**: `result: PASS` with
       all 9 markers + echo match.
-- [ ] `test(net): TAP integration test script` —
+- [x] `test(net): TAP integration test script` —
       `scripts/test_net_tap.sh` sets up `tap0`, runs QEMU with
-      `-netdev tap`, asserts `ping -c 5 10.0.0.2` and
-      `echo hi | nc -u 10.0.0.2 7`, tears down. Add `test-net-tap`
-      Makefile target. Not part of per-phase gate; optional for users
-      with TAP.
+      `-netdev tap`, asserts `ping -c 5` and `nc -u 7`, tears down. Add
+      `test-net-tap` Makefile target. Not part of per-phase gate;
+      available for users with root / CAP_NET_ADMIN. Script notes that
+      the kernel IP is currently hard-coded to 10.0.2.15, so TAP runs
+      require either `GOOOS_NET_TAP_TARGET` override or a subnet match;
+      runtime IP reconfiguration is deferred to Phase 5 DHCP.
 - [ ] `docs(README): networking milestone row` — add row to progress
       table after SMP reflecting e1000 + Ethernet/ARP/IPv4/ICMP/UDP
       completion.
