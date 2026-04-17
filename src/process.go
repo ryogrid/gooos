@@ -394,12 +394,16 @@ func processExit(exitCode uintptr) {
 		proc.poolIdx = -1
 	}
 	// This goroutine was entered from an int 0x80 ISR, so the ISR
-	// prologue bumped gooos_in_interrupt_depth. The ISR epilogue on
-	// this goroutine's kernel stack will never run (taskPause below
-	// parks forever). Decrement by 1 to represent leaving THIS
-	// ISR frame without underflowing any outer nesting level.
+	// prologue bumped both the global and per-CPU interrupt depth.
+	// The ISR epilogue on this goroutine's kernel stack will never
+	// run (taskPause below parks forever). Decrement both counters
+	// by 1 to represent leaving THIS ISR frame.
 	if gooosInInterruptDepth > 0 {
 		gooosInInterruptDepth--
+	}
+	if readInterruptDepth() > 0 {
+		idx := cpuID()
+		perCPUBlocks[idx].InterruptDepth--
 	}
 	taskPause() // never returns for this goroutine
 	for {

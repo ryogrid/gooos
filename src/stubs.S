@@ -278,12 +278,16 @@ tinygo_scanstack:
 lgdtReload:
     lgdt    (%rdi)
 
-    /* Reload data segments with kernel data selector (0x10). */
+    /* Reload data segments with kernel data selector (0x10).
+     * Skip GS — its base is managed via IA32_GS_BASE MSR for
+     * per-CPU storage. Loading the GS selector would zero the
+     * MSR value, breaking %gs:offset access in ISR prologues
+     * and readInterruptDepth(). */
     movw    $0x10, %ax
     movw    %ax, %ds
     movw    %ax, %es
     movw    %ax, %fs
-    movw    %ax, %gs
+    /* movw    %ax, %gs — intentionally skipped (SMP v2) */
     movw    %ax, %ss
 
     /* Reload CS via far return: push selector + return address, then lretq. */

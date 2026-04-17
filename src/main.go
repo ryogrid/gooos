@@ -142,6 +142,10 @@ func main() {
 		registerHandler(i, handleDefaultIRQ)
 	}
 
+	// Set up per-CPU GS base for BSP BEFORE interrupts are enabled.
+	// The ISR prologue uses %gs:4 for the per-CPU interrupt depth counter.
+	percpuInitBSPEarly()
+
 	// Initialize PIT channel 0 at ~100 Hz and register the timer IRQ handler.
 	pitInit()
 	registerHandler(32, handleTimer)
@@ -349,9 +353,8 @@ func main() {
 	// smpInit maps the LAPIC MMIO page, so per-CPU init must follow.
 	smpInit()
 
-	// Initialize per-CPU storage for the BSP. Must be after smpInit
-	// (which maps the LAPIC page) so lapicRead works.
-	percpuInitBSP()
+	// Fill in BSP's APIC ID (requires LAPIC MMIO mapped by smpInit).
+	percpuInitBSPLate()
 
 	// Set up new GDT with Ring 3 code/data segments and TSS.
 	// gdtInit also calls gdtInitPerCPU(0) for the BSP.

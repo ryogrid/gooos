@@ -67,16 +67,23 @@ func rdmsr(msr uint32) uint64
 //go:linkname cpuID cpuID
 func cpuID() uint32
 
-// percpuInitBSP initializes per-CPU storage for the BSP (CPU 0).
-// Must be called before smpInit so the BSP has valid GS base before
-// any interrupt or AP references per-CPU data.
-func percpuInitBSP() {
+// percpuInitBSPEarly sets the BSP's GS base to point at its per-CPU
+// data block. Must be called BEFORE interrupts are enabled — the ISR
+// prologue uses %gs:4 to increment the per-CPU interrupt depth counter.
+// The APIC ID is filled in later by percpuInitBSPLate (after the LAPIC
+// MMIO page is mapped).
+func percpuInitBSPEarly() {
 	perCPUBlocks[0].CPUIndex = 0
-	perCPUBlocks[0].APICID = lapicRead(lapicRegID) >> 24
 	perCPUBlocks[0].CurrentPoolIdx = -1
 	addr := uint64(uintptr(unsafe.Pointer(&perCPUBlocks[0])))
 	wrmsr(ia32GSBASE, addr)
+}
 
+// percpuInitBSPLate fills in the BSP's APIC ID (requires LAPIC
+// MMIO to be mapped by smpInit) and logs the GS base.
+func percpuInitBSPLate() {
+	perCPUBlocks[0].APICID = lapicRead(lapicRegID) >> 24
+	addr := uint64(uintptr(unsafe.Pointer(&perCPUBlocks[0])))
 	serialPrint("SMP: BSP cpuID=0 gsbase=0x")
 	serialPrintln(utoa(addr))
 }

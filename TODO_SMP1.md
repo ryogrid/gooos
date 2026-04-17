@@ -48,13 +48,25 @@ One git commit per top-level item.
   - [x] Verify: `make build` clean;
         `test_sendkey.sh 1 → pf=0 exit=3 cat=1`.
 
-- [ ] **4. Per-CPU interrupt depth**
-  - `src/isr.S`: `%gs:4` instead of
-    `gooos_in_interrupt_depth(%rip)`.
-  - `src/goroutine_irq.go`: per-CPU accessor.
-  - `src/stubs.S`: `readInterruptDepth` helper.
-  - TinyGo `interrupt_gooos.go` patch update if needed.
-  - Verify: `make build` clean; `test_sendkey.sh 1` PASS.
+- [x] **4. Per-CPU interrupt depth**
+  - [x] `src/isr.S`: ISR prologue/epilogue increments BOTH the
+        global `gooos_in_interrupt_depth` (for TinyGo's
+        `interrupt.In()`) AND per-CPU `%gs:4`.
+  - [x] `src/goroutine_irq.go`: keeps global variable bridge for
+        TinyGo linkname + adds per-CPU `readInterruptDepth()`.
+  - [x] `src/stubs.S`: `readInterruptDepth` helper (already
+        added in item 1); `lgdtReload` skips GS reload to
+        preserve GS base MSR.
+  - [x] `src/boot.S`: sets early GS base via `wrmsr
+        IA32_GS_BASE` before calling Go `main` (needed because
+        TinyGo runtime init calls `interrupt.In()` via the
+        per-CPU counter).
+  - [x] `src/process.go:processExit`: decrements both global
+        and per-CPU counters.
+  - [x] TinyGo `interrupt_gooos.go`: kept using global variable
+        (no change needed — dual-counter approach).
+  - [x] Verify: `make build` clean;
+        `test_sendkey.sh 1 → pf=0 exit=3 cat=1`.
 
 ### Phase 1 — Kernel SMP
 

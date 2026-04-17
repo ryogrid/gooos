@@ -24,6 +24,15 @@
     /* are picky about re-declaring well-known ELF sections with         */
     /* explicit flags; the bareword form always works.                   */
     .bss
+    .align 64
+    /* Temporary per-CPU data for the BSP, used before Go's
+     * percpuInitBSPEarly() sets the real GS base. 64 bytes
+     * (one cache line) — matches PerCPU struct size.
+     * InterruptDepth at offset 4 starts at 0 (.bss is zeroed). */
+    .global early_percpu_bsp
+early_percpu_bsp:
+    .skip 64
+
     .align 16
 stack_bottom:
     .skip 16384                      /* 16 KiB kernel stack */
@@ -128,6 +137,17 @@ long_mode_start:
     movw    %ax, %fs
     movw    %ax, %gs
     movw    %ax, %ss
+
+    /* Set IA32_GS_BASE to point at a zeroed .bss block so the ISR
+     * prologue (%gs:4 for per-CPU interrupt depth) works before
+     * any Go code runs. percpuInitBSPEarly() in Go will re-set
+     * GS base to the actual PerCPU struct later. */
+    movl    $0xC0000101, %ecx       /* IA32_GS_BASE MSR */
+    leaq    early_percpu_bsp(%rip), %rax
+    movl    %eax, %eax              /* zero-extend (addr < 4 GiB) */
+    movq    %rax, %rdx
+    shrq    $32, %rdx               /* EDX = high 32 bits */
+    wrmsr
 
     /* Call TinyGo's runtime entry point (main from runtime_unix.go).
      * Signature: main(argc int32, argv *unsafe.Pointer) int
