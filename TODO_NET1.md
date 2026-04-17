@@ -89,7 +89,7 @@ lands and the listed verification passes.
       `make build` clean. **Verified**: serial log shows `TEST: netbuf
       lifecycle PASS` (fills pool, rejects 129th alloc, reclaims freed
       slot).
-- [ ] `feat(net): network statistics` — `src/netstats.go` (18-counter
+- [x] `feat(net): network statistics` — `src/netstats.go` (18-counter
       NetStats, `statsInc`, `netStatsSnapshot`, `statsLock` rank 8). Wire
       counters into ethernet/arp/ipv4/icmp/udp dispatch. Verify:
       `make build` clean.

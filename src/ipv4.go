@@ -94,6 +94,7 @@ func ipv4Parse(payload []byte) (IPv4Header, []byte, bool) {
 
 	// Reject fragments (MF set or non-zero offset).
 	if h.FlagsOffset&(ipv4FlagMF|ipv4FragMask) != 0 {
+		statsInc(&netStats.FragmentsDropped)
 		return h, nil, false
 	}
 	// Reject obvious junk.
@@ -105,6 +106,7 @@ func ipv4Parse(payload []byte) (IPv4Header, []byte, bool) {
 	}
 	// Validate checksum over the header (bytes 0..HeaderLen).
 	if ipv4Checksum(payload[:h.HeaderLen]) != 0 {
+		statsInc(&netStats.ChecksumErr)
 		return h, nil, false
 	}
 

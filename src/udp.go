@@ -184,6 +184,7 @@ func udpHandle(hdr IPv4Header, inner []byte) {
 	}
 	ch := udpLookupChannel(uh.DstPort)
 	if ch == nil {
+		statsInc(&netStats.UdpPortUnreach)
 		return
 	}
 	// Copy the payload — `data` points into the shared RX buffer that
@@ -196,7 +197,9 @@ func udpHandle(hdr IPv4Header, inner []byte) {
 	case ch <- UDPDatagram{
 		SrcIP: hdr.SrcIP, SrcPort: uh.SrcPort, DstPort: uh.DstPort, Data: cp,
 	}:
+		statsInc(&netStats.UdpRecv)
 	default:
+		statsInc(&netStats.RxDropped)
 	}
 }
 
@@ -222,7 +225,11 @@ func udpSend(dstIP uint32, dstPort, srcPort uint16, data []byte) bool {
 	packet[6] = byte(csum >> 8)
 	packet[7] = byte(csum)
 
-	return ipv4Send(ipProtoUDP, dstIP, packet)
+	ok := ipv4Send(ipProtoUDP, dstIP, packet)
+	if ok {
+		statsInc(&netStats.UdpSend)
+	}
+	return ok
 }
 
 // udpEchoServer binds port 7 and reflects every received datagram back

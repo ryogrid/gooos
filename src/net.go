@@ -58,6 +58,8 @@ func netRxLoop() {
 			runtime.Gosched()
 			continue
 		}
+		statsInc(&netStats.RxPackets)
+		statsAdd(&netStats.RxBytes, uint64(len(frame)))
 		ethernetDispatch(frame)
 	}
 }
@@ -67,13 +69,16 @@ func netRxLoop() {
 // frame; in Phase 3 the IPv4 case wires in.
 func ethernetDispatch(frame []byte) {
 	if len(frame) < ethernetHeaderSize {
+		statsInc(&netStats.RxDropped)
 		return
 	}
 	hdr, payload, ok := ethernetParse(frame)
 	if !ok {
+		statsInc(&netStats.RxDropped)
 		return
 	}
 	if !isForUs(hdr.Dst) {
+		statsInc(&netStats.RxDropped)
 		return
 	}
 	switch hdr.EtherType {
@@ -82,7 +87,7 @@ func ethernetDispatch(frame []byte) {
 	case etherTypeIPv4:
 		ipv4Handle(payload)
 	default:
-		// Unknown EtherType — drop silently.
+		statsInc(&netStats.RxUnknownEtherType)
 	}
 }
 

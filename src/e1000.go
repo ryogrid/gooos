@@ -406,6 +406,9 @@ func e1000Transmit(frame []byte) bool {
 
 	txTail = (txTail + 1) % e1000NumTxDesc
 	e1000Write(e1000TDT, txTail)
+
+	statsInc(&netStats.TxPackets)
+	statsAdd(&netStats.TxBytes, uint64(n))
 	return true
 }
 

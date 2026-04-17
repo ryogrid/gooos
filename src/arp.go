@@ -108,12 +108,16 @@ func arpBuild(op uint16, sha [6]byte, spa uint32, tha [6]byte, tpa uint32) []byt
 // arpLookup returns the MAC associated with `ip` if present, else false.
 func arpLookup(ip uint32) ([6]byte, bool) {
 	flags := arpLock.Acquire()
-	defer arpLock.Release(flags)
 	for i := 0; i < arpCacheSize; i++ {
 		if arpCache[i].Used && arpCache[i].IP == ip {
-			return arpCache[i].MAC, true
+			mac := arpCache[i].MAC
+			arpLock.Release(flags)
+			statsInc(&netStats.ArpHits)
+			return mac, true
 		}
 	}
+	arpLock.Release(flags)
+	statsInc(&netStats.ArpMisses)
 	return zeroMAC, false
 }
 
@@ -157,7 +161,9 @@ func arpSendRequest(targetIP uint32) {
 	}
 	payload := arpBuild(arpOpRequest, e1000MAC, ourIP, zeroMAC, targetIP)
 	frame := ethernetBuild(broadcastMAC, e1000MAC, etherTypeARP, payload)
-	e1000Transmit(frame)
+	if e1000Transmit(frame) {
+		statsInc(&netStats.ArpRequestsSent)
+	}
 }
 
 // arpSendReply unicasts an ARP reply to `dstMAC`, announcing our MAC
@@ -168,7 +174,9 @@ func arpSendReply(dstMAC [6]byte, dstIP uint32) {
 	}
 	payload := arpBuild(arpOpReply, e1000MAC, ourIP, dstMAC, dstIP)
 	frame := ethernetBuild(dstMAC, e1000MAC, etherTypeARP, payload)
-	e1000Transmit(frame)
+	if e1000Transmit(frame) {
+		statsInc(&netStats.ArpRepliesSent)
+	}
 }
 
 // arpSendGratuitous announces our IP/MAC to the local segment by
@@ -180,7 +188,9 @@ func arpSendGratuitous() {
 	}
 	payload := arpBuild(arpOpReply, e1000MAC, ourIP, broadcastMAC, ourIP)
 	frame := ethernetBuild(broadcastMAC, e1000MAC, etherTypeARP, payload)
-	e1000Transmit(frame)
+	if e1000Transmit(frame) {
+		statsInc(&netStats.ArpRepliesSent)
+	}
 	serialPrintln("ARP: sent gratuitous announcement for " + ipToString(ourIP))
 }
 

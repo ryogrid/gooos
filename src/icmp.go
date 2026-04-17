@@ -38,7 +38,9 @@ func icmpHandle(hdr IPv4Header, inner []byte) {
 	reply[2] = byte(csum >> 8)
 	reply[3] = byte(csum & 0xFF)
 
-	ipv4Send(ipProtoICMP, hdr.SrcIP, reply)
+	if ipv4Send(ipProtoICMP, hdr.SrcIP, reply) {
+		statsInc(&netStats.IcmpEcho)
+	}
 }
 
 // testICMPEchoReply synthesizes an ICMP echo-request addressed to

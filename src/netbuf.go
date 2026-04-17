@@ -107,6 +107,7 @@ func netBufAlloc() (uintptr, int) {
 		netBufFree[word] |= uint64(1) << uint(bit)
 		return netBufPoolBase + uintptr(idx)*netBufSize, idx
 	}
+	statsInc(&netStats.BufAllocFail)
 	return 0, -1
 }
 
