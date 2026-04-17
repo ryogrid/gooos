@@ -59,10 +59,20 @@ listed verification passes.
 
 ## Part C — Verification + cross-cutting
 
-- [ ] `test(net): Phase 5 end-to-end verification under QEMU` — run
+- [x] `test(net): Phase 5 end-to-end verification under QEMU` — run
       `udpecho` from the shell while `test-net` hostfwd round-trips a
       payload through it; run `dhcp` and observe DORA in serial log,
       verify `/network.conf` contents with `cat network.conf`.
+      **Verified** interactively under QEMU user-mode networking:
+      (a) `phase5-udpecho-test` round-trips through userspace
+      `udpecho.elf` via hostfwd 19999→17;
+      (b) `dhcp` completes the full DORA against QEMU slirp's DHCP
+      server, prints the 10.0.2.15 / 255.255.255.0 / gw 10.0.2.2 /
+      DNS 10.0.2.3 / lease 86400s block; `cat network.conf`
+      then shows the persisted file;
+      (c) `netDiag` auto-dump reports `DNS: 10.0.2.3` after the
+      lease is applied;
+      (d) `scripts/test_net.sh` still PASSes (Phase 1-4 regression).
 - [ ] `chore(net): reviewer pass (CRITICAL+MAJOR) + final completeness
       for Phase 5` — run reviewer subagent, fix CRITICAL+MAJOR, record
       MINOR below, confirm every checked box has a commit and no new
