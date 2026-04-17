@@ -34,7 +34,7 @@ end_dec=$((16#$end))
 # Runtime symbols whose contents include *task.Task pointers.
 # Only globals that actually appear in nm output are checked
 # (TinyGo dead-code-eliminates unused ones; that's not an error).
-pattern='^runtime[.](runqueue|sleepQueue|timerQueue)$'
+pattern='^runtime[.](runqueue|runqueues|sleepQueue|timerQueue)$'
 
 bad=0
 checked=0

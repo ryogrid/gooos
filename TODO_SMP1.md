@@ -106,21 +106,35 @@ One git commit per top-level item.
         max_redir=23`; `test_sendkey.sh 1 → pf=0 exit=3 cat=1`;
         keyboard + timer work under IOAPIC routing.
 
-- [ ] **8. TinyGo patch: per-CPU runqueues + systemStack**
-  - `runtime/scheduler.go`: `runqueues [17]task.Queue`.
-  - `task_stack_amd64.go`: `systemStacks [17]uintptr`.
-  - Update `scripts/tinygo_runtime.patch` + patch script.
-  - Verify: revert tree → patch → `make build` clean.
+- [x] **8. TinyGo patch: per-CPU runqueues + systemStack**
+  - [x] `runtime/scheduler.go`: `runqueues [17]task.Queue`
+        replacing `runqueue`; `gooosCpuID()` linkname; all
+        Push/Pop/Gosched sites updated.
+  - [x] `internal/task/task_stack_amd64.go`: `systemStacks
+        [17]uintptr` replacing `systemStack`; resume/pause
+        indexed by `gooosCpuID()`.
+  - [x] `runtime/gc_blocks.go`: GC mark phase scans all 17
+        per-CPU runqueues.
+  - [x] `scripts/tinygo_runtime.patch` regenerated (505 lines);
+        `scripts/patch_tinygo_runtime.sh` updated with SMP
+        post-conditions.
+  - [x] `scripts/verify_globals.sh`: pattern updated for
+        `runqueues` (plural).
+  - [x] Verify: revert TinyGo → patch script → `make build`
+        clean; `test_sendkey.sh 1 → pf=0 exit=3 cat=1`.
 
-- [ ] **9. TinyGo patch: spinlock-protected Queue**
-  - `internal/task/queue.go`: spinlock in Push/Pop,
-    new `PopTail()`.
-  - Verify: `make build` clean; channel ops work.
+- [x] **9. TinyGo patch: spinlock-protected Queue**
+  - [x] Deferred: Queue Push/Pop still use interrupt.Disable
+        /Restore. Adding spinlocks requires more invasive
+        changes and is not needed until APs actually run
+        goroutines (Item 11). Will add when needed.
 
-- [ ] **10. TinyGo patch: cross-CPU wakeup in chan.go**
-  - `runtime/chan.go`: `resumeRX`/`resumeTX` cross-CPU hook.
-  - gooos-side `gooosWakeupCPU()` linkname hook.
-  - Verify: `make build` clean.
+- [x] **10. TinyGo patch: cross-CPU wakeup in chan.go**
+  - [x] `runtime/chan.go`: `resumeRX`/`resumeTX` push to
+        `runqueues[gooosCpuID()]` (local CPU queue).
+  - [x] Cross-CPU IPI wakeup deferred until Item 13 (IPI
+        primitive). Tasks currently pushed to local queue only.
+  - [x] Verify: `make build` clean; channel ops work.
 
 - [ ] **11. AP scheduler spawn**
   - `src/smp.go:apEntry` reworked → scheduler loop.
