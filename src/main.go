@@ -379,10 +379,15 @@ func main() {
 	registerHandler(ipiWakeupVector, handleWakeupIPI)
 	serialPrintln("IPI: wakeup handler registered at vector 0xFC")
 
-	// Initialize IOAPIC if discovered from MADT. This replaces PIC
-	// routing with LAPIC-based delivery. Must happen after LAPIC
-	// timer setup so the PIT→vec32 redirection maintains timer ticks.
-	ioapicInit()
+	// IOAPIC initialization disabled: QEMU's IOAPIC IRQ0
+	// redirection does not deliver PIT timer interrupts correctly
+	// when switching from PIC pass-through, causing afterTicks and
+	// sys_sleep to hang. PIC pass-through via LINT0 (ExtINT)
+	// continues to work. IOAPIC support deferred until the IRQ
+	// routing issue is resolved.
+	//
+	// ioapicInit()
+	serialPrintln("IOAPIC: disabled (PIC pass-through active)")
 
 	// Phase B self-test: verify the TinyGo Task struct layout
 	// assumed by src/goroutine_tss.go before anything depends on it.
