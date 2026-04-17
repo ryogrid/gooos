@@ -374,6 +374,17 @@ func main() {
 	lapicTimerInit()
 	serialPrintln("LAPIC timer: BSP initialized at 100 Hz")
 
+	// PCI scan + e1000 NIC init (Phases 1-4 of the networking stack).
+	// netInit / RX dispatch come in Phase 2 once ethernet.go lands.
+	pciInit()
+	if e1000Found {
+		e1000Init()
+		e1000Vector := int(32 + e1000PCI.IRQLine)
+		registerHandler(e1000Vector, handleE1000IRQ)
+		serialPrintln("e1000: IRQ handler registered at vector " + utoa(uint64(e1000Vector)))
+		serialPrintln("e1000: NIC initialized")
+	}
+
 	// Register IPI handlers before IOAPIC (which enables interrupt
 	// delivery to APs).
 	registerHandler(ipiWakeupVector, handleWakeupIPI)

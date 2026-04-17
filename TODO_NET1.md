@@ -23,7 +23,7 @@ lands and the listed verification passes.
       `handleE1000IRQ` (ICR read-to-clear, signal `rxSignalCh` via
       non-blocking select, EOI via `picSendEOI` or `lapicSendEOI`).
       Verify: `make build` clean.
-- [ ] `feat(net): wire PCI+e1000 init into main.go` — insert
+- [x] `feat(net): wire PCI+e1000 init into main.go` — insert
       `pciInit`/`e1000Init` after `lapicTimerInit` and before
       `go fsTask()`. Register `handleE1000IRQ` at vector `32 + IRQLine`.
       Verify: boot via `make run-net`, serial shows `PCI: found e1000`,
