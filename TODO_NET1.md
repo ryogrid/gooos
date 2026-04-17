@@ -28,9 +28,13 @@ lands and the listed verification passes.
       `go fsTask()`. Register `handleE1000IRQ` at vector `32 + IRQLine`.
       Verify: boot via `make run-net`, serial shows `PCI: found e1000`,
       `e1000: MAC=...`, `e1000: link up`.
-- [ ] `feat(net): Makefile run-net target` — add `run-net` (ISO +
+- [x] `feat(net): Makefile run-net target` — add `run-net` (ISO +
       `-device e1000,netdev=n0 -netdev user,id=n0,hostfwd=udp::9999-:7`).
-      Verify: `make run-net` brings up the VM with NIC attached.
+      Verify: `make run-net` brings up the VM with NIC attached. **Phase 1
+      end-to-end verified**: serial log shows `PCI: found e1000 at 0:3.0
+      BAR0=0xFEB80000 IRQ=11`, `e1000: MAC=52:54:00:12:34:56`, `e1000:
+      link up`, `e1000: IRQ handler registered at vector 43`, `e1000: NIC
+      initialized`; shell boots cleanly; no regressions.
 
 ## Phase 2 — Ethernet + ARP
 
