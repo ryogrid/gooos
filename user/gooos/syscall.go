@@ -23,6 +23,9 @@ func syscall3(nr, a1, a2, a3 uintptr) uintptr
 //go:linkname syscall4 syscall4
 func syscall4(nr, a1, a2, a3, a4 uintptr) uintptr
 
+//go:linkname syscall5 syscall5
+func syscall5(nr, a1, a2, a3, a4, a5 uintptr) uintptr
+
 // Syscall numbers matching the kernel dispatch table (src/userspace.go).
 // See impldoc/shell_io_fd_table.md §5.1 for the canonical table.
 const (

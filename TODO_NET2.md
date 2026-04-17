@@ -7,7 +7,7 @@ listed verification passes.
 
 ## Part A — Socket API (kernel + userspace SDK)
 
-- [ ] `feat(net): syscall5 stub for 5-argument syscalls` — add `syscall5`
+- [x] `feat(net): syscall5 stub for 5-argument syscalls` — add `syscall5`
       assembly wrapper in `user/rt0.S` and its Go declaration in
       `user/gooos/syscall.go`. Needed because `sys_sendto` takes five
       args (fd, buf, len, dstIP, dstPort). Verify: `make -C user` clean.

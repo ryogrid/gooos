@@ -68,6 +68,17 @@ syscall4:
     int     $0x80
     ret
 
+    .global syscall5
+syscall5:
+    movq    %rdi, %rax       /* nr */
+    movq    %rsi, %rdi       /* a1 */
+    movq    %rdx, %rsi       /* a2 */
+    movq    %rcx, %rdx       /* a3 */
+    movq    %r8,  %r10       /* a4 */
+    movq    %r9,  %r8        /* a5 */
+    int     $0x80
+    ret
+
 /* ---------- Runtime stubs ----------------------------------------------- */
 
 /*
