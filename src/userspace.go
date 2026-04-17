@@ -66,6 +66,7 @@ const (
 	sysReadKey     = 18
 	sysVgaWriteAt  = 19
 	sysVgaSetCursor = 20
+	sysGetcpuid     = 21
 )
 
 // jumpToRing3 transitions the CPU to Ring 3 user mode via iretq.
@@ -120,6 +121,8 @@ func syscallDispatch(frame *SyscallFrame) {
 		sysVgaWriteAtHandler(frame)
 	case sysVgaSetCursor:
 		sysVgaSetCursorHandler(frame)
+	case sysGetcpuid:
+		sysGetcpuidHandler(frame)
 	default:
 		frame.RAX = 0xFFFFFFFFFFFFFFFF // -1 for invalid syscall
 	}
@@ -542,6 +545,13 @@ func sysVgaSetCursorHandler(frame *SyscallFrame) {
 	outb(0x3D4, 0x0E)
 	outb(0x3D5, uint8((pos>>8)&0xFF))
 	frame.RAX = 0
+}
+
+// --- Syscall 21: sys_getcpuid ---
+// Returns the current CPU index (0 = BSP, 1+ = APs) in RAX.
+
+func sysGetcpuidHandler(frame *SyscallFrame) {
+	frame.RAX = uintptr(cpuID())
 }
 
 // --- Syscall 12: sys_open ---

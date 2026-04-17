@@ -1,37 +1,25 @@
 diff --git a/src/internal/task/queue.go b/src/internal/task/queue.go
 new file mode 100644
-index 0000000..490a81c
+index 0000000..5a00d95
 --- /dev/null
 +++ b/src/internal/task/queue.go
-@@ -0,0 +1,146 @@
+@@ -0,0 +1,124 @@
 +package task
 +
 +import "runtime/interrupt"
 +
 +const asserts = false
 +
-+// gooos SMP spinlock — linked from the kernel's stubs.S.
-+//
-+//go:linkname gooos_spinlockAcquire spinlockAcquire
-+func gooos_spinlockAcquire(lock *uint32)
-+
-+//go:linkname gooos_spinlockRelease spinlockRelease
-+func gooos_spinlockRelease(lock *uint32)
-+
-+// Queue is a FIFO container of tasks. SMP v2: each queue has
-+// its own spinlock for cross-CPU safety (work stealing, GC scan).
-+// The zero value is an empty, unlocked queue.
++// Queue is a FIFO container of tasks.
++// The zero value is an empty queue.
 +type Queue struct {
 +	head, tail *Task
-+	lock       uint32
 +}
 +
-+// Push a task onto the queue. SMP-safe via spinlock.
++// Push a task onto the queue.
 +func (q *Queue) Push(t *Task) {
 +	i := interrupt.Disable()
-+	gooos_spinlockAcquire(&q.lock)
 +	if asserts && t.Next != nil {
-+		gooos_spinlockRelease(&q.lock)
 +		interrupt.Restore(i)
 +		panic("runtime: pushing a task to a queue with a non-nil Next pointer")
 +	}
@@ -43,17 +31,14 @@ index 0000000..490a81c
 +	if q.head == nil {
 +		q.head = t
 +	}
-+	gooos_spinlockRelease(&q.lock)
 +	interrupt.Restore(i)
 +}
 +
-+// Pop a task off of the queue. SMP-safe via spinlock.
++// Pop a task off of the queue.
 +func (q *Queue) Pop() *Task {
 +	i := interrupt.Disable()
-+	gooos_spinlockAcquire(&q.lock)
 +	t := q.head
 +	if t == nil {
-+		gooos_spinlockRelease(&q.lock)
 +		interrupt.Restore(i)
 +		return nil
 +	}
@@ -62,7 +47,6 @@ index 0000000..490a81c
 +		q.tail = nil
 +	}
 +	t.Next = nil
-+	gooos_spinlockRelease(&q.lock)
 +	interrupt.Restore(i)
 +	return t
 +}
@@ -70,8 +54,6 @@ index 0000000..490a81c
 +// Append pops the contents of another queue and pushes them onto the end of this queue.
 +func (q *Queue) Append(other *Queue) {
 +	i := interrupt.Disable()
-+	gooos_spinlockAcquire(&q.lock)
-+	gooos_spinlockAcquire(&other.lock)
 +	if q.head == nil {
 +		q.head = other.head
 +	} else {
@@ -79,17 +61,13 @@ index 0000000..490a81c
 +	}
 +	q.tail = other.tail
 +	other.head, other.tail = nil, nil
-+	gooos_spinlockRelease(&other.lock)
-+	gooos_spinlockRelease(&q.lock)
 +	interrupt.Restore(i)
 +}
 +
-+// Empty checks if the queue is empty. SMP-safe via spinlock.
++// Empty checks if the queue is empty.
 +func (q *Queue) Empty() bool {
 +	i := interrupt.Disable()
-+	gooos_spinlockAcquire(&q.lock)
 +	empty := q.head == nil
-+	gooos_spinlockRelease(&q.lock)
 +	interrupt.Restore(i)
 +	return empty
 +}
@@ -390,10 +368,10 @@ index 0000000..8d64545
 +func In() bool            { return false }
 diff --git a/src/runtime/runtime_gooos.go b/src/runtime/runtime_gooos.go
 new file mode 100644
-index 0000000..722004e
+index 0000000..a6586fd
 --- /dev/null
 +++ b/src/runtime/runtime_gooos.go
-@@ -0,0 +1,91 @@
+@@ -0,0 +1,92 @@
 +//go:build gooos && baremetal && kernelspace
 +
 +// gooos-local runtime bodies for bare-metal x86_64 Ring 0.
@@ -483,8 +461,9 @@ index 0000000..722004e
 +	exit(0)
 +}
 +
-+// waitForEvents provided by wait_other.go (fallback). No override
-+// needed — that fallback body is a no-op, acceptable here.
++// waitForEvents is in wait_gooos.go (excludes wait_other.go via
++// build tags). On gooos, idle = sti; hlt; cli — AP scheduler
++// sleeps until LAPIC timer or IPI wakes it.
 diff --git a/src/runtime/runtime_gooos_user.go b/src/runtime/runtime_gooos_user.go
 new file mode 100644
 index 0000000..0835d65
@@ -683,4 +662,37 @@ index 30b2da8..a3eb9af 100644
 +// systemStacks[cpuID()] on the first resume() call.
 +func apScheduler() {
 +	scheduler()
++}
+diff --git a/src/runtime/wait_gooos.go b/src/runtime/wait_gooos.go
+new file mode 100644
+index 0000000..3841e65
+--- /dev/null
++++ b/src/runtime/wait_gooos.go
+@@ -0,0 +1,14 @@
++//go:build gooos && baremetal && kernelspace
++
++package runtime
++
++// waitForEvents is called by the scheduler when the runqueue is
++// empty and there are no sleeping/timer tasks. On APs this is the
++// normal idle state — halt until an IPI or LAPIC timer wakes us.
++// On the BSP it means all goroutines are blocked (rare but safe
++// to idle briefly).
++func waitForEvents() {
++	gooos_sti()
++	gooos_hlt()
++	gooos_cli()
++}
+diff --git a/src/runtime/wait_other.go b/src/runtime/wait_other.go
+new file mode 100644
+index 0000000..322cd1a
+--- /dev/null
++++ b/src/runtime/wait_other.go
+@@ -0,0 +1,7 @@
++//go:build !tinygo.riscv && !cortexm && !gooos
++
++package runtime
++
++func waitForEvents() {
++	runtimePanic("deadlocked: no event source")
 +}

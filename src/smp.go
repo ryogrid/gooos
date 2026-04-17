@@ -57,6 +57,7 @@ const smpMaxAPs = 16
 // a fully populated gdtTable template.
 var gdtReady uint32
 
+
 // apStacks holds per-AP stack top pointers. The trampoline indexes
 // into this array using the atomically claimed AP index.
 var apStacks [smpMaxAPs]uintptr
@@ -252,14 +253,14 @@ func apEntry(apIndex uint64) {
 	serialPutChar('\r')
 	serialPutChar('\n')
 
-	// Enter the TinyGo scheduler loop on this AP. The AP will pop
-	// tasks from its local runqueue, steal from peers when idle,
-	// and sleep via sti+hlt when no work is available.
-	// This never returns.
+	// Idle: enable interrupts and halt. SMP v2 infrastructure is
+	// in place (per-CPU GDT/TSS/runqueues/spinlocks) but AP
+	// scheduler entry is disabled — APs stealing goroutines from
+	// the BSP during boot corrupts unsynchronized kernel state.
+	// Full AP scheduling requires proper boot-phase gating and
+	// shared-state synchronization beyond what's currently
+	// implemented.
 	sti()
-	apSchedulerEntry()
-
-	// Safety net — apSchedulerEntry should never return.
 	for {
 		hlt()
 	}
