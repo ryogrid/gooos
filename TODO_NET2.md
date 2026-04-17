@@ -26,7 +26,7 @@ listed verification passes.
       `sys_net_config`/`sys_sendto_bcast` handlers. `sys_recvfrom`
       accepts `R8 = timeout_ticks` (0 = block forever) per the design
       doc's §12 open question. Verify: `make build` clean.
-- [ ] `feat(net): wire syscalls 22-27 in userspace.go` — add syscall
+- [x] `feat(net): wire syscalls 22-27 in userspace.go` — add syscall
       number constants and dispatch `case` entries. Verify: `make build`
       clean.
 - [ ] `feat(net): userspace SDK user/gooos/net.go` — high-level

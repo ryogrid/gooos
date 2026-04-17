@@ -67,6 +67,13 @@ const (
 	sysVgaWriteAt  = 19
 	sysVgaSetCursor = 20
 	sysGetcpuid     = 21
+	// Phase 5 socket API — see impldoc/net_socket_api.md.
+	sysSocket      = 22
+	sysBind        = 23
+	sysSendto      = 24
+	sysRecvfrom    = 25
+	sysNetConfig   = 26
+	sysSendtoBcast = 27
 )
 
 // jumpToRing3 transitions the CPU to Ring 3 user mode via iretq.
@@ -123,6 +130,18 @@ func syscallDispatch(frame *SyscallFrame) {
 		sysVgaSetCursorHandler(frame)
 	case sysGetcpuid:
 		sysGetcpuidHandler(frame)
+	case sysSocket:
+		sysSocketHandler(frame)
+	case sysBind:
+		sysBindHandler(frame)
+	case sysSendto:
+		sysSendtoHandler(frame)
+	case sysRecvfrom:
+		sysRecvfromHandler(frame)
+	case sysNetConfig:
+		sysNetConfigHandler(frame)
+	case sysSendtoBcast:
+		sysSendtoBcastHandler(frame)
 	default:
 		frame.RAX = 0xFFFFFFFFFFFFFFFF // -1 for invalid syscall
 	}
