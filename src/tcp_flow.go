@@ -11,6 +11,47 @@ package main
 // (tcpSendSegment reads rcvWnd/lastAdvWin without the lock for
 // lock-order reasons — see comment in tcpSendSegment).
 
+// tcpAckUpdate processes the ACK field of an incoming segment
+// and applies it to the TCB. Handles three things in RFC-
+// canonical order:
+//   1. sndUna advance (if the ACK is in (sndUna, sndNxt]),
+//      with retxAckTo pop + RTT sample (Karn's rule) and
+//      RTO re-arm.
+//   2. RFC 793 §3.9 send-window update using the
+//      sndWl1/sndWl2 staleness guard.
+// Returns true if this ACK acknowledges up-to-and-including our
+// sndNxt — a signal callers use to detect "ACK of our FIN" when
+// a FIN was queued.
+// Caller MUST hold tcbTableLock.
+func tcpAckUpdate(t *TCB, h TCPHeader) bool {
+	if h.Flags&tcpFlagACK == 0 {
+		return false
+	}
+	if !seqLE(t.sndUna, h.Ack) || !seqLE(h.Ack, t.sndNxt) {
+		return false
+	}
+	if t.sndUna != h.Ack {
+		t.sndUna = h.Ack
+		_, oldestSent, anyPristine := retxAckTo(t, h.Ack)
+		tcpRTTSample(t, oldestSent, anyPristine)
+		if t.retxQ.n == 0 {
+			t.rtoDeadline = 0
+		} else {
+			tcpArmRTO(t)
+		}
+	}
+	// RFC 793 §3.9 send-window update. The guard keeps a stale
+	// segment (old seq or old ack) from shrinking a freshly-
+	// advertised window.
+	if seqLT(t.sndWl1, h.Seq) ||
+		(t.sndWl1 == h.Seq && seqLE(t.sndWl2, h.Ack)) {
+		t.sndWnd = uint32(h.Window)
+		t.sndWl1 = h.Seq
+		t.sndWl2 = h.Ack
+	}
+	return h.Ack == t.sndNxt
+}
+
 // tcpAdvertiseWin computes the receive window to advertise on
 // the next outbound segment. Applies SWS avoidance: does not
 // announce growth smaller than min(mssEff, cap/2). Updates

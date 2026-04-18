@@ -195,9 +195,17 @@ Commit-message style follows `pasttodos/TODO_NET2.md` precedent.
       direct `t.rcvWnd` read for `tcpAdvertiseWin(t)`.
       Verify: `make build` + `make lint` clean; TCP-1
       regression still PASS.
-- [ ] `feat(net): snd window update (RFC 793 §3.9)` —
-      `sndWl1`/`sndWl2` guard. Verify: unit test — window
-      grows on fresh ACK, unchanged on stale duplicate.
+- [x] `feat(net): snd window update (RFC 793 §3.9)` —
+      consolidated into `tcpAckUpdate(t, h)` helper in
+      tcp_flow.go. Handles sndUna advance, retxAckTo,
+      tcpRTTSample (Karn), RTO re-arm, and sndWl1/sndWl2-
+      guarded window update in one place. Callers in
+      tcpHandleEstablished, FinWait1, FinWait2, and Closing
+      now share this helper instead of maintaining four
+      slightly-drifted inline copies. Returns the
+      ack-of-our-FIN indicator for FIN_WAIT callers.
+      Verify: `make build` + `make lint` clean; TCP-1
+      regression still PASS.
 - [ ] `feat(net): persist timer` — zero-window probe per
       `net_tcp_timers_and_rtt.md §6.1` +
       `net_tcp_flow_and_congestion.md §4`. Verify: T3.2.

@@ -713,27 +713,8 @@ func tcpHandleEstablished(t *TCB, h TCPHeader, payload []byte) {
 		tcpSendPureACK(t)
 		return
 	}
-	// Update send-window tracking from this segment's ACK/window.
-	if h.Flags&tcpFlagACK != 0 {
-		if seqLE(t.sndUna, h.Ack) && seqLE(h.Ack, t.sndNxt) {
-			if t.sndUna != h.Ack {
-				t.sndUna = h.Ack
-				_, oldestSent, anyPristine := retxAckTo(t, h.Ack)
-				tcpRTTSample(t, oldestSent, anyPristine)
-				if t.retxQ.n == 0 {
-					t.rtoDeadline = 0
-				} else {
-					tcpArmRTO(t)
-				}
-			}
-		}
-		if seqLT(t.sndWl1, h.Seq) ||
-			(t.sndWl1 == h.Seq && seqLE(t.sndWl2, h.Ack)) {
-			t.sndWnd = uint32(h.Window)
-			t.sndWl1 = h.Seq
-			t.sndWl2 = h.Ack
-		}
-	}
+	// sndUna / sndWnd update + RTT sampling, all guarded.
+	tcpAckUpdate(t, h)
 	// Accept in-order payload bytes into rxBuf.
 	if len(payload) > 0 {
 		n := t.rxBuf.rbWrite(payload)
@@ -908,25 +889,8 @@ func tcpHandleFinWait1(t *TCB, h TCPHeader, payload []byte) {
 			t.rcvWnd = 0
 		}
 	}
-	// Detect ACK-of-our-FIN: a valid ACK whose Ack equals our
-	// sndNxt (the FIN occupied the final seq in our window).
-	ackOfOurFin := false
-	if h.Flags&tcpFlagACK != 0 &&
-		seqLE(t.sndUna, h.Ack) && seqLE(h.Ack, t.sndNxt) {
-		if t.sndUna != h.Ack {
-			t.sndUna = h.Ack
-			_, oldestSent, anyPristine := retxAckTo(t, h.Ack)
-			tcpRTTSample(t, oldestSent, anyPristine)
-			if t.retxQ.n == 0 {
-				t.rtoDeadline = 0
-			} else {
-				tcpArmRTO(t)
-			}
-		}
-		if h.Ack == t.sndNxt {
-			ackOfOurFin = true
-		}
-	}
+	// sndUna / sndWnd update + detect ACK-of-our-FIN.
+	ackOfOurFin := tcpAckUpdate(t, h)
 	// Detect peer FIN (only if in-order).
 	peerFin := false
 	if h.Flags&tcpFlagFIN != 0 &&
@@ -952,6 +916,9 @@ func tcpHandleFinWait1(t *TCB, h TCPHeader, payload []byte) {
 // tcpHandleFinWait2: our FIN has been ACKed; waiting for peer FIN.
 func tcpHandleFinWait2(t *TCB, h TCPHeader, payload []byte) {
 	iflags := tcbTableLock.Acquire()
+	// Accept rolling ACK / window updates (no data left on our
+	// side, but the peer may still send window-update segments).
+	tcpAckUpdate(t, h)
 	if h.Seq == t.rcvNxt && len(payload) > 0 {
 		n := t.rxBuf.rbWrite(payload)
 		t.rcvNxt += uint32(n)
@@ -962,7 +929,8 @@ func tcpHandleFinWait2(t *TCB, h TCPHeader, payload []byte) {
 		}
 	}
 	peerFin := false
-	if h.Flags&tcpFlagFIN != 0 && seqLE(h.Seq+uint32(len(payload)), t.rcvNxt) {
+	if h.Flags&tcpFlagFIN != 0 &&
+		h.Seq+uint32(len(payload)) == t.rcvNxt {
 		t.rcvNxt++
 		peerFin = true
 	}
@@ -979,12 +947,8 @@ func tcpHandleFinWait2(t *TCB, h TCPHeader, payload []byte) {
 func tcpHandleClosing(t *TCB, h TCPHeader, payload []byte) {
 	_ = payload
 	iflags := tcbTableLock.Acquire()
-	if h.Flags&tcpFlagACK != 0 && h.Ack == t.sndNxt {
-		_, oldestSent, anyPristine := retxAckTo(t, h.Ack)
-		tcpRTTSample(t, oldestSent, anyPristine)
-		if t.retxQ.n == 0 {
-			t.rtoDeadline = 0
-		}
+	ackOfOurFin := tcpAckUpdate(t, h)
+	if ackOfOurFin {
 		t.state = tcpStateTimeWait
 		t.timeWaitDeadline = pitTicks + tcpTimeWaitTicks
 	}
