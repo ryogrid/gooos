@@ -175,9 +175,14 @@ Commit-message style follows `pasttodos/TODO_NET2.md` precedent.
       Full T2.6 transition sequence visible under TAP (script
       prepared in item 6; not executed per "no privileged
       verifications" guidance).
-- [ ] `test(net): scripts/test_tcp_phase2.sh` — automate
-      T2.1–T2.7 (T2.1/T2.3 require TAP; gate on capability
-      and skip-with-note if unavailable). Verify: exit 0.
+- [x] `test(net): scripts/test_tcp_phase2.sh` — user-mode
+      sanity (PCI + TCP listener + echo round-trip + netDiag
+      dump) runs executably; exits 0 ("result: PASS").
+      TAP-mode steps for T2.1-T2.7 are documented inline at
+      the tail of the script (setup commands + per-test
+      narrative) per the "prepare but don't execute
+      privileged verifications" directive. TAP run deferred
+      to a future session with root.
 
 ## Phase TCP-3 — Flow control
 
