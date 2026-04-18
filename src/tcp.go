@@ -596,6 +596,8 @@ func tcpTryPassiveOpen(hdr IPv4Header, h TCPHeader, payload []byte) {
 // under tcbTableLock before mutating).
 func tcpDispatchToTCB(t *TCB, h TCPHeader, payload []byte) {
 	switch t.state {
+	case tcpStateSynSent:
+		tcpHandleSynSent(t, h, payload)
 	case tcpStateSynReceived:
 		tcpHandleSynReceived(t, h, payload)
 	case tcpStateEstablished:
@@ -605,8 +607,8 @@ func tcpDispatchToTCB(t *TCB, h TCPHeader, payload []byte) {
 	case tcpStateLastAck:
 		tcpHandleLastAck(t, h, payload)
 	default:
-		// Other states (SYN_SENT / FIN_WAIT_* / CLOSING /
-		// TIME_WAIT / CLOSED) land in Phase TCP-2.
+		// Remaining states (FIN_WAIT_* / CLOSING / TIME_WAIT
+		// / CLOSED) land in Phase TCP-2 items 4-5.
 	}
 }
 
@@ -775,6 +777,160 @@ const tcpEchoListenPort uint16 = 8080
 // 100 ms under QEMU user-mode. Rewire to a channel-based wake
 // when flow-control / persist timers land (Phase TCP-3).
 const tcpEchoPollTicks uint64 = 5
+
+// tcpHandleSynSent: SYN_SENT + SYN|ACK (valid ACK of our SYN) →
+// ESTABLISHED; emit final ACK. SYN_SENT + RST → free. Simul-
+// open (bare SYN from peer) is rejected with RST per v1
+// simplification (net_tcp_state_machine.md §4).
+func tcpHandleSynSent(t *TCB, h TCPHeader, payload []byte) {
+	// RST on an unacceptable ACK in SYN_SENT is legal; follow
+	// RFC 793 §3.9 check that any ACK present covers iss..sndNxt.
+	if h.Flags&tcpFlagACK != 0 {
+		if !(seqLE(t.sndUna+1, h.Ack) && seqLE(h.Ack, t.sndNxt)) {
+			// Bogus ACK; drop (we could RST but keep it simple).
+			if h.Flags&tcpFlagRST == 0 {
+				tcpSendReset(
+					t.localIP, t.localPort,
+					t.remoteIP, t.remotePort,
+					h.Ack, h.Seq, h.Flags, len(payload),
+				)
+			}
+			return
+		}
+	}
+	if h.Flags&tcpFlagRST != 0 {
+		tcbFree(t)
+		return
+	}
+	// Simultaneous open (SYN alone, no ACK): v1 rejects with RST.
+	if h.Flags&tcpFlagSYN != 0 && h.Flags&tcpFlagACK == 0 {
+		tcpSendReset(
+			t.localIP, t.localPort,
+			t.remoteIP, t.remotePort,
+			h.Ack, h.Seq, h.Flags, len(payload),
+		)
+		tcbFree(t)
+		return
+	}
+	// Expect SYN|ACK.
+	if h.Flags&(tcpFlagSYN|tcpFlagACK) != (tcpFlagSYN | tcpFlagACK) {
+		return
+	}
+
+	// Parse peer MSS from options.
+	peerMSS := tcpDefaultMSS
+	if h.OptLen > 0 {
+		peerMSS, _ = tcpParseOptions(h.Options[:h.OptLen])
+	}
+
+	iflags := tcbTableLock.Acquire()
+	t.irs = h.Seq
+	t.rcvNxt = h.Seq + 1 // past peer SYN
+	t.sndUna = h.Ack
+	t.sndWnd = uint32(h.Window)
+	t.sndWl1 = h.Seq
+	t.sndWl2 = h.Ack
+	t.mssPeer = peerMSS
+	if peerMSS < t.mssLocal {
+		t.mssEff = peerMSS
+	} else {
+		t.mssEff = t.mssLocal
+	}
+	t.state = tcpStateEstablished
+	tcbTableLock.Release(iflags)
+
+	// Emit final ACK of 3WHS.
+	tcpSendPureACK(t)
+
+	// If the SYN|ACK also carried data (unusual), deliver it via
+	// the ESTABLISHED handler so rxBuf fills correctly.
+	if len(payload) > 0 || h.Flags&tcpFlagFIN != 0 {
+		// Re-run the ESTABLISHED handler against the same segment
+		// — it will see seq == rcvNxt and accept.
+		tcpHandleEstablished(t, h, payload)
+	}
+}
+
+// --- active open ---
+
+// tcpEphemeralBase/Top bound the ephemeral local-port range.
+// 16-port window matches the 16 max TCBs and avoids fighting
+// with udpBindings (UDP uses a separate port space).
+const (
+	tcpEphemeralBase uint16 = 49152
+	tcpEphemeralTop  uint16 = 49167
+)
+
+// tcpAllocEphemeralPort finds a local port not currently in use
+// by any active TCB. Returns 0 if the range is exhausted.
+// Caller must NOT hold tcbTableLock.
+func tcpAllocEphemeralPort() uint16 {
+	flags := tcbTableLock.Acquire()
+	defer tcbTableLock.Release(flags)
+	for p := tcpEphemeralBase; p <= tcpEphemeralTop; p++ {
+		inUse := false
+		for i := 0; i < tcbMax; i++ {
+			if tcbTable[i].active && tcbTable[i].localPort == p {
+				inUse = true
+				break
+			}
+		}
+		if !inUse {
+			return p
+		}
+	}
+	return 0
+}
+
+// tcpActiveConnect initiates a client-side 3-way handshake to
+// remoteIP:remotePort. Allocates a TCB in SYN_SENT, emits the
+// initial SYN, and returns the TCB pointer. The caller polls
+// t.state for ESTABLISHED (or CLOSED on failure). Retransmission
+// of a lost SYN lands in Phase TCP-2 item 2; for now the SYN
+// is sent once and the peer is expected to answer.
+//
+// Returns nil if the ephemeral range is exhausted, the TCB
+// table is full, or the initial SYN cannot be transmitted.
+func tcpActiveConnect(remoteIP uint32, remotePort uint16) *TCB {
+	lp := tcpAllocEphemeralPort()
+	if lp == 0 {
+		return nil
+	}
+	t := tcbAlloc(ourIP, lp, remoteIP, remotePort)
+	if t == nil {
+		return nil
+	}
+	iflags := tcbTableLock.Acquire()
+	t.state = tcpStateSynSent
+	t.iss = isnNext()
+	t.sndUna = t.iss
+	t.sndNxt = t.iss + 1 // past our SYN
+	t.rcvWnd = uint32(tcpRxBufSize)
+	t.mssLocal = tcpDefaultMSS
+	t.mssEff = tcpDefaultMSS
+	tcbTableLock.Release(iflags)
+
+	// Emit SYN with MSS option. Roll sndNxt back to iss for this
+	// send so the SYN carries iss as its seq.
+	iflags = tcbTableLock.Acquire()
+	origSndNxt := t.sndNxt
+	t.sndNxt = t.iss
+	tcbTableLock.Release(iflags)
+
+	var mssOpt [4]byte
+	tcpBuildMSSOption(mssOpt[:], t.mssLocal)
+	ok := tcpSendSegment(t, tcpFlagSYN, mssOpt[:], nil)
+
+	iflags = tcbTableLock.Acquire()
+	t.sndNxt = origSndNxt
+	tcbTableLock.Release(iflags)
+
+	if !ok {
+		tcbFree(t)
+		return nil
+	}
+	return t
+}
 
 // tcpStateName returns a short human-readable name for a state.
 // Used by netDiag; the strings are static literals so the ISR

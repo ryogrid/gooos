@@ -115,10 +115,17 @@ Commit-message style follows `pasttodos/TODO_NET2.md` precedent.
 
 ## Phase TCP-2 — Active open + retransmission + RTT
 
-- [ ] `feat(net): SYN_SENT path + tcpActiveConnect` —
-      active-open branch of the state machine; connect-timer
-      goroutine (`net_tcp_timers_and_rtt.md §6.2`). Verify:
-      T2.2 (connect timeout retries then errors).
+- [x] `feat(net): SYN_SENT path + tcpActiveConnect` —
+      `tcpHandleSynSent` handler (SYN|ACK + ACK validity
+      check → ESTABLISHED; RST → tcbFree; simultaneous-open
+      rejected with RST per v1 simplification).
+      `tcpActiveConnect(remoteIP, remotePort)` allocates a
+      local ephemeral port (49152-49167), TCB, emits SYN
+      with MSS option. Connect-timer goroutine (which would
+      retransmit the SYN on loss) lands with TCP-2 item 2's
+      retx queue; current implementation sends SYN once.
+      Verify: `make build` + `make lint` clean; TCP-1
+      regression still PASS.
 - [ ] `feat(net): tcp_retx.go retransmission queue + RTO` —
       new file. `tcpRetxQueue` per `net_tcp_segment_io.md §5`
       + RTO timer goroutine per
