@@ -177,5 +177,6 @@ func netDiag() {
 		" send=" + utoa(s.UdpSend) +
 		" portUnreach=" + utoa(s.UdpPortUnreach))
 	serialPrintln("Buf alloc fails: " + utoa(s.BufAllocFail))
+	tcpDiag()
 	serialPrintln("=== end ===")
 }

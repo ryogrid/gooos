@@ -776,6 +776,120 @@ const tcpEchoListenPort uint16 = 8080
 // when flow-control / persist timers land (Phase TCP-3).
 const tcpEchoPollTicks uint64 = 5
 
+// tcpStateName returns a short human-readable name for a state.
+// Used by netDiag; the strings are static literals so the ISR
+// lint does not flag any concat on the hot path.
+func tcpStateName(s tcbState) string {
+	switch s {
+	case tcpStateClosed:
+		return "CLOSED"
+	case tcpStateListen:
+		return "LISTEN"
+	case tcpStateSynSent:
+		return "SYN_SENT"
+	case tcpStateSynReceived:
+		return "SYN_RECEIVED"
+	case tcpStateEstablished:
+		return "ESTABLISHED"
+	case tcpStateFinWait1:
+		return "FIN_WAIT_1"
+	case tcpStateFinWait2:
+		return "FIN_WAIT_2"
+	case tcpStateCloseWait:
+		return "CLOSE_WAIT"
+	case tcpStateClosing:
+		return "CLOSING"
+	case tcpStateLastAck:
+		return "LAST_ACK"
+	case tcpStateTimeWait:
+		return "TIME_WAIT"
+	}
+	return "?"
+}
+
+// tcpDiag prints the listener table and active TCBs. Called
+// from netDiag (src/net.go). Takes the TCP locks in canonical
+// order (tcbTableLock rank 9 then tcpListenLock rank 10) and
+// releases them before serial output so serial write never
+// runs under either.
+func tcpDiag() {
+	serialPrintln("TCP listeners:")
+	// Snapshot listeners.
+	var lPorts [tcpMaxListeners]uint16
+	var lPending [tcpMaxListeners]int
+	var lAccept [tcpMaxListeners]int
+	var lActive [tcpMaxListeners]bool
+	flags := tcpListenLock.Acquire()
+	for i := 0; i < tcpMaxListeners; i++ {
+		lActive[i] = tcpListeners[i].active
+		lPorts[i] = tcpListeners[i].port
+		lPending[i] = tcpListeners[i].nPending
+		lAccept[i] = tcpListeners[i].nAccept
+	}
+	tcpListenLock.Release(flags)
+	anyL := false
+	for i := 0; i < tcpMaxListeners; i++ {
+		if !lActive[i] {
+			continue
+		}
+		serialPrintln("  port=" + utoa(uint64(lPorts[i])) +
+			" pending=" + utoa(uint64(lPending[i])) +
+			" accept=" + utoa(uint64(lAccept[i])))
+		anyL = true
+	}
+	if !anyL {
+		serialPrintln("  (none)")
+	}
+
+	serialPrintln("TCP TCBs:")
+	// Snapshot TCBs.
+	type tcbSnap struct {
+		active                             bool
+		localIP, remoteIP                  uint32
+		localPort, remotePort              uint16
+		state                              tcbState
+		rxLen, txLen                       int
+		sndUna, sndNxt, rcvNxt             uint32
+	}
+	var snaps [tcbMax]tcbSnap
+	flags = tcbTableLock.Acquire()
+	for i := 0; i < tcbMax; i++ {
+		t := &tcbTable[i]
+		snaps[i].active = t.active
+		if !t.active {
+			continue
+		}
+		snaps[i].localIP = t.localIP
+		snaps[i].remoteIP = t.remoteIP
+		snaps[i].localPort = t.localPort
+		snaps[i].remotePort = t.remotePort
+		snaps[i].state = t.state
+		snaps[i].rxLen = t.rxBuf.rbLen()
+		snaps[i].txLen = t.txBuf.rbLen()
+		snaps[i].sndUna = t.sndUna
+		snaps[i].sndNxt = t.sndNxt
+		snaps[i].rcvNxt = t.rcvNxt
+	}
+	tcbTableLock.Release(flags)
+	anyT := false
+	for i := 0; i < tcbMax; i++ {
+		if !snaps[i].active {
+			continue
+		}
+		serialPrintln("  " + ipToString(snaps[i].localIP) + ":" +
+			utoa(uint64(snaps[i].localPort)) + " <-> " +
+			ipToString(snaps[i].remoteIP) + ":" +
+			utoa(uint64(snaps[i].remotePort)) + " " +
+			tcpStateName(snaps[i].state) +
+			" rx=" + utoa(uint64(snaps[i].rxLen)) +
+			" tx=" + utoa(uint64(snaps[i].txLen)))
+		anyT = true
+	}
+	if !anyT {
+		serialPrintln("  (none)")
+	}
+}
+
 // tcpInit registers the kernel echo listener on port 8080 and
 // spawns the echo goroutine. Called from netInit after ARP is
 // ready.

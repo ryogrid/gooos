@@ -80,9 +80,15 @@ Commit-message style follows `pasttodos/TODO_NET2.md` precedent.
       has drained. Verify: `make build` + `make lint` clean.
       QEMU round-trip verification deferred to item 10
       (hostfwd) + item 11 (test harness).
-- [ ] `feat(net): netDiag TCP rows` — extend `netDiag()` in
-      `src/net.go` to print per-TCB state + listener-table
-      snapshot. Verify: T1.3 serial row format.
+- [x] `feat(net): netDiag TCP rows` — new `tcpDiag()` helper
+      prints the listener table (port/pending/accept) and
+      every active TCB (4-tuple / state / rx/tx rbLen /
+      sndUna/Nxt/rcvNxt). Snapshots under tcbTableLock and
+      tcpListenLock before calling serialPrintln to avoid
+      holding either lock across serial output.
+      Verify: `make build` + `make lint` clean. T1.3 row
+      format will be observable via `make run-net` post
+      5-sec auto-dump.
 - [x] `chore(net): Makefile run-net hostfwd tcp::10080-:8080`
       — appended to the existing `run-net` hostfwd list;
       comment block in Makefile extended with the TCP row.
