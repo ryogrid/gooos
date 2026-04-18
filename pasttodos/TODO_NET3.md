@@ -141,9 +141,16 @@ Commit-message style follows `pasttodos/TODO_NET2.md` precedent.
       `make build` + `make lint` clean; TCP-1 regression
       still PASS. T2.3 data-retx under forced loss is gated
       behind the echo-server txBuf refactor — deferred.
-- [ ] `feat(net): tcp_rtt.go SRTT/RTTVAR/RTO (RFC 6298)` —
-      new file. `tcpRTTInit` / `tcpRTTUpdate` / `clampRTO`;
-      Karn's rule in `retxAckTo`. Verify: T2.4 + T2.5.
+- [x] `feat(net): tcp_rtt.go SRTT/RTTVAR/RTO (RFC 6298)` —
+      new file with `tcpRTTInit`, `tcpRTTUpdate`, fixed-point
+      SRTT (×8) / RTTVAR (×4), `clampRTO` enforcing
+      [1 s, 60 s]. `tcpRTTSample(t, oldestSent, anyPristine)`
+      wraps Karn's rule (only pristine pops feed the
+      estimator). TCB gains srttTicks / rttvarTicks /
+      rttInitialized fields. Wired into the three retxAckTo
+      sites (SYN_SENT→ESTABLISHED, SYN_RECEIVED→ESTABLISHED,
+      ESTABLISHED). Verify: `make build` + `make lint`
+      clean; TCP-1 regression still PASS.
 - [ ] `feat(net): FIN path (FIN_WAIT_1/FIN_WAIT_2/CLOSING)` —
       remaining state-machine branches. Verify: T1.6 + T2.6.
 - [ ] `feat(net): TIME_WAIT timer` — 60 s via `afterTicks`;

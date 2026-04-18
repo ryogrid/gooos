@@ -127,6 +127,14 @@ type TCB struct {
 	xmitCountHead       uint8  // retransmits of head-of-queue
 	rtoGoroutineRunning bool
 
+	// RTT estimator state (RFC 6298 — see src/tcp_rtt.go).
+	// srttTicks is scaled ×8, rttvarTicks ×4; rttInitialized
+	// distinguishes "never sampled" (use init path) from
+	// "already have SRTT" (use update path).
+	srttTicks      uint32
+	rttvarTicks    uint32
+	rttInitialized bool
+
 	// Bookkeeping.
 	userOwner int  // owning pid; -1 = kernel-internal
 	active    bool // false = slot is free
@@ -651,8 +659,10 @@ func tcpHandleSynReceived(t *TCB, h TCPHeader, payload []byte) {
 	t.sndWnd = uint32(h.Window)
 	t.sndWl1 = h.Seq
 	t.sndWl2 = h.Ack
-	// Pop the SYN|ACK descriptor from retxQ.
-	retxAckTo(t, h.Ack)
+	// Pop the SYN|ACK descriptor from retxQ and feed the RTT
+	// estimator (Karn's rule: only pristine descriptors).
+	_, oldestSent, anyPristine := retxAckTo(t, h.Ack)
+	tcpRTTSample(t, oldestSent, anyPristine)
 	if t.retxQ.n == 0 {
 		t.rtoDeadline = 0
 	} else {
@@ -691,7 +701,8 @@ func tcpHandleEstablished(t *TCB, h TCPHeader, payload []byte) {
 		if seqLE(t.sndUna, h.Ack) && seqLE(h.Ack, t.sndNxt) {
 			if t.sndUna != h.Ack {
 				t.sndUna = h.Ack
-				retxAckTo(t, h.Ack)
+				_, oldestSent, anyPristine := retxAckTo(t, h.Ack)
+				tcpRTTSample(t, oldestSent, anyPristine)
 				if t.retxQ.n == 0 {
 					t.rtoDeadline = 0
 				} else {
@@ -874,7 +885,8 @@ func tcpHandleSynSent(t *TCB, h TCPHeader, payload []byte) {
 		t.mssEff = t.mssLocal
 	}
 	t.state = tcpStateEstablished
-	retxAckTo(t, h.Ack)
+	_, oldestSent, anyPristine := retxAckTo(t, h.Ack)
+	tcpRTTSample(t, oldestSent, anyPristine)
 	if t.retxQ.n == 0 {
 		t.rtoDeadline = 0
 	} else {
