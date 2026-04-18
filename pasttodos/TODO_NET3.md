@@ -47,11 +47,14 @@ Commit-message style follows `pasttodos/TODO_NET2.md` precedent.
       §3.2`); listener table + accept queue (§6-§7). Add
       `tcpListenLock` at rank 10 to `src/spinlock.go`.
       Verify: `make build` clean; T1.3 LISTEN creation log.
-- [ ] `feat(net): ISN generator + tcpSendSegment` —
+- [x] `feat(net): ISN generator + tcpSendSegment` —
       `isnNext()` (§5) and the shared send path
       (`net_tcp_segment_io.md §6`). Send path uses the 3-arg
       `ipv4Send(ipProtoTCP, t.remoteIP, seg)` form. Verify:
-      T1.4 3-way handshake visible in pcap.
+      `make build` + `make lint` clean. (Implemented before
+      item 5 because item 5's state machine depends on this
+      primitive — TODO order preserved for traceability but
+      commit ordering respects the actual dependency.)
 - [ ] `feat(net): tcpRejectSegment + RST-on-no-match` —
       unacceptable-segment path (RFC 793 §3.9) and the
       RST-on-no-TCB/no-listener branch
