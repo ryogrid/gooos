@@ -163,10 +163,46 @@ func (s *socketFd) Close() fdErr {
 		return fdErrOK
 	case sockKindTCPListener:
 		if s.tcpListener != nil {
+			// Snapshot the queued TCBs under the listener lock,
+			// then tear them down outside any TCP lock (tcpClose
+			// descends into tcpSendSegment → ipv4Send which
+			// eventually takes netBufLock at rank 5).
 			lflags := tcpListenLock.Acquire()
+			var drained [tcpAcceptQueueDepth * 2]*TCB
+			dn := 0
+			for i := 0; i < s.tcpListener.nPending; i++ {
+				drained[dn] = s.tcpListener.pending[i]
+				s.tcpListener.pending[i] = nil
+				dn++
+			}
+			s.tcpListener.nPending = 0
+			for i := 0; i < s.tcpListener.nAccept; i++ {
+				drained[dn] = s.tcpListener.accept[i]
+				s.tcpListener.accept[i] = nil
+				dn++
+			}
+			s.tcpListener.nAccept = 0
 			s.tcpListener.active = false
-			s.tcpListener = nil
 			tcpListenLock.Release(lflags)
+
+			for i := 0; i < dn; i++ {
+				t := drained[i]
+				if t == nil {
+					continue
+				}
+				// Clear the backpointer so any late segment
+				// handling doesn't deref a freed slot.
+				tflags := tcbTableLock.Acquire()
+				t.listener = nil
+				tcbTableLock.Release(tflags)
+				tcpClose(t) // send FIN if ESTABLISHED-ish
+				// Orphaned SYN_RECEIVED TCBs won't get their ACK
+				// anyway; free them outright.
+				if t.state == tcpStateSynReceived {
+					tcbFree(t)
+				}
+			}
+			s.tcpListener = nil
 		}
 		return fdErrOK
 	case sockKindTCPConn:

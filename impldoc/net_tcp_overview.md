@@ -579,6 +579,26 @@ rationale.
    should not depend on the prompt file persisting. Noted as
    informational only; no edit required.
 
+(Phase TCP-5 reviewer-pass findings below: 0 CRITICAL, 5
+MAJOR; MAJOR M1/M3 fixed inline, M2/M4/M5 reclassified to
+MINOR. Full list mirrored in `pasttodos/TODO_NET3.md`'s
+"Reviewer findings — MINOR" tail.)
+
+9. **Data-retransmission from `tcpTCBDrainTX` is a no-op**
+   (reviewer M2). `tcpRTOFire` only retransmits SYN and
+   FIN; data descriptors pushed by the new `sys_tcp_send`
+   path are silently orphaned on RTO / fast-retransmit.
+   Deferred to a follow-up that rebuilds payload via
+   `txBuf.rbPeek`.
+
+10. **SYN_SENT connectDeadline not wired** (reviewer M4).
+    sys_connect uses its own 12 s polling timeout instead
+    of the design-doc timer.
+
+11. **`sysListenHandler` owner = -1** (reviewer M5).
+    Should use `proc.pid`. Cosmetic — owner isn't
+    consulted by the scanner or state machine.
+
 8. **`ipv4Send` arity (discovered during implementation
    Phase 1 exploration, not during initial reviewer pass).**
    The initial draft of §2, `net_tcp_segment_io.md §6`, and

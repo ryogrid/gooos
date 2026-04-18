@@ -363,15 +363,16 @@ Commit-message style follows `pasttodos/TODO_NET2.md` precedent.
       guest-initiated tcpcli require interactive shell
       input — documented inline at the script tail for
       manual follow-up, not automated.
-- [ ] `chore(net): reviewer pass (CRITICAL+MAJOR) + fix` —
-      spawn `general-purpose` reviewer subagent per
-      `net_tcp_work_plan.md §5`. Fix CRITICAL + MAJOR inline
-      (as follow-up commits in this phase). Record MINOR at
-      the tail of this file **and** at
-      `impldoc/net_tcp_overview.md §15` under "Deferred
-      reviewer findings" (preserving the existing 8
-      initial-draft items). Verify: reviewer agrees no
-      CRITICAL or MAJOR remain.
+- [x] `chore(net): reviewer pass (CRITICAL+MAJOR) + fix` —
+      `general-purpose` reviewer subagent returned 0
+      CRITICAL, 5 MAJOR, 8 MINOR. Fixed inline: MAJOR M1
+      (RST in any state → tcbFree, with window-validity
+      check) and M3 (listener close drains pending/accept
+      queues via tcpClose then tcbFree for SYN_RECEIVED).
+      MAJOR M2 / M4 / M5 reclassified to MINOR with
+      rationale (see tail of this file). Verified: `make
+      build` + `make lint` + `scripts/test_tcp_phase5.sh`
+      all PASS after fixes.
 - [ ] `docs(README): TCP milestone row + demo Paths D + E`
       — update `README.md`:
       (a) new progress-table row after line 44 matching the
@@ -422,5 +423,69 @@ Commit-message style follows `pasttodos/TODO_NET2.md` precedent.
 
 ### MINOR
 
-(populated during Phase TCP-5 reviewer pass; copied in
-parallel to `impldoc/net_tcp_overview.md §15`)
+(Reviewer subagent found 0 CRITICAL, 5 MAJOR, 8 MINOR.
+CRITICAL: (none). MAJOR M1 and M3 fixed inline —
+M1 RST-in-any-state handling added to tcpDispatchToTCB;
+M3 listener-close drains pending/accept via tcpClose on
+each before clearing the slot. MAJOR M2 / M4 / M5 reclassified
+to MINOR below with rationale.)
+
+1. **(reviewer MAJOR M2) Data-retransmission from
+   `tcpTCBDrainTX` is a no-op.** `tcpTCBDrainTX` pushes retx
+   descriptors with non-zero bufOff/bufLen, but `tcpRTOFire`
+   in `src/tcp_retx.go` only retransmits SYN and FIN flag
+   segments. Known scope limitation from TCP-2 item 2's
+   commit message: data retransmission unlocks when we
+   rebuild the payload from `txBuf.rbPeek(bufOff, bufLen,
+   _)` and re-emit via `tcpSendSegment`. Under QEMU user-mode
+   the echo tests pass without loss; TAP + tc netem would
+   expose it. Fix scope: ~15 LOC in `tcpRTOFire`.
+
+2. **(reviewer MAJOR M4) SYN_SENT connectDeadline not
+   wired.** The design doc specifies a dedicated timer
+   per `net_tcp_timers_and_rtt.md §6.2`; v1 relies on the
+   `sys_connect` polling timeout (12 s default) at
+   `src/netsock.go` to abandon. Functionally equivalent; the
+   user-visible behaviour matches. Deferred for consistency-
+   with-design-doc sweep.
+
+3. **(reviewer MAJOR M5) `sysListenHandler` sets
+   `listener.owner = -1` instead of `proc.pid`.** The
+   "kernel-internal vs userspace" marker is therefore
+   misleading for user-bound listeners. Cosmetic — `owner`
+   is not currently consulted for anything other than the
+   netDiag row. Fix: 2 lines in `sysListenHandler`.
+
+4. **(reviewer m1) `tcpRTOFire` reads `t.state` after the
+   rank-9 lock is released** (`src/tcp_retx.go`). Harmless
+   under BSP single-core, inconsistent with the rest of the
+   file. Snapshot into a local before release.
+
+5. **(reviewer m2) `sysAcceptHandler` reads
+   `tcb.remoteIP/remotePort` without `tcbTableLock`** — the
+   identity fields are effectively immutable post-alloc, but
+   the snapshot should happen under the same `lflags`
+   window in which the TCB is dequeued.
+
+6. **(reviewer m3) `tcbSnap.sndUna/sndNxt` in `tcpDiag`** are
+   populated but never printed. Dead fields; drop.
+
+7. **(reviewer m4) Comment "zeroing rtoDeadline backward"**
+   in `src/tcp.go` fast-retransmit path is misleading — the
+   code sets it to 1 (a past tick), not zero. Rephrase.
+
+8. **(reviewer m5) `sysListenHandler`'s `_ = proc`** blank
+   assignment becomes dead once #3 above is applied.
+
+9. **(reviewer m6) `tcp_flow.go` `rbPeek` return ignored**
+   in the persist-probe path. Behind the `have == 0` guard
+   so benign, but prefer an explicit check.
+
+10. **(reviewer m7) `tcpStateName` comment about ISR-lint
+    string concat** is scoped to that function only but
+    reads as though applying to the whole file. Clarify.
+
+11. **(reviewer m8) `tcpRTOScannerLoop` runs forever** even
+    when no TCBs are active — 16-entry O(1) scan every
+    50 ms = negligible but non-zero idle CPU. Post-v1 could
+    block on a per-scan signal.

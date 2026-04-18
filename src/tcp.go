@@ -668,6 +668,20 @@ func tcpTryPassiveOpen(hdr IPv4Header, h TCPHeader, payload []byte) {
 // state enum, which is benign because each handler re-checks
 // under tcbTableLock before mutating).
 func tcpDispatchToTCB(t *TCB, h TCPHeader, payload []byte) {
+	// RFC 793 §3.4: an incoming RST aborts the connection in
+	// any state past CLOSED/LISTEN. The seq must lie within the
+	// current receive window to defend against blind resets.
+	// SYN_SENT is handled separately (tcpHandleSynSent accepts
+	// RST even before we have rcvNxt populated).
+	if h.Flags&tcpFlagRST != 0 && t.state != tcpStateSynSent {
+		if seqLE(t.rcvNxt, h.Seq) &&
+			seqLT(h.Seq, t.rcvNxt+t.rcvWnd+1) {
+			tcbFree(t)
+		}
+		// Out-of-window RST: drop silently per RFC 5961 spirit
+		// (avoid blind-reset denial of service).
+		return
+	}
 	switch t.state {
 	case tcpStateSynSent:
 		tcpHandleSynSent(t, h, payload)
