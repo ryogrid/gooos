@@ -94,10 +94,15 @@ Commit-message style follows `pasttodos/TODO_NET2.md` precedent.
       comment block in Makefile extended with the TCP row.
       Verify: `make run-net` parses the target (no syntax
       change to QEMU invocation).
-- [ ] `test(net): scripts/test_tcp_phase1.sh` — automate
-      T1.1–T1.8 with serial-log grep; follows the
-      `scripts/test_net.sh` precedent (not `tmp/`). Verify:
-      exit 0.
+- [x] `test(net): scripts/test_tcp_phase1.sh` — automates
+      the TCP-1 smoke test: boot kernel, wait for `TCP:
+      listener port=8080`, round-trip a payload via
+      `nc 127.0.0.1 10080` (hostfwd → guest 8080), wait for
+      netDiag auto-dump, verify received == sent. Follows
+      the `scripts/test_net.sh` precedent. Verified: the
+      script exits 0 ("result: PASS"); the Phase 1-4
+      regression (`scripts/test_net.sh`) also continues to
+      pass, confirming no UDP/ICMP regression.
 - [ ] `test(net): TCB exhaustion + accept-queue overflow` —
       manual verification via scripted SYN flood (T1.9 +
       T1.10). Log result to TODO_NET3 tail if TAP unavailable.
