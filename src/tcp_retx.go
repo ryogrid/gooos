@@ -142,30 +142,39 @@ func tcpRTOScannerLoop() {
 	}
 }
 
-// tcpRTOScanPass inspects every active TCB for an expired RTO.
-// Acquires tcbTableLock during the scan; releases it before any
-// outbound TX (to respect the rank 9 > rank 5 ordering).
+// tcpRTOScanPass inspects every active TCB for an expired RTO
+// or TIME_WAIT deadline. Acquires tcbTableLock during the scan;
+// releases it before any outbound TX (to respect the rank 9 >
+// rank 5 ordering). RTO expiries are fired via tcpRTOFire;
+// TIME_WAIT expiries just free the TCB.
 func tcpRTOScanPass() {
-	// Snapshot of TCBs that need a retransmit on this pass.
-	var fireIdx [tcbMax]bool
+	var fireRTO [tcbMax]bool
+	var fireTW [tcbMax]bool
 	now := pitTicks
 	flags := tcbTableLock.Acquire()
 	for i := 0; i < tcbMax; i++ {
 		t := &tcbTable[i]
-		if !t.active || t.rtoDeadline == 0 {
+		if !t.active {
 			continue
 		}
-		if now >= t.rtoDeadline {
-			fireIdx[i] = true
+		if t.rtoDeadline != 0 && now >= t.rtoDeadline {
+			fireRTO[i] = true
+		}
+		if t.state == tcpStateTimeWait &&
+			t.timeWaitDeadline != 0 &&
+			now >= t.timeWaitDeadline {
+			fireTW[i] = true
 		}
 	}
 	tcbTableLock.Release(flags)
 
 	for i := 0; i < tcbMax; i++ {
-		if !fireIdx[i] {
-			continue
+		if fireRTO[i] {
+			tcpRTOFire(&tcbTable[i])
 		}
-		tcpRTOFire(&tcbTable[i])
+		if fireTW[i] {
+			tcbFree(&tcbTable[i])
+		}
 	}
 }
 

@@ -1283,10 +1283,17 @@ func tcpDiag() {
 	}
 }
 
-// tcpInit registers the kernel echo listener on port 8080 and
-// spawns the echo goroutine. Called from netInit after ARP is
-// ready.
+// tcpInit registers the kernel echo listener on port 8080,
+// starts the RTO / TIME_WAIT scanner goroutine, and spawns the
+// echo goroutine. Called from netInit after ARP is ready.
 func tcpInit() {
+	// Start the kernel-wide retransmission + timer scanner up
+	// front so TIME_WAIT expiry always has a reaper even on
+	// TCBs that never had an armed RTO of their own.
+	tflags := tcbTableLock.Acquire()
+	tcpStartRTOScanner()
+	tcbTableLock.Release(tflags)
+
 	flags := tcpListenLock.Acquire()
 	l := tcpListenerAllocLocked(tcpEchoListenPort, -1)
 	tcpListenLock.Release(flags)
