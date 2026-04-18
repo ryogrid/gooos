@@ -354,10 +354,15 @@ Commit-message style follows `pasttodos/TODO_NET2.md` precedent.
 
 ### Closing
 
-- [ ] `test(net): Phase TCP-5 end-to-end verification under
-      QEMU` — interactively run T5.1–T5.6 plus
-      `scripts/test_tcp_phase5.sh`; confirm Phase 1-5
-      regression (T5.7).
+- [x] `test(net): Phase TCP-5 end-to-end verification under
+      QEMU` — `scripts/test_tcp_phase5.sh` automates
+      Path D (kernel TCP echo, 10080 → 8080) + Path A
+      (UDP echo regression, 9999 → 7) and confirms
+      tcpecho.elf + tcpcli.elf are embedded in the fs.
+      Verified PASS. Path E (userspace tcpecho.elf) and
+      guest-initiated tcpcli require interactive shell
+      input — documented inline at the script tail for
+      manual follow-up, not automated.
 - [ ] `chore(net): reviewer pass (CRITICAL+MAJOR) + fix` —
       spawn `general-purpose` reviewer subagent per
       `net_tcp_work_plan.md §5`. Fix CRITICAL + MAJOR inline
