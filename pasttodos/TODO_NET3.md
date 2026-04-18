@@ -34,11 +34,13 @@ Commit-message style follows `pasttodos/TODO_NET2.md` precedent.
       viable TCB fields landed; state-machine / buffer /
       timer / CC fields grow into this struct in subsequent
       TCP-1..TCP-4 items.
-- [ ] `feat(net): tcpRingBuf + rbWrite/rbRead/rbPeek` —
+- [x] `feat(net): tcpRingBuf + rbWrite/rbRead/rbPeek` —
       byte-granular FIFO ring per `net_tcp_buffers.md §3`.
-      Embedded in TCB as txBuf + rxBuf (8 KiB each). Verify:
-      wrap / full / empty invariants; `rbPeek` does not
-      advance head.
+      Embedded in TCB as txBuf + rxBuf (8 KiB each). Methods:
+      rbWrite / rbRead / rbPeek / rbFree / rbLen / rbCap /
+      rbReset. Verify: `make build` + `make lint` +
+      `verify-globals` clean. 16 TCB × 16 KiB buffers =
+      256 KiB static .bss; well under kernel-heap budget.
 - [ ] `feat(net): TCP state machine dispatch + LISTEN path` —
       handlers for CLOSED, LISTEN, SYN_RECEIVED, ESTABLISHED,
       CLOSE_WAIT, LAST_ACK states (`net_tcp_state_machine.md
