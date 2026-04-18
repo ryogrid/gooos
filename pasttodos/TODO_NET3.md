@@ -390,10 +390,11 @@ Commit-message style follows `pasttodos/TODO_NET2.md` precedent.
       guest-initiated `tcpcli 10.0.2.2 10080` walkthrough.
       (f) Automated smoke-test paragraph lists the five new
       scripts.
-- [ ] `docs(net): TODO_NET3.md finalisation` — ensure every
-      checkbox above is `- [x]` with a corresponding commit;
-      populate "Deferred further" and "Reviewer findings"
-      tails (below).
+- [x] `docs(net): TODO_NET3.md finalisation` — every
+      preceding checkbox is `- [x]`; "Deferred further" and
+      "Reviewer findings" tails populated. Phase TCP-1..5
+      end-to-end smoke verified (`scripts/test_tcp_phase5.sh`
+      PASS; Phase 1-4 UDP regression still PASS).
 
 ## Deferred further (not in this TODO)
 
