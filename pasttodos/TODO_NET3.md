@@ -396,6 +396,79 @@ Commit-message style follows `pasttodos/TODO_NET2.md` precedent.
       end-to-end smoke verified (`scripts/test_tcp_phase5.sh`
       PASS; Phase 1-4 UDP regression still PASS).
 
+## Known issue — late-timing RX stall (top priority next session)
+
+Manual `make run-net` + host `nc 127.0.0.1 10080` **does NOT
+round-trip an echo** when nc runs >= ~15 seconds after QEMU
+boot. Automated `scripts/test_tcp_phase{1..5}.sh` (which fire
+nc within a few seconds of the TCP listener coming up) all
+PASS, so the regression is timing-dependent.
+
+Symptom captured by WIP commit `fe627b5`:
+- Tight timing (< ~5 s post-boot): full TCP handshake + echo
+  + FIN round-trip works. pcap shows bidirectional traffic.
+- Late timing (> ~15 s post-boot): nc sees slirp's eager
+  "Connection succeeded" but receives no data. pcap shows 1-5
+  host→guest SYN / SYN-retransmit frames delivered to guest
+  NIC; zero guest→host frames in response.
+
+What IS working post-boot:
+- e1000 ISR fires correctly on each incoming packet (IRQ
+  count increments, "e1000 IRQ fired" prints in serial).
+- Kernel goroutine scheduler (2-second heartbeat goroutine
+  prints reliably; idleParks counter in netRxLoop increases
+  at ~50-200/s).
+- PIT-driven afterTicks primitive fires at least once.
+
+What is BROKEN post-boot:
+- The e1000 NIC's hardware RDH (Receive Descriptor Head)
+  register never advances from 0 despite IRQs firing. This
+  means the NIC receives the packet internally (enough to
+  fire IRQ) but **does not DMA the payload into the RX
+  descriptor ring**.
+- `drainRxRing` therefore finds no DD-marked descriptor and
+  returns empty every poll. `netRxFrames` stays 0.
+- A secondary scheduling oddness: the periodic netDiag
+  auto-dump (loop calling `<-afterTicks(1000)` in main.go)
+  fires once and never again. Heartbeat using the same
+  pattern works fine. Likely unrelated to the RX bug but
+  worth investigating alongside.
+
+### Next session plan (option C from the previous session)
+
+1. **CR3 / identity-map audit.** The RX descriptor ring and
+   RX data buffers are allocated via `allocPagesContig` which
+   relies on the 0..1 GiB identity map. When the Ring-3 shell
+   starts, `gooosOnResume` swaps CR3 to the per-process PML4
+   (which still contains the kernel's PDP[0] for the identity
+   map). Verify that PDP[0] is actually shared / mapped
+   correctly post-swap so DMA writes by the NIC land at the
+   CPU-visible physical addresses.
+2. **GC movement check.** Confirm `allocPagesContig` pages
+   are NOT in the GC heap (they should be from the page
+   allocator, not malloc). If the GC moves or reclaims them,
+   the NIC's stored RDBAL/RDBAH would point at stale memory.
+3. **e1000 IMS / ITR state.** Double-check the IMS register
+   is still correctly set post-boot (RXT0 + LSC). An
+   inadvertent `e1000Write(e1000IMC, …)` would silently
+   disable RX IRQs.
+4. **QEMU trace.** Run QEMU with `-trace 'e1000_*'` to log
+   every NIC interaction. Compare tight-timing vs late-
+   timing traces to see exactly what differs.
+5. **Independent reproducibility.** Try QEMU-only user-mode
+   on Linux (outside WSL2) to see if the bug is WSL2-specific.
+
+### Related follow-ups
+
+- The periodic netDiag loop (10-second cadence) stops after
+  one fire despite heartbeat working. Same `<-afterTicks(N)`
+  + `for {}` pattern — diagnose why one dies and the other
+  doesn't.
+- Once RX is fixed, remove the WIP instrumentation from
+  commit `fe627b5` (serialPrintln("e1000 IRQ fired"),
+  netRxLoop RDH-change print, etc.) and restore a clean
+  ISR.
+
 ## Deferred further (not in this TODO)
 
 - **T1.9 / T1.10 pcap verification of TCB-exhaustion +
