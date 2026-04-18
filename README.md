@@ -43,6 +43,148 @@ An experimental x86_64 operating system written in **Go (TinyGo) + GNU assembly*
 | Networking stack (e1000 + UDP/IP/Ethernet) | Done (Phases 1-4) | **Bare-metal TCP/IP stack over the Intel 82540EM NIC.** PCI bus scan + BAR0 MMIO mapping (`src/pci.go`, `src/e1000.go`); 64 RX / 32 TX legacy descriptors on contiguous DMA pages; static IP config (10.0.2.15/24, gw 10.0.2.2) matching QEMU slirp defaults. ARP cache 16 entries (LRU) with `arpResolve` 2-sec timeout via `afterTicks` (`src/arp.go`); IPv4 parse/build with ones-complement checksum (`src/ipv4.go`); ICMP echo reply (`src/icmp.go`); UDP with 8-entry bind table + pseudo-header checksum + kernel echo server on port 7 (`src/udp.go`). Interrupt-driven RX via `rxSignalCh` (ISR → goroutine). 128×2048-byte buffer pool (`src/netbuf.go`); 18-counter `NetStats` + `netDiag` auto-dump 5 s after boot (`src/netstats.go`, `src/net.go`). Verified end-to-end under `make run-net`: ICMP echo-reply self-test passes; host `nc -u 127.0.0.1 9999` round-trips through kernel echo server via hostfwd. Socket syscall API + userspace DHCP client deferred to Phase 5 (`impldoc/net_socket_api.md`, `impldoc/net_dhcp_client.md`). See `impldoc/net_overview.md` and `TODO_NET1.md` |
 | Socket API + DHCP client (Phase 5) | Done | **Ring-3 socket API over UDP + a from-scratch DHCP client.** Six new syscalls (22-27: `sys_socket`, `sys_bind`, `sys_sendto`, `sys_recvfrom`, `sys_net_config`, `sys_sendto_bcast`) in `src/netsock.go` — AF_INET + SOCK_DGRAM only; `socketFd` is a `FileDesc` backend owning a cap=16 receive channel that `udpBindWithChannel` hooks into the UDP dispatch. `sys_recvfrom` extends the design-doc ABI with `R8 = timeout_ticks` (0 = block forever) so clients can give up gracefully. User-space pointers are bounds-checked (`>= 0x40000000`) before every dereference. Ephemeral port ≡ 0 when the socket is unbound. `sys_sendto_bcast` routes through `udpSendRaw` with forced src 0.0.0.0 and broadcast MAC/IP — DHCP-specific path. Userspace SDK (`user/gooos/net.go`) exposes `Socket`/`Bind`/`UDPSendTo`/`UDPRecvFromTimeout`/`UDPSendBroadcast` + `GetIP`/`SetIP`/`GetNetmask`/`SetNetmask`/`GetGateway`/`SetGateway`/`GetDNS`/`SetDNS`/`GetMAC`/`ApplyNetConfig` + `IPv4`/`FormatIP`/`FormatMAC` helpers, with a 5-arg `syscall5` assembly stub in `user/rt0.S`. Two new userspace programs: `udpecho.elf` (20-line echo server on UDP 17 — smoke test) and `dhcp.elf` (RFC 2131 DORA client, ~330 LOC). Kernel `ipv4Handle` now accepts limited (255.255.255.255) and subnet-directed broadcast so DHCP can actually receive the OFFER. Verified under QEMU slirp: `dhcp` completes the full Discover→Offer→Request→Ack exchange against the built-in DHCP server, applies the lease (10.0.2.15 / 255.255.255.0 / gw 10.0.2.2 / DNS 10.0.2.3) via `sys_net_config`, and persists `/network.conf` readable via `cat network.conf`. See `impldoc/net_socket_api.md`, `impldoc/net_dhcp_client.md`, and `TODO_NET2.md` |
 
+### Running the networking demos
+
+gooos talks UDP/IP/Ethernet to the host through the emulated Intel
+82540EM NIC. Three end-to-end paths are manually verifiable:
+
+| Path | Listener | Host-side port | What it exercises |
+|---|---|---|---|
+| A | Kernel-builtin UDP echo | `127.0.0.1:9999` (hostfwd → guest 7) | `e1000` RX → IRQ → `netRxLoop` → `ethernetDispatch` → `ipv4Handle` → `udpHandle` → kernel goroutine → `ipv4Send` → `e1000Transmit` TX |
+| B | Userspace `udpecho.elf` | `127.0.0.1:19999` (hostfwd → guest 17) | Path A's RX half + `socketFd.recvCh` → `sys_recvfrom` → Ring-3 `UDPRecvFrom` → `UDPSendTo` → `sys_sendto` → `udpSend` → TX |
+| C | Userspace `dhcp.elf` | Broadcast to `255.255.255.255:67` via `sys_sendto_bcast` / QEMU slirp's built-in DHCP server at `10.0.2.2` | Full DORA, `sys_net_config` lease apply, `/network.conf` persistence |
+
+#### Communication flow (ASCII)
+
+```
+  Host terminal                   QEMU process                    gooos guest (Ring 3 + Ring 0)
+  =============                   ============                    ============================
+
+  nc -u 127.0.0.1 9999  ──────►   ┌─────────────┐                 ┌───────────────────────────┐
+  (Path A: kernel echo)            │  slirp NAT  │                 │  Ring 3 userspace         │
+                                   │  hostfwd    │                 │  ┌─────────────────────┐  │
+  nc -u 127.0.0.1 19999 ──────►   │   9999 → 7  │                 │  │ udpecho.elf         │  │
+  (Path B: userland echo)          │ 19999 → 17  │                 │  │ dhcp.elf            │  │
+                                   └──────┬──────┘                 │  └──────┬──────────────┘  │
+  (Path C: dhcp broadcasts)               │                        │         │ syscall (int 0x80)
+       ▲                                  │ virtual Ethernet       │         ▼                 │
+       │                                  │ frames (L2)            │  ┌─────────────────────┐  │
+       │                                  ▼                        │  │ Ring 0 kernel       │  │
+       │                          ┌───────────────┐                │  │                     │  │
+       │                          │ QEMU e1000    │ ◄──MMIO BAR0─  │  │  netsock.go         │  │
+       │                          │ device model  │    PCI cfg     │  │  ├── socketFd +     │  │
+       │                          │ (DMA rings +  │    IRQ 11      │  │  │   udpBindings[]  │  │
+       │                          │  INTx# line)  │ ──────────────►│  │  ├── udp.go         │  │
+       │                          └───────┬───────┘                │  │  ├── ipv4.go        │  │
+       │                                  │                        │  │  ├── arp.go         │  │
+       │                                  │                        │  │  ├── ethernet.go    │  │
+       │                                  │                        │  │  └── e1000.go       │  │
+       │                                  │                        │  └─────────────────────┘  │
+       │                                  │                        │                           │
+       └──────────────────────────────────┴────────────────────────┴───────────────────────────┘
+                         (reply path takes the same wire in reverse)
+```
+
+Lock-ordering ranks consulted along the RX path are 5 (`netBufLock`)
+→ 6 (`arpLock`) → 7 (`udpLock`) → 8 (`statsLock`) — see
+`src/spinlock.go`.
+
+#### A. Kernel-builtin UDP echo (port 7)
+
+No shell commands needed — the kernel auto-starts `udpEchoServer` on
+port 7 during `netInit` at boot. From a second host terminal:
+
+```
+$ make run-net            # terminal 1: boots gooos, shell prompt on stdio
+
+$ echo -n 'hello-from-host' | nc -u -w 2 127.0.0.1 9999    # terminal 2
+hello-from-host
+```
+
+Success: `nc` prints the same bytes it sent. The guest's serial log
+records the RX packet and TX reply in the `netDiag` counter block
+(auto-dumped ~5 s after boot; counters increment live on subsequent
+traffic).
+
+#### B. Userspace UDP echo (port 17)
+
+In the gooos shell (terminal 1, `make run-net`):
+
+```
+$ udpecho
+udpecho: starting userspace echo on UDP port 17
+```
+
+This blocks — `udpecho.elf` is a Ring-3 program that loops
+`UDPRecvFrom` → `UDPSendTo`. From a second host terminal:
+
+```
+$ echo -n 'hello-from-userland' | nc -u -w 2 127.0.0.1 19999
+hello-from-userland
+```
+
+Round-trip exercises the complete stack from the slirp hostfwd
+through the kernel RX dispatcher, up through `sys_recvfrom` into
+Ring 3, back out through `sys_sendto`.
+
+#### C. DHCP (obtain IP / netmask / gateway / DNS)
+
+In the gooos shell:
+
+```
+$ dhcp
+dhcp: starting DHCP client
+dhcp: MAC = 52:54:00:12:34:56
+dhcp: DISCOVER sent, waiting for OFFER...
+dhcp: OFFER received: IP = 10.0.2.15
+dhcp: REQUEST sent, waiting for ACK...
+ARP: sent gratuitous announcement for 10.0.2.15
+
+dhcp: network configured:
+  IP      = 10.0.2.15
+  Netmask = 255.255.255.0
+  Gateway = 10.0.2.2
+  DNS     = 10.0.2.3
+  Lease   = 86400 seconds
+  Server  = 10.0.2.2
+```
+
+The client runs the full RFC 2131 DORA against QEMU slirp's built-in
+DHCP server (hard-wired at `10.0.2.2`), pushes the lease into the
+kernel stack via `sys_net_config`, sends a gratuitous ARP announcing
+the new `yiaddr`, and writes the result to `/network.conf`. Inspect
+it afterwards:
+
+```
+$ cat network.conf
+# Network configuration (DHCP)
+ip=10.0.2.15
+netmask=255.255.255.0
+gateway=10.0.2.2
+dns=10.0.2.3
+lease=86400
+server=10.0.2.2
+```
+
+A `netDiag` dump (boot-time or wire a user command) now shows
+`DNS: 10.0.2.3`, confirming the kernel global was updated by
+`sys_net_config(ncSetDNS, …)`.
+
+#### Packet capture (optional)
+
+Add `-object filter-dump,id=d,netdev=n0,file=tmp/net.pcap` to the
+QEMU invocation (edit the `run-net` Makefile target or run the
+command manually). Open the pcap in Wireshark to see the actual
+frames — useful when debugging a path A/B/C failure. The DORA
+exchange is especially readable this way.
+
+#### Automated smoke test
+
+`scripts/test_net.sh` (invokable via `make test-net`) exercises path
+A non-interactively — boots the ISO in headless QEMU, greps the
+boot-time markers, and round-trips a payload through the hostfwd
+9999→7. Phase-5 paths (B and C) are currently hand-verified only.
+
 ### Running the gochan demo
 
 `gochan` is a shell-invokable user program that exercises native
