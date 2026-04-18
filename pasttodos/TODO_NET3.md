@@ -186,9 +186,15 @@ Commit-message style follows `pasttodos/TODO_NET2.md` precedent.
 
 ## Phase TCP-3 — Flow control
 
-- [ ] `feat(net): tcp_flow.go — rcv window + SWS avoidance` —
-      new file. `tcpAdvertiseWin` + `lastAdvWin` TCB field.
-      Verify: T3.1 + T3.3 + T3.4.
+- [x] `feat(net): tcp_flow.go — rcv window + SWS avoidance` —
+      new `src/tcp_flow.go` with `tcpAdvertiseWin` applying
+      RFC 1122 §4.2.3.3: growth less than
+      `min(mssEff, cap/2)` is held back, using `lastAdvWin`
+      as the baseline. Shrinks pass through untouched. TCB
+      gains `lastAdvWin uint32`. `tcpSendSegment` swaps its
+      direct `t.rcvWnd` read for `tcpAdvertiseWin(t)`.
+      Verify: `make build` + `make lint` clean; TCP-1
+      regression still PASS.
 - [ ] `feat(net): snd window update (RFC 793 §3.9)` —
       `sndWl1`/`sndWl2` guard. Verify: unit test — window
       grows on fresh ACK, unchanged on stale duplicate.

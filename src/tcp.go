@@ -140,6 +140,11 @@ type TCB struct {
 	// tcbFree on expiry. Phase TCP-2 item 5.
 	timeWaitDeadline uint64
 
+	// Last value we advertised as our receive window. Used by
+	// the SWS-avoidance helper to stop announcing tiny window
+	// growth. Phase TCP-3 item 1.
+	lastAdvWin uint32
+
 	// Bookkeeping.
 	userOwner int  // owning pid; -1 = kernel-internal
 	active    bool // false = slot is free
@@ -338,7 +343,7 @@ func tcpSendSegment(t *TCB, flags uint8, options, payload []byte) bool {
 		t.localPort, t.remotePort,
 		t.sndNxt, t.rcvNxt,
 		flags,
-		uint16(t.rcvWnd),
+		tcpAdvertiseWin(t),
 		options, payload,
 	)
 	if n == 0 {
