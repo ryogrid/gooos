@@ -373,16 +373,23 @@ Commit-message style follows `pasttodos/TODO_NET2.md` precedent.
       rationale (see tail of this file). Verified: `make
       build` + `make lint` + `scripts/test_tcp_phase5.sh`
       all PASS after fixes.
-- [ ] `docs(README): TCP milestone row + demo Paths D + E`
-      — update `README.md`:
-      (a) new progress-table row after line 44 matching the
-      "Socket API + DHCP client" row style.
-      (b) extend the "Running the networking demos" section:
-      Paths D (kernel TCP echo) and E (userspace
-      `tcpecho.elf`) added to the summary table; ASCII flow
-      diagram extended; lock-rank footnote updated to
-      include ranks 9-11; per-path subsections with `nc` /
-      `curl` invocation examples and expected output.
+- [x] `docs(README): TCP milestone row + demo Paths D + E`
+      — `README.md` updates:
+      (a) new progress-table row "TCP stack (Phases
+      TCP-1..TCP-5)" after the DHCP row, summarising the
+      whole TCP subsystem with file pointers.
+      (b) demos summary table now has five paths (A-E).
+      (c) ASCII flow diagram extended with the new hostfwds
+      and with `tcpecho.elf` / `tcpcli.elf` in the Ring-3
+      column + tcp.go / tcp_retx.go / tcp_rtt.go /
+      tcp_flow.go / tcp_cc.go in the Ring-0 column.
+      (d) Lock-rank footnote mentions ranks 9/10/11.
+      (e) Two new subsections — "D. Kernel-builtin TCP
+      echo (port 8080)" and "E. Userspace TCP echo (port
+      8081)" — with `nc` round-trip examples and a
+      guest-initiated `tcpcli 10.0.2.2 10080` walkthrough.
+      (f) Automated smoke-test paragraph lists the five new
+      scripts.
 - [ ] `docs(net): TODO_NET3.md finalisation` — ensure every
       checkbox above is `- [x]` with a corresponding commit;
       populate "Deferred further" and "Reviewer findings"

@@ -42,17 +42,21 @@ An experimental x86_64 operating system written in **Go (TinyGo) + GNU assembly*
 | Userspace conservative GC | Done | `user/target.json` now runs `gc=conservative` (was `leaking`). User binaries gain `_globals_start`/`_globals_end` brackets + synthetic `__ehdr_start` Elf64 header in `user/rt0.S` so TinyGo's `findGlobals()` can locate root-scan ranges at runtime; `tinygo_scanCurrentStack` ported into `user/runtime_asm_amd64.S` for stack scanning. Per-process 1 MiB fixed heap (`.heap @nobits` section, `user/linker_user.ld`) with `Process.HeapLimit` + `sysSbrkHandler` ceiling (`userHeapLimit = 2 MiB`) prevents runaway `sys_sbrk`. `maxFileData` bumped to 256 KiB to absorb ~13–17 KiB of per-binary GC overhead. `fib(10)` in Tiny C now works (177 recursive frames reclaim cleanly); long-running user programs no longer leak. See `impldoc/userspace_conservative_gc_*.md` |
 | Networking stack (e1000 + UDP/IP/Ethernet) | Done (Phases 1-4) | **Bare-metal TCP/IP stack over the Intel 82540EM NIC.** PCI bus scan + BAR0 MMIO mapping (`src/pci.go`, `src/e1000.go`); 64 RX / 32 TX legacy descriptors on contiguous DMA pages; static IP config (10.0.2.15/24, gw 10.0.2.2) matching QEMU slirp defaults. ARP cache 16 entries (LRU) with `arpResolve` 2-sec timeout via `afterTicks` (`src/arp.go`); IPv4 parse/build with ones-complement checksum (`src/ipv4.go`); ICMP echo reply (`src/icmp.go`); UDP with 8-entry bind table + pseudo-header checksum + kernel echo server on port 7 (`src/udp.go`). Interrupt-driven RX via `rxSignalCh` (ISR → goroutine). 128×2048-byte buffer pool (`src/netbuf.go`); 18-counter `NetStats` + `netDiag` auto-dump 5 s after boot (`src/netstats.go`, `src/net.go`). Verified end-to-end under `make run-net`: ICMP echo-reply self-test passes; host `nc -u 127.0.0.1 9999` round-trips through kernel echo server via hostfwd. Socket syscall API + userspace DHCP client deferred to Phase 5 (`impldoc/net_socket_api.md`, `impldoc/net_dhcp_client.md`). See `impldoc/net_overview.md` and `TODO_NET1.md` |
 | Socket API + DHCP client (Phase 5) | Done | **Ring-3 socket API over UDP + a from-scratch DHCP client.** Six new syscalls (22-27: `sys_socket`, `sys_bind`, `sys_sendto`, `sys_recvfrom`, `sys_net_config`, `sys_sendto_bcast`) in `src/netsock.go` — AF_INET + SOCK_DGRAM only; `socketFd` is a `FileDesc` backend owning a cap=16 receive channel that `udpBindWithChannel` hooks into the UDP dispatch. `sys_recvfrom` extends the design-doc ABI with `R8 = timeout_ticks` (0 = block forever) so clients can give up gracefully. User-space pointers are bounds-checked (`>= 0x40000000`) before every dereference. Ephemeral port ≡ 0 when the socket is unbound. `sys_sendto_bcast` routes through `udpSendRaw` with forced src 0.0.0.0 and broadcast MAC/IP — DHCP-specific path. Userspace SDK (`user/gooos/net.go`) exposes `Socket`/`Bind`/`UDPSendTo`/`UDPRecvFromTimeout`/`UDPSendBroadcast` + `GetIP`/`SetIP`/`GetNetmask`/`SetNetmask`/`GetGateway`/`SetGateway`/`GetDNS`/`SetDNS`/`GetMAC`/`ApplyNetConfig` + `IPv4`/`FormatIP`/`FormatMAC` helpers, with a 5-arg `syscall5` assembly stub in `user/rt0.S`. Two new userspace programs: `udpecho.elf` (20-line echo server on UDP 17 — smoke test) and `dhcp.elf` (RFC 2131 DORA client, ~330 LOC). Kernel `ipv4Handle` now accepts limited (255.255.255.255) and subnet-directed broadcast so DHCP can actually receive the OFFER. Verified under QEMU slirp: `dhcp` completes the full Discover→Offer→Request→Ack exchange against the built-in DHCP server, applies the lease (10.0.2.15 / 255.255.255.0 / gw 10.0.2.2 / DNS 10.0.2.3) via `sys_net_config`, and persists `/network.conf` readable via `cat network.conf`. See `impldoc/net_socket_api.md`, `impldoc/net_dhcp_client.md`, and `TODO_NET2.md` |
+| TCP stack (Phases TCP-1..TCP-5) | Done | **Full-duplex reliable byte-stream transport with RFC 5681 congestion control and a Ring-3 `SOCK_STREAM` socket API.** IP protocol 6 demux into `tcpHandle` (`src/ipv4.go`) feeds a fixed 16-entry Transmission Control Block pool (`src/tcp.go`) with 8 KiB×2 per-TCB ring buffers (`tcpRingBuf`); RFC 793 eleven-state machine (LISTEN / SYN_SENT / SYN_RECEIVED / ESTABLISHED / FIN_WAIT_1 / FIN_WAIT_2 / CLOSE_WAIT / CLOSING / LAST_ACK / TIME_WAIT / CLOSED) with in-any-state RST abort. Per-TCB retransmission queue (`src/tcp_retx.go`, 64-entry ring) driven by a single-goroutine kernel-wide scanner that polls every 50 ms for expired RTO / TIME_WAIT / persist / delayed-ACK deadlines. RFC 6298 SRTT / RTTVAR / RTO estimator (`src/tcp_rtt.go`, fixed-point ×8 / ×4 scaling) with Karn's rule; RFC 5681 slow start + congestion avoidance + 3-dup-ACK fast retransmit + RTO-triggered cwnd collapse (`src/tcp_cc.go`). RFC 1122 SWS avoidance + RFC 793 §3.9 snd-window update guard in a shared `tcpAckUpdate` helper (`src/tcp_flow.go`). Lock-ordering extended to ranks 9 (`tcbTableLock`) / 10 (`tcpListenLock`) / 11 (`tcpTimerLock`). Six new syscalls 28-33 (`sys_listen`, `sys_accept`, `sys_connect`, `sys_tcp_send`, `sys_tcp_recv`, `sys_shutdown`) in `src/netsock.go`; `socketFd` extended with a kind discriminant so UDP and TCP sockets share the `FileDesc` fd table; `userBufInRange` gates every user-memory pointer. Userspace SDK adds `TCPSocket`/`TCPListen`/`TCPAccept`/`TCPConnect`/`TCPSend`/`TCPSendAll`/`TCPRecv`/`TCPShutdown` to `user/gooos/net.go` (no new `syscallN` stubs needed). Two new demo binaries: `tcpecho.elf` (Ring-3 echo server on port 8081 with goroutine-per-connection) and `tcpcli.elf` (argv `ip port message` active-open client). Verified end-to-end under `make run-net`: host `nc 127.0.0.1 10080` round-trips through the kernel TCP echo server on guest port 8080 (3-way handshake + data + peer-FIN + LAST_ACK → CLOSED). Phase 1-5 regression (UDP echo + DHCP DORA) continues to pass. See `impldoc/net_tcp_*.md` (nine design docs) and `TODO_NET3.md` |
 
 ### Running the networking demos
 
-gooos talks UDP/IP/Ethernet to the host through the emulated Intel
-82540EM NIC. Three end-to-end paths are manually verifiable:
+gooos talks UDP/IP/Ethernet AND TCP/IP to the host through the
+emulated Intel 82540EM NIC. Five end-to-end paths are manually
+verifiable:
 
 | Path | Listener | Host-side port | What it exercises |
 |---|---|---|---|
 | A | Kernel-builtin UDP echo | `127.0.0.1:9999` (hostfwd → guest 7) | `e1000` RX → IRQ → `netRxLoop` → `ethernetDispatch` → `ipv4Handle` → `udpHandle` → kernel goroutine → `ipv4Send` → `e1000Transmit` TX |
 | B | Userspace `udpecho.elf` | `127.0.0.1:19999` (hostfwd → guest 17) | Path A's RX half + `socketFd.recvCh` → `sys_recvfrom` → Ring-3 `UDPRecvFrom` → `UDPSendTo` → `sys_sendto` → `udpSend` → TX |
 | C | Userspace `dhcp.elf` | Broadcast to `255.255.255.255:67` via `sys_sendto_bcast` / QEMU slirp's built-in DHCP server at `10.0.2.2` | Full DORA, `sys_net_config` lease apply, `/network.conf` persistence |
+| D | Kernel-builtin TCP echo | `127.0.0.1:10080` (hostfwd → guest 8080) | `ipv4Handle` → `tcpHandle` → TCB state machine (LISTEN → SYN_RECEIVED → ESTABLISHED → CLOSE_WAIT → LAST_ACK → CLOSED) + `tcpEchoServer` goroutine + `tcpSendSegment` → `ipv4Send` → TX |
+| E | Userspace `tcpecho.elf` | `127.0.0.1:10081` (hostfwd → guest 8081) | Path D's state machine + `sys_accept` → Ring-3 `TCPAccept` → `TCPRecv` / `TCPSendAll` → `sys_tcp_send`/`sys_tcp_recv` → `tcpTCBDrainTX` → TX |
 
 #### Communication flow (ASCII)
 
@@ -61,12 +65,16 @@ gooos talks UDP/IP/Ethernet to the host through the emulated Intel
   =============                   ============                    ============================
 
   nc -u 127.0.0.1 9999  ──────►   ┌─────────────┐                 ┌───────────────────────────┐
-  (Path A: kernel echo)            │  slirp NAT  │                 │  Ring 3 userspace         │
+  (Path A: kernel UDP echo)        │  slirp NAT  │                 │  Ring 3 userspace         │
                                    │  hostfwd    │                 │  ┌─────────────────────┐  │
-  nc -u 127.0.0.1 19999 ──────►   │   9999 → 7  │                 │  │ udpecho.elf         │  │
-  (Path B: userland echo)          │ 19999 → 17  │                 │  │ dhcp.elf            │  │
-                                   └──────┬──────┘                 │  └──────┬──────────────┘  │
-  (Path C: dhcp broadcasts)               │                        │         │ syscall (int 0x80)
+  nc -u 127.0.0.1 19999 ──────►   │  9999 →  7  │                 │  │ udpecho.elf         │  │
+  (Path B: userland UDP echo)      │ 19999 → 17  │                 │  │ dhcp.elf            │  │
+                                   │ 10080 → 8080│                 │  │ tcpecho.elf         │  │
+  nc    127.0.0.1 10080 ──────►   │ 10081 → 8081│                 │  │ tcpcli.elf          │  │
+  (Path D: kernel TCP echo)        └──────┬──────┘                 │  └──────┬──────────────┘  │
+                                          │                        │         │                 │
+  nc    127.0.0.1 10081 ──────►           │                        │         │ syscall (int 0x80)
+  (Path E: userland TCP echo)             │                        │         │
        ▲                                  │ virtual Ethernet       │         ▼                 │
        │                                  │ frames (L2)            │  ┌─────────────────────┐  │
        │                                  ▼                        │  │ Ring 0 kernel       │  │
@@ -75,10 +83,17 @@ gooos talks UDP/IP/Ethernet to the host through the emulated Intel
        │                          │ device model  │    PCI cfg     │  │  ├── socketFd +     │  │
        │                          │ (DMA rings +  │    IRQ 11      │  │  │   udpBindings[]  │  │
        │                          │  INTx# line)  │ ──────────────►│  │  ├── udp.go         │  │
-       │                          └───────┬───────┘                │  │  ├── ipv4.go        │  │
-       │                                  │                        │  │  ├── arp.go         │  │
-       │                                  │                        │  │  ├── ethernet.go    │  │
-       │                                  │                        │  │  └── e1000.go       │  │
+       │                          └───────┬───────┘                │  │  ├── tcp.go (TCB,   │  │
+       │                                  │                        │  │  │   listener,     │  │
+       │                                  │                        │  │  │   state machine)│  │
+       │                                  │                        │  │  ├── tcp_retx.go   │  │
+       │                                  │                        │  │  ├── tcp_rtt.go    │  │
+       │                                  │                        │  │  ├── tcp_flow.go   │  │
+       │                                  │                        │  │  ├── tcp_cc.go     │  │
+       │                                  │                        │  │  ├── ipv4.go       │  │
+       │                                  │                        │  │  ├── arp.go        │  │
+       │                                  │                        │  │  ├── ethernet.go   │  │
+       │                                  │                        │  │  └── e1000.go      │  │
        │                                  │                        │  └─────────────────────┘  │
        │                                  │                        │                           │
        └──────────────────────────────────┴────────────────────────┴───────────────────────────┘
@@ -86,8 +101,9 @@ gooos talks UDP/IP/Ethernet to the host through the emulated Intel
 ```
 
 Lock-ordering ranks consulted along the RX path are 5 (`netBufLock`)
-→ 6 (`arpLock`) → 7 (`udpLock`) → 8 (`statsLock`) — see
-`src/spinlock.go`.
+→ 6 (`arpLock`) → 7 (`udpLock`) → 8 (`statsLock`), plus 9
+(`tcbTableLock`) / 10 (`tcpListenLock`) / 11 (`tcpTimerLock`) along
+the TCP paths — see `src/spinlock.go`.
 
 #### A. Kernel-builtin UDP echo (port 7)
 
@@ -170,13 +186,70 @@ A `netDiag` dump (boot-time or wire a user command) now shows
 `DNS: 10.0.2.3`, confirming the kernel global was updated by
 `sys_net_config(ncSetDNS, …)`.
 
+#### D. Kernel-builtin TCP echo (port 8080)
+
+No shell commands needed — `tcpInit` registers the listener and
+spawns `tcpEchoServer` during `netInit` at boot. From a second
+host terminal:
+
+```
+$ make run-net            # terminal 1: boots gooos, shell prompt on stdio
+
+$ echo -n 'hello-tcp' | nc -w 3 127.0.0.1 10080    # terminal 2
+hello-tcp
+```
+
+Exercises the full 3-way handshake (SYN → SYN|ACK → ACK), the
+echo data path, and the close handshake (peer FIN → our ACK →
+our FIN → peer ACK → CLOSED). `netDiag` auto-dump (~5 s after
+boot, or on re-run after more traffic) shows the TCP listener
+row + any active TCBs.
+
+#### E. Userspace TCP echo (port 8081)
+
+In the gooos shell (terminal 1, `make run-net`):
+
+```
+$ tcpecho &
+tcpecho: starting userspace echo on TCP port 8081
+```
+
+`tcpecho.elf` is a Ring-3 program that loops
+`TCPAccept` → per-connection goroutine → `TCPRecv` / `TCPSendAll`
+→ close on peer FIN. From a second host terminal:
+
+```
+$ echo -n 'hello-userland-tcp' | nc -w 3 127.0.0.1 10081
+hello-userland-tcp
+```
+
+Round-trip exercises sys_accept → sys_tcp_send → sys_tcp_recv
+into Ring 3 and back through `tcpTCBDrainTX` to the wire.
+
+Guest-initiated active open (reach a host listener):
+
+```
+# On the host, start a listener first:
+$ nc -l 10080
+
+# In the gooos shell:
+$ tcpcli 10.0.2.2 10080 hi-from-gooos
+tcpcli: <- hi-from-gooos
+```
+
+Under QEMU slirp, `10.0.2.2` is the host's virtual gateway, so
+the guest's SYN reaches the listener on the host directly. This
+exercises `tcpActiveConnect` → SYN_SENT → ESTABLISHED plus the
+`tcpcli.elf` FIN-from-our-side close.
+
 #### Packet capture (optional)
 
 Add `-object filter-dump,id=d,netdev=n0,file=tmp/net.pcap` to the
 QEMU invocation (edit the `run-net` Makefile target or run the
 command manually). Open the pcap in Wireshark to see the actual
-frames — useful when debugging a path A/B/C failure. The DORA
-exchange is especially readable this way.
+frames — useful when debugging a path A/B/C/D/E failure. The DORA
+exchange and the TCP state-machine transitions are especially
+readable this way.
 
 #### Automated smoke test
 
@@ -184,6 +257,14 @@ exchange is especially readable this way.
 A non-interactively — boots the ISO in headless QEMU, greps the
 boot-time markers, and round-trips a payload through the hostfwd
 9999→7. Phase-5 paths (B and C) are currently hand-verified only.
+
+The TCP phases have their own harnesses under `scripts/`:
+`test_tcp_phase1.sh` (passive open + kernel echo),
+`test_tcp_phase2.sh`..`test_tcp_phase4.sh` (sanity baselines
+for active open / retransmission / flow / congestion — TAP-mode
+tests documented inline), and `test_tcp_phase5.sh` (Phase TCP-5
+end-to-end: kernel TCP echo round-trip + UDP regression +
+tcpecho/tcpcli ELF presence in the fs).
 
 ### Running the gochan demo
 
