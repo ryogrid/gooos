@@ -247,9 +247,15 @@ Commit-message style follows `pasttodos/TODO_NET2.md` precedent.
       → ESTABLISHED. `tcpCCOnAck` invoked from tcpAckUpdate
       whenever sndUna advances. Verify: `make build` +
       `make lint` clean; TCP-1 regression still PASS.
-- [ ] `feat(net): fast retransmit + fast recovery` —
-      `dupAcks` counter, 3-dup-ACK trigger,
-      `cwnd = ssthresh + 3*mss`. Verify: T4.3 + T4.4.
+- [x] `feat(net): fast retransmit + fast recovery` —
+      tcpHandleEstablished now detects duplicate ACKs via
+      `tcpIsDuplicateACK` and forwards them to
+      `tcpCCOnDupAck`. On the 3rd dup: ssthresh =
+      max(flight/2, 2*mss), cwnd = ssthresh + 3*mss, and the
+      RTO deadline is zeroed backward so the next scanner
+      pass retransmits the head within ~50 ms (avoids inline
+      TX while holding rank-9 lock). Verify: `make build` +
+      `make lint` clean; TCP-1 regression still PASS.
 - [ ] `feat(net): RTO → cwnd collapse` — wire into the RTO
       fire path from `net_tcp_timers_and_rtt.md §3.2`.
       Verify: T4.5.

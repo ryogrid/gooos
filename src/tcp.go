@@ -741,8 +741,25 @@ func tcpHandleEstablished(t *TCB, h TCPHeader, payload []byte) {
 		tcpSendPureACK(t)
 		return
 	}
-	// sndUna / sndWnd update + RTT sampling, all guarded.
-	tcpAckUpdate(t, h)
+	// Fast-retransmit path: a pure duplicate ACK bumps dupAcks;
+	// the 3rd one triggers retransmission of the head segment
+	// before RTO fires. Force the next scanner pass to fire
+	// tcpRTOFire on this TCB by zeroing rtoDeadline backward.
+	fastRetx := false
+	if tcpIsDuplicateACK(t, h, len(payload)) {
+		fastRetx = tcpCCOnDupAck(t)
+		if fastRetx {
+			// Force the RTO scanner to retransmit on the next
+			// scan pass (within 50 ms). Using the scanner avoids
+			// an inline retransmit while we hold tcbTableLock —
+			// tcpRTOFire releases the lock before calling
+			// ipv4Send, which is the right ordering.
+			t.rtoDeadline = 1 // any past tick
+			t.xmitCountHead = 0
+		}
+	} else {
+		tcpAckUpdate(t, h) // handles non-dup ACKs
+	}
 	// Accept in-order payload bytes into rxBuf.
 	if len(payload) > 0 {
 		n := t.rxBuf.rbWrite(payload)
