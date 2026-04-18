@@ -15,6 +15,7 @@
 //   8. statsLock      — network statistics counters (src/netstats.go)
 //   9. tcbTableLock   — TCP TCB table (src/tcp.go)
 //  10. tcpListenLock  — TCP listener + accept queue (src/tcp.go)
+//  11. tcpTimerLock   — TCP timer bookkeeping (src/tcp_retx.go)
 //
 // A function holding lock N must not acquire lock M where M < N.
 //

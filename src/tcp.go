@@ -114,6 +114,19 @@ type TCB struct {
 	txBuf tcpRingBuf
 	rxBuf tcpRingBuf
 
+	// Retransmission queue + RTO state (Phase TCP-2 item 2).
+	// See src/tcp_retx.go and net_tcp_timers_and_rtt.md §3.
+	// bufBase is the sequence number corresponding to
+	// txBuf.head — i.e. the seq of the oldest byte still in the
+	// send ring. Lets retransmit descriptors carry a seq-based
+	// offset without an absolute pointer.
+	retxQ               tcpRetxQueue
+	bufBase             uint32
+	rtoTicks            uint32 // current RTO in PIT ticks
+	rtoDeadline         uint64 // pitTicks at which RTO fires; 0 = inactive
+	xmitCountHead       uint8  // retransmits of head-of-queue
+	rtoGoroutineRunning bool
+
 	// Bookkeeping.
 	userOwner int  // owning pid; -1 = kernel-internal
 	active    bool // false = slot is free
@@ -577,6 +590,15 @@ func tcpTryPassiveOpen(hdr IPv4Header, h TCPHeader, payload []byte) {
 
 	iflags = tcbTableLock.Acquire()
 	t.sndNxt = origSndNxt // restore past-SYN cursor
+	if ok {
+		retxPush(t, tcpRetxEntry{
+			seq:       t.iss,
+			endSeq:    t.iss + 1,
+			flags:     tcpFlagSYN | tcpFlagACK,
+			sentTicks: pitTicks,
+		})
+		tcpArmRTO(t)
+	}
 	tcbTableLock.Release(iflags)
 
 	if !ok {
@@ -629,6 +651,13 @@ func tcpHandleSynReceived(t *TCB, h TCPHeader, payload []byte) {
 	t.sndWnd = uint32(h.Window)
 	t.sndWl1 = h.Seq
 	t.sndWl2 = h.Ack
+	// Pop the SYN|ACK descriptor from retxQ.
+	retxAckTo(t, h.Ack)
+	if t.retxQ.n == 0 {
+		t.rtoDeadline = 0
+	} else {
+		tcpArmRTO(t)
+	}
 	l := t.listener
 	tcbTableLock.Release(iflags)
 
@@ -660,7 +689,15 @@ func tcpHandleEstablished(t *TCB, h TCPHeader, payload []byte) {
 	// Update send-window tracking from this segment's ACK/window.
 	if h.Flags&tcpFlagACK != 0 {
 		if seqLE(t.sndUna, h.Ack) && seqLE(h.Ack, t.sndNxt) {
-			t.sndUna = h.Ack
+			if t.sndUna != h.Ack {
+				t.sndUna = h.Ack
+				retxAckTo(t, h.Ack)
+				if t.retxQ.n == 0 {
+					t.rtoDeadline = 0
+				} else {
+					tcpArmRTO(t)
+				}
+			}
 		}
 		if seqLT(t.sndWl1, h.Seq) ||
 			(t.sndWl1 == h.Seq && seqLE(t.sndWl2, h.Ack)) {
@@ -837,6 +874,12 @@ func tcpHandleSynSent(t *TCB, h TCPHeader, payload []byte) {
 		t.mssEff = t.mssLocal
 	}
 	t.state = tcpStateEstablished
+	retxAckTo(t, h.Ack)
+	if t.retxQ.n == 0 {
+		t.rtoDeadline = 0
+	} else {
+		tcpArmRTO(t)
+	}
 	tcbTableLock.Release(iflags)
 
 	// Emit final ACK of 3WHS.
@@ -923,6 +966,15 @@ func tcpActiveConnect(remoteIP uint32, remotePort uint16) *TCB {
 
 	iflags = tcbTableLock.Acquire()
 	t.sndNxt = origSndNxt
+	if ok {
+		retxPush(t, tcpRetxEntry{
+			seq:       t.iss,
+			endSeq:    t.iss + 1,
+			flags:     tcpFlagSYN,
+			sentTicks: pitTicks,
+		})
+		tcpArmRTO(t)
+	}
 	tcbTableLock.Release(iflags)
 
 	if !ok {

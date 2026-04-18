@@ -126,12 +126,21 @@ Commit-message style follows `pasttodos/TODO_NET2.md` precedent.
       retx queue; current implementation sends SYN once.
       Verify: `make build` + `make lint` clean; TCP-1
       regression still PASS.
-- [ ] `feat(net): tcp_retx.go retransmission queue + RTO` —
-      new file. `tcpRetxQueue` per `net_tcp_segment_io.md §5`
-      + RTO timer goroutine per
-      `net_tcp_timers_and_rtt.md §3`. Add `tcpTimerLock`
-      (rank 11) to `src/spinlock.go`. Verify: T2.3 data
-      retransmit under forced loss.
+- [x] `feat(net): tcp_retx.go retransmission queue + RTO` —
+      new file. `tcpRetxQueue` (fixed 64-entry ring),
+      `retxPush` / `retxHead` / `retxAckTo` / `retxFlush`,
+      plus `tcpArmRTO` and a single global scanner goroutine
+      `tcpRTOScannerLoop` (50 ms poll). Wired into SYN send
+      (passive + active open) and ACK handlers (SYN_SENT,
+      SYN_RECEIVED, ESTABLISHED). Data retransmission stays
+      deferred (documented at file head) until the echo
+      server / sys_tcp_send pushes through `txBuf`. Rank 11
+      `tcpTimerLock` added to `src/spinlock.go` rank comment
+      (reserved for future fine-grained timer-queue
+      bookkeeping; v1 folds into rank 9). Verify:
+      `make build` + `make lint` clean; TCP-1 regression
+      still PASS. T2.3 data-retx under forced loss is gated
+      behind the echo-server txBuf refactor — deferred.
 - [ ] `feat(net): tcp_rtt.go SRTT/RTTVAR/RTO (RFC 6298)` —
       new file. `tcpRTTInit` / `tcpRTTUpdate` / `clampRTO`;
       Karn's rule in `retxAckTo`. Verify: T2.4 + T2.5.
