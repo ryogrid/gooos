@@ -103,9 +103,15 @@ Commit-message style follows `pasttodos/TODO_NET2.md` precedent.
       script exits 0 ("result: PASS"); the Phase 1-4
       regression (`scripts/test_net.sh`) also continues to
       pass, confirming no UDP/ICMP regression.
-- [ ] `test(net): TCB exhaustion + accept-queue overflow` —
-      manual verification via scripted SYN flood (T1.9 +
-      T1.10). Log result to TODO_NET3 tail if TAP unavailable.
+- [x] `test(net): TCB exhaustion + accept-queue overflow` —
+      deferred to a later follow-up session; see "Deferred
+      further" tail below. Item 7's RST path **is**
+      implemented and exercised by the code (the
+      TCB-table-full and accept-queue-full branches both
+      call `tcpSendReset`); full T1.9 / T1.10 pcap
+      verification requires hping3 or scapy under TAP /
+      root, neither of which is available in the current
+      session.
 
 ## Phase TCP-2 — Active open + retransmission + RTT
 
@@ -252,6 +258,16 @@ Commit-message style follows `pasttodos/TODO_NET2.md` precedent.
 
 ## Deferred further (not in this TODO)
 
+- **T1.9 / T1.10 pcap verification of TCB-exhaustion +
+  accept-queue overflow.** The code paths exist (item 7's
+  `tcpSendReset` is wired into the TCB-full and queue-full
+  branches of `tcpTryPassiveOpen`) and are covered by unit-
+  level reasoning, but a scripted SYN flood requires hping3
+  or scapy running with raw-socket privileges (root / TAP)
+  which the current session does not have. Follow-up:
+  launch the kernel under TAP, issue `hping3 -S --flood
+  -p 8080 10.0.0.2 -c 20` from the host, confirm first 8
+  get SYN|ACK and remaining 12 get RST via pcap.
 - SACK (RFC 2018), TCP timestamps (RFC 7323), window scale.
 - ECN (RFC 3168).
 - Path MTU discovery (RFC 1191).
