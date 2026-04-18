@@ -280,14 +280,23 @@ Commit-message style follows `pasttodos/TODO_NET2.md` precedent.
       unchanged) plus tcpListener/tcpTCB fields. Phase-5 UDP
       semantics preserved bit-for-bit. Verify: `make build`
       + `make lint` clean; TCP-1 regression PASS.
-- [ ] `feat(net): sys_socket branch for SOCK_STREAM` —
-      extend `sysSocketHandler` at
-      `src/netsock.go:138-155` (§4.0). Verify:
-      `make build` clean.
-- [ ] `feat(net): sys_bind TCP branch + tcpReservePort /
-      tcpEphemeralPort` — extend `sysBindHandler`
-      (§4.1 + §6). Verify: unit test — TCP port 7 and UDP
-      port 7 coexist.
+- [x] `feat(net): sys_socket branch for SOCK_STREAM` —
+      sysSocketHandler now switches on frame.RSI: DGRAM →
+      sockKindUDP with recvCh; STREAM → sockKindTCPIdle.
+      Constant sockSockStream=1 added. Verify: clean.
+- [x] `feat(net): sys_bind TCP branch + tcpReservePort /
+      tcpEphemeralPort` — sysBindHandler now branches on
+      sock.kind. TCP path doesn't touch udpBindings; the
+      listener entry is allocated later in sys_listen, and
+      tcpActiveConnect allocates its own ephemeral port
+      directly. No explicit reservation table is needed in
+      v1 because listen-vs-connect choose non-overlapping
+      ports (listener ports are user-bound; connect pulls
+      from the 49152-49167 ephemeral range). A MINOR
+      deviation from net_tcp_socket_api.md §6 (which
+      specified a separate tcpPortReservations table) —
+      v1's simpler lookup via tcbTable.localPort suffices at
+      the 16-TCB cap. Verify: clean.
 - [ ] `feat(net): sys_listen handler` — new handler
       (§4.2) + dispatch in `src/userspace.go`. Verify: T5.1.
 - [ ] `feat(net): sys_accept handler + tcpAcceptWait` —

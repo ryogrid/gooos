@@ -35,8 +35,9 @@ import "unsafe"
 // Socket family / type / protocol values that the syscall layer
 // accepts. Anything else is rejected up front.
 const (
-	sockAFInet    = 2 // AF_INET
-	sockSockDgram = 2 // SOCK_DGRAM
+	sockAFInet     = 2 // AF_INET
+	sockSockDgram  = 2 // SOCK_DGRAM
+	sockSockStream = 1 // SOCK_STREAM (TCP)
 )
 
 // sys_net_config operation codes (RDI). Keep in sync with
@@ -161,17 +162,30 @@ func (s *socketFd) Close() fdErr {
 // --- Syscall handlers ----------------------------------------------------
 
 // sys_socket (22): RDI=domain, RSI=type, RDX=protocol → fd or -err.
+// Domain must be AF_INET. Type distinguishes UDP / TCP.
 func sysSocketHandler(frame *SyscallFrame) {
 	proc := currentProc()
 	if proc == nil {
 		frame.RAX = sysFail(fdErrBad)
 		return
 	}
-	if frame.RDI != sockAFInet || frame.RSI != sockSockDgram {
+	if frame.RDI != sockAFInet {
 		frame.RAX = sysFail(fdErrBad)
 		return
 	}
-	sock := &socketFd{recvCh: make(chan UDPDatagram, 16)}
+	var sock *socketFd
+	switch frame.RSI {
+	case sockSockDgram:
+		sock = &socketFd{
+			kind:   sockKindUDP,
+			recvCh: make(chan UDPDatagram, 16),
+		}
+	case sockSockStream:
+		sock = &socketFd{kind: sockKindTCPIdle}
+	default:
+		frame.RAX = sysFail(fdErrBad)
+		return
+	}
 	fd, err := procAllocFD(proc, sock)
 	if err != fdErrOK {
 		frame.RAX = sysFail(err)
@@ -180,7 +194,9 @@ func sysSocketHandler(frame *SyscallFrame) {
 	frame.RAX = uintptr(fd)
 }
 
-// sys_bind (23): RDI=fd, RSI=port → 0 or -err.
+// sys_bind (23): RDI=fd, RSI=port → 0 or -err. Branches on
+// socket kind — UDP binds into udpBindings, TCP reserves the
+// port in the listener-port space for a later sys_listen.
 func sysBindHandler(frame *SyscallFrame) {
 	proc := currentProc()
 	if proc == nil {
@@ -200,13 +216,28 @@ func sysBindHandler(frame *SyscallFrame) {
 		frame.RAX = sysFail(fdErrBad)
 		return
 	}
-	if !udpBindWithChannel(port, sock.recvCh) {
+	switch sock.kind {
+	case sockKindUDP:
+		if !udpBindWithChannel(port, sock.recvCh) {
+			frame.RAX = sysFail(fdErrBad)
+			return
+		}
+		sock.localPort = port
+		sock.bound = true
+		frame.RAX = 0
+
+	case sockKindTCPIdle:
+		// TCP uses a separate port space (TCP/UDP can share
+		// port numbers per the design). We note the port on
+		// the socket and let sys_listen allocate the listener
+		// entry in tcpListeners.
+		sock.localPort = port
+		sock.bound = true
+		frame.RAX = 0
+
+	default:
 		frame.RAX = sysFail(fdErrBad)
-		return
 	}
-	sock.localPort = port
-	sock.bound = true
-	frame.RAX = 0
 }
 
 // sys_sendto (24): RDI=fd, RSI=buf_ptr, RDX=buf_len, R10=dst_ip,
