@@ -150,6 +150,8 @@ func tcpRTOScannerLoop() {
 func tcpRTOScanPass() {
 	var fireRTO [tcbMax]bool
 	var fireTW [tcbMax]bool
+	var firePersist [tcbMax]bool
+	var fireDelack [tcbMax]bool
 	now := pitTicks
 	flags := tcbTableLock.Acquire()
 	for i := 0; i < tcbMax; i++ {
@@ -165,12 +167,24 @@ func tcpRTOScanPass() {
 			now >= t.timeWaitDeadline {
 			fireTW[i] = true
 		}
+		if t.persistDeadline != 0 && now >= t.persistDeadline {
+			firePersist[i] = true
+		}
+		if t.delackDeadline != 0 && now >= t.delackDeadline {
+			fireDelack[i] = true
+		}
 	}
 	tcbTableLock.Release(flags)
 
 	for i := 0; i < tcbMax; i++ {
 		if fireRTO[i] {
 			tcpRTOFire(&tcbTable[i])
+		}
+		if firePersist[i] {
+			tcpPersistFire(&tcbTable[i])
+		}
+		if fireDelack[i] {
+			tcpDelackFire(&tcbTable[i])
 		}
 		if fireTW[i] {
 			tcbFree(&tcbTable[i])

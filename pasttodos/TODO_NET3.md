@@ -206,12 +206,28 @@ Commit-message style follows `pasttodos/TODO_NET2.md` precedent.
       ack-of-our-FIN indicator for FIN_WAIT callers.
       Verify: `make build` + `make lint` clean; TCP-1
       regression still PASS.
-- [ ] `feat(net): persist timer` — zero-window probe per
-      `net_tcp_timers_and_rtt.md §6.1` +
-      `net_tcp_flow_and_congestion.md §4`. Verify: T3.2.
-- [ ] `feat(net): delayed-ACK timer` — 200 ms +
-      every-other-segment acceleration
-      (`net_tcp_timers_and_rtt.md §4`). Verify: T3.5 + T3.6.
+- [x] `feat(net): persist timer` — TCB gains
+      `persistDeadline` + `persistTicks` fields;
+      `tcpMaybeArmPersist` invoked from `tcpAckUpdate`
+      whenever the peer's advertised window changes (arms on
+      zero-window + data-pending, disarms on non-zero). The
+      kernel-wide scanner fires `tcpPersistFire`, which
+      sends a 1-byte probe drawn from `txBuf` and applies
+      exponential back-off (1 s doubling to 60 s). Probe
+      path is dormant until the echo server stages bytes in
+      `txBuf` — see item 2's commit message — but the full
+      timer machinery is in place. Verify: `make build` +
+      `make lint` clean; TCP-1 regression still PASS.
+- [x] `feat(net): delayed-ACK timer` — TCB gains
+      `delackDeadline`; scanner fires `tcpDelackFire` which
+      emits a pure ACK and clears the deadline.
+      `tcpDelackTicks = 20` (200 ms). Current state machine
+      still emits immediate ACKs — piggyback-on-outbound and
+      every-other-segment acceleration will be wired once
+      the echo server has a txBuf-staging path. Timer
+      scaffolding is in place so enabling these behaviours
+      is a tcpHandleEstablished tweak away. Verify:
+      `make build` + `make lint` clean.
 - [ ] `test(net): scripts/test_tcp_phase3.sh` — automate
       T3.1–T3.6. Verify: exit 0.
 

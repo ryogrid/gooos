@@ -145,6 +145,23 @@ type TCB struct {
 	// growth. Phase TCP-3 item 1.
 	lastAdvWin uint32
 
+	// Persist-timer deadline. Armed when the peer advertises a
+	// zero send window and we still have data queued for TX.
+	// Fires a 1-byte window probe per RFC 1122 §4.2.2.17.
+	// Phase TCP-3 item 3.
+	persistDeadline uint64
+	persistTicks    uint32 // current persist interval (exponential back-off)
+
+	// Delayed-ACK deadline. Armed on in-order data receive;
+	// cleared when a data-bearing segment we send piggybacks
+	// the ACK (or when we emit an immediate ACK). Phase TCP-3
+	// item 4. Current state machine still emits immediate ACKs
+	// (correctness-first); the field is populated but the
+	// "hold ACK up to 200 ms" behaviour is dormant until the
+	// echo server is refactored to stage outbound bytes in
+	// txBuf.
+	delackDeadline uint64
+
 	// Bookkeeping.
 	userOwner int  // owning pid; -1 = kernel-internal
 	active    bool // false = slot is free

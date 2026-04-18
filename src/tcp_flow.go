@@ -11,6 +11,77 @@ package main
 // (tcpSendSegment reads rcvWnd/lastAdvWin without the lock for
 // lock-order reasons — see comment in tcpSendSegment).
 
+// Persist-timer constants.
+const (
+	tcpPersistInitTicks uint32 = 100  // 1 s — RTO floor
+	tcpPersistMaxTicks  uint32 = 6000 // 60 s — RTO ceiling
+)
+
+// tcpMaybeArmPersist arms the persist timer if the peer has
+// advertised a zero send window and we have data pending in
+// txBuf. A no-op otherwise. Caller MUST hold tcbTableLock.
+func tcpMaybeArmPersist(t *TCB) {
+	if t.sndWnd != 0 {
+		t.persistDeadline = 0
+		t.persistTicks = 0
+		return
+	}
+	if t.txBuf.rbLen() == 0 {
+		return
+	}
+	if t.persistDeadline == 0 {
+		t.persistTicks = tcpPersistInitTicks
+		t.persistDeadline = pitTicks + uint64(t.persistTicks)
+		tcpStartRTOScanner()
+	}
+}
+
+// tcpPersistFire fires a 1-byte window probe for a TCB whose
+// persist timer expired. Scanner wakes us; we back off the
+// interval (doubling to the RTO ceiling) and send a 1-byte
+// segment drawn from txBuf at sndUna. If txBuf is empty (peer
+// raced us to ACK their own window update), just clear the
+// timer. Caller does NOT hold tcbTableLock.
+//
+// Note: the probe send path needs the echo-server refactor to
+// actually carry meaningful data. Current kernel-side
+// consumers don't stage bytes in txBuf, so the probe would be
+// zero-length. Guarded against that below.
+func tcpPersistFire(t *TCB) {
+	flags := tcbTableLock.Acquire()
+	if !t.active || t.persistDeadline == 0 {
+		tcbTableLock.Release(flags)
+		return
+	}
+	if pitTicks < t.persistDeadline {
+		tcbTableLock.Release(flags)
+		return
+	}
+	have := t.txBuf.rbLen()
+	if have == 0 || t.sndWnd != 0 {
+		t.persistDeadline = 0
+		t.persistTicks = 0
+		tcbTableLock.Release(flags)
+		return
+	}
+	// Back off and re-arm.
+	if t.persistTicks < tcpPersistMaxTicks {
+		t.persistTicks *= 2
+		if t.persistTicks > tcpPersistMaxTicks {
+			t.persistTicks = tcpPersistMaxTicks
+		}
+	}
+	t.persistDeadline = pitTicks + uint64(t.persistTicks)
+	// Copy a single byte at sndUna (= txBuf head) for the probe.
+	var probe [1]byte
+	t.txBuf.rbPeek(0, 1, probe[:])
+	tcbTableLock.Release(flags)
+
+	// Send as ACK|PSH with 1 byte payload — peer ACKs even a
+	// zero-window probe, which gets us a fresh window value.
+	tcpSendSegment(t, tcpFlagACK|tcpFlagPSH, nil, probe[:])
+}
+
 // tcpAckUpdate processes the ACK field of an incoming segment
 // and applies it to the TCB. Handles three things in RFC-
 // canonical order:
@@ -48,8 +119,30 @@ func tcpAckUpdate(t *TCB, h TCPHeader) bool {
 		t.sndWnd = uint32(h.Window)
 		t.sndWl1 = h.Seq
 		t.sndWl2 = h.Ack
+		tcpMaybeArmPersist(t) // new window might be zero
 	}
 	return h.Ack == t.sndNxt
+}
+
+// Delayed-ACK constants.
+const tcpDelackTicks uint64 = 20 // 200 ms at 100 Hz PIT
+
+// tcpDelackFire emits a pure ACK when the delayed-ACK deadline
+// expires. Clears the deadline afterward. Caller does NOT hold
+// tcbTableLock.
+func tcpDelackFire(t *TCB) {
+	flags := tcbTableLock.Acquire()
+	if !t.active || t.delackDeadline == 0 {
+		tcbTableLock.Release(flags)
+		return
+	}
+	if pitTicks < t.delackDeadline {
+		tcbTableLock.Release(flags)
+		return
+	}
+	t.delackDeadline = 0
+	tcbTableLock.Release(flags)
+	tcpSendPureACK(t)
 }
 
 // tcpAdvertiseWin computes the receive window to advertise on
