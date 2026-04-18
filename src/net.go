@@ -10,6 +10,8 @@
 
 package main
 
+import "runtime"
+
 // Static IP configuration — matches the QEMU user-mode slirp defaults
 // (guest = 10.0.2.15, gateway / DNS / TFTP server = 10.0.2.2).
 //
@@ -52,19 +54,25 @@ func netInit() {
 	tcpInit()
 }
 
-// netRxLoop drives the receive side. It drains the RX descriptor
-// ring once on entry (to catch frames that arrived during boot), then
-// blocks on rxSignalCh — the wake channel fed by the e1000 ISR on
-// each RXT0 interrupt — and drains again on every wake.
-//
-// The ISR uses a non-blocking select with cap=4 on rxSignalCh, so
-// bursts are coalesced rather than lost; a single wake is enough
-// because we drain every ready descriptor before blocking again.
+// netRxLoop drives the receive side. Simplest possible poller:
+// drainRxRing, yield, repeat. No channel, no flag, no sti/hlt.
+// The previous channel-based design (rxSignalCh + ISR send) hit
+// an unsolvable race where ISR-context channel sends couldn't
+// wake a parked receiver under gooos's cooperative scheduler.
+// Polling is slightly more CPU-hungry but trivially correct.
 func netRxLoop() {
-	drainRxRing()
+	lastRDH := uint32(0xFFFFFFFF)
 	for {
-		<-rxSignalCh
+		rdh := e1000Read(e1000RDH)
+		if rdh != lastRDH {
+			if lastRDH != 0xFFFFFFFF {
+				serialPrintln("netRxLoop: RDH changed")
+			}
+			lastRDH = rdh
+		}
 		drainRxRing()
+		statsInc(&netStats.NetRxLoopWakes) // counts iterations
+		runtime.Gosched()
 	}
 }
 
@@ -76,6 +84,7 @@ func drainRxRing() {
 		if frame == nil {
 			return
 		}
+		statsInc(&netStats.NetRxFrames)
 		statsInc(&netStats.RxPackets)
 		statsAdd(&netStats.RxBytes, uint64(len(frame)))
 		ethernetDispatch(frame)
@@ -177,6 +186,20 @@ func netDiag() {
 		" send=" + utoa(s.UdpSend) +
 		" portUnreach=" + utoa(s.UdpPortUnreach))
 	serialPrintln("Buf alloc fails: " + utoa(s.BufAllocFail))
+	serialPrintln("RX pipeline: e1000IRQs=" + utoa(e1000IRQCount) +
+		" idleParks=" + utoa(s.NetRxLoopWakes) +
+		" netRxFrames=" + utoa(s.NetRxFrames))
+	// DIAG: raw ring state — if netRxFrames stays 0 despite IRQs
+	// firing, this tells us whether hardware actually wrote a
+	// packet (RDH advanced, DD set) or whether our polling is
+	// reading stale / wrong descriptors.
+	next := (rxTail + 1) % e1000NumRxDesc
+	serialPrintln("RX ring: rxTail=" + utoa(uint64(rxTail)) +
+		" next=" + utoa(uint64(next)) +
+		" DDstatus=" + hextoa(uint64(rxDescStatus(next))) +
+		" RDH=" + utoa(uint64(e1000Read(e1000RDH))) +
+		" RDT=" + utoa(uint64(e1000Read(e1000RDT))) +
+		" lastICR=" + hextoa(uint64(lastICR)))
 	tcpDiag()
 	serialPrintln("=== end ===")
 }

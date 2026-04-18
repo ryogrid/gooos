@@ -387,11 +387,26 @@ func main() {
 		testNetBuf()
 		testICMPEchoReply()
 		// Dump a complete diagnostic snapshot ~5 s after boot so
-		// automated test scripts have a grep target and operators
-		// can eyeball link / counters without a shell command.
+		// automated test scripts have a grep target, then every
+		// 10 s thereafter so operators can watch counters evolve
+		// during manual testing (e.g. late-timing RX diagnosis).
 		go func() {
-			<-afterTicks(500)
+			<-afterTicks(500) // first dump at ~5 s
 			netDiag()
+			for {
+				<-afterTicks(1000) // every 10 s afterwards
+				netDiag()
+			}
+		}()
+
+		// DIAG: lightweight heartbeat goroutine — prints a line
+		// every 2 s so we can tell whether kernel goroutines are
+		// still being scheduled after the Ring-3 shell starts.
+		go func() {
+			for {
+				<-afterTicks(200)
+				serialPrintln("heartbeat")
+			}
 		}()
 	}
 

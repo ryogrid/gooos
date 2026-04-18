@@ -32,6 +32,14 @@ type NetStats struct {
 
 	// Buffer pool
 	BufAllocFail uint64
+
+	// RX-path diagnostics (added to pinpoint why RX stops after
+	// Ring-3 shell starts). E1000IRQs is bumped in the ISR;
+	// NetRxLoopWakes is bumped each time netRxLoop receives on
+	// rxSignalCh; NetRxFrames is bumped per frame dispatched.
+	E1000IRQs      uint64
+	NetRxLoopWakes uint64
+	NetRxFrames    uint64
 }
 
 var (
