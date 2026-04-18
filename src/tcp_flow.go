@@ -102,9 +102,13 @@ func tcpAckUpdate(t *TCB, h TCPHeader) bool {
 		return false
 	}
 	if t.sndUna != h.Ack {
+		newlyAcked := h.Ack - t.sndUna
 		t.sndUna = h.Ack
 		_, oldestSent, anyPristine := retxAckTo(t, h.Ack)
 		tcpRTTSample(t, oldestSent, anyPristine)
+		tcpCCOnAck(t, newlyAcked)
+		// A non-dup ACK resets the fast-retransmit counter.
+		t.dupAcks = 0
 		if t.retxQ.n == 0 {
 			t.rtoDeadline = 0
 		} else {

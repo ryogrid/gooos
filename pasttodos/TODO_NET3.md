@@ -235,8 +235,18 @@ Commit-message style follows `pasttodos/TODO_NET2.md` precedent.
 
 ## Phase TCP-4 — Congestion control (RFC 5681)
 
-- [ ] `feat(net): tcp_cc.go — iw() + slow start + CA` —
-      new file. Verify: T4.1 + T4.2.
+- [x] `feat(net): tcp_cc.go — iw() + slow start + CA` —
+      new `src/tcp_cc.go` with `tcpInitialWindow` (RFC 5681
+      §3.1: 2 / 3 / 4 × MSS tiers), `tcpCCInit` (seed cwnd
+      from iw, ssthresh = max uint32), `tcpCCOnAck` (slow
+      start += min(newlyAcked, mssEff); CA += mss²/cwnd via
+      cwndAccum). Also includes `tcpCCOnDupAck`, `tcpCCOnRTO`,
+      `tcpIsDuplicateACK` — these are wired in items 2 and 3.
+      TCB gains cwnd/ssthresh/cwndAccum/dupAcks. `tcpCCInit`
+      called on both SYN_SENT → ESTABLISHED and SYN_RECEIVED
+      → ESTABLISHED. `tcpCCOnAck` invoked from tcpAckUpdate
+      whenever sndUna advances. Verify: `make build` +
+      `make lint` clean; TCP-1 regression still PASS.
 - [ ] `feat(net): fast retransmit + fast recovery` —
       `dupAcks` counter, 3-dup-ACK trigger,
       `cwnd = ssthresh + 3*mss`. Verify: T4.3 + T4.4.

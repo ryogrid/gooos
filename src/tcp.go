@@ -152,6 +152,16 @@ type TCB struct {
 	persistDeadline uint64
 	persistTicks    uint32 // current persist interval (exponential back-off)
 
+	// Congestion control (RFC 5681). cwnd / ssthresh in bytes;
+	// cwndAccum is the fractional-byte accumulator for
+	// congestion avoidance's per-ACK increment; dupAcks counts
+	// consecutive duplicate ACKs for fast retransmit.
+	// Phase TCP-4.
+	cwnd      uint32
+	ssthresh  uint32
+	cwndAccum uint32
+	dupAcks   uint8
+
 	// Delayed-ACK deadline. Armed on in-order data receive;
 	// cleared when a data-bearing segment we send piggybacks
 	// the ACK (or when we emit an immediate ACK). Phase TCP-3
@@ -693,6 +703,7 @@ func tcpHandleSynReceived(t *TCB, h TCPHeader, payload []byte) {
 	t.sndWnd = uint32(h.Window)
 	t.sndWl1 = h.Seq
 	t.sndWl2 = h.Ack
+	tcpCCInit(t) // RFC 5681 §3.1 — seed cwnd / ssthresh
 	// Pop the SYN|ACK descriptor from retxQ and feed the RTT
 	// estimator (Karn's rule: only pristine descriptors).
 	_, oldestSent, anyPristine := retxAckTo(t, h.Ack)
@@ -1044,6 +1055,7 @@ func tcpHandleSynSent(t *TCB, h TCPHeader, payload []byte) {
 		t.mssEff = t.mssLocal
 	}
 	t.state = tcpStateEstablished
+	tcpCCInit(t)
 	_, oldestSent, anyPristine := retxAckTo(t, h.Ack)
 	tcpRTTSample(t, oldestSent, anyPristine)
 	if t.retxQ.n == 0 {
