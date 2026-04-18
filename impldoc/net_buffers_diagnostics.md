@@ -30,12 +30,14 @@ buffers outside the GC heap.
 ```go
 const (
     netBufCount = 128
-    netBufSize  = 1536  // > Ethernet MTU (1518) + room
+    netBufSize  = 2048  // must match e1000BufSize for zero-copy RX
 )
 
 // netBufPool is the raw buffer storage. Allocated via
 // allocPagesContig at init time. Each buffer is netBufSize
-// bytes, so total = 128 * 1536 = 196,608 bytes = 48 pages.
+// bytes, so total = 128 * 2048 = 262,144 bytes = 64 pages.
+// Serves BOTH RX (zero-copy descriptor buffers) and TX
+// (ethernetBuild uses pool buffers instead of make()).
 var netBufPoolBase uintptr
 
 // netBufFree is a bitmap: bit i=1 means buffer i is free.
@@ -77,7 +79,7 @@ func netBufAlloc() (uintptr, int) {
         }
     }
     netBufLock.Release(flags)
-    netStats.RxDropped++
+    netStats.BufAllocFail++
     return 0, -1
 }
 ```
@@ -141,9 +143,10 @@ With the buffer pool, the RX path becomes:
 5. After processing, calls `netBufFreeIdx(idx)`.
 
 **Optimization**: Point RX descriptors directly at pool
-buffers. This eliminates the copy. On RX, the buffer is
-"claimed" from the pool, and a new buffer is allocated and
-assigned to the descriptor.
+buffers, **replacing** the separate `rxBufs` allocation from
+Phase 1 (those pages are freed). This eliminates the copy.
+On RX, the buffer is "claimed" from the pool, and a new
+buffer is allocated and assigned to the descriptor.
 
 ### 1.8 LOC Estimate
 
@@ -478,7 +481,7 @@ When `netBufAlloc` fails (all 128 buffers in use):
 | TX descriptor ring (32 × 16) | 512 B = 1 page | `allocPagesContig(1)` |
 | RX buffers (64 × 2,048) | 131,072 B = 32 pages | `allocPagesContig(32)` |
 | TX buffers (32 × 2,048) | 65,536 B = 16 pages | `allocPagesContig(16)` |
-| Packet buffer pool (128 × 1,536) | 196,608 B = 48 pages | `allocPagesContig(48)` |
+| Packet buffer pool (128 × 2,048) | 262,144 B = 64 pages | `allocPagesContig(64)` |
 | ARP cache (16 × ~20) | 320 B | `.bss` |
 | UDP bind table (8 × ~32) | 256 B | `.bss` |
 | Statistics counters | ~128 B | `.bss` |

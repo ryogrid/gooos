@@ -2,8 +2,9 @@
 
 This document is the entry point to the design set for bringing
 UDP/IP networking to gooos, a bare-metal x86-64 hobby OS written
-in Go (TinyGo). Six documents under `impldoc/net_*.md` together
-provide a complete implementation blueprint.
+in Go (TinyGo). Eight documents under `impldoc/net_*.md`
+together provide a complete implementation blueprint (Phases
+1-4 core stack + Phase 5 socket API and DHCP client).
 
 ## 1. Problem Statement
 
@@ -31,11 +32,13 @@ a network.
 ### 1.2 Non-Goals (Deferred)
 
 - TCP (SYN/ACK/FIN state machine).
-- DHCP client.
+- DHCP client — **design complete** in `net_dhcp_client.md`
+  (Phase 5; deferred from Phases 1-4).
 - DNS resolver.
 - virtio-net driver.
 - IPv6 / NDP.
-- Socket syscall API for userland (`sys_socket`, `sys_sendto`).
+- Socket syscall API — **design complete** in
+  `net_socket_api.md` (Phase 5; deferred from Phases 1-4).
 - TLS.
 
 ## 2. Existing Infrastructure Leveraged
@@ -67,6 +70,8 @@ a network.
 | `net_ipv4_icmp_udp.md` | IPv4, ICMP echo reply, UDP send/recv, bind table | B9–B12 |
 | `net_buffers_diagnostics.md` | Buffer pool, statistics counters, shell diagnostics | B13–B15 |
 | `net_test_plan.md` | Verification matrix, QEMU test harnesses, stress tests | — |
+| `net_socket_api.md` | Syscalls 22-27 (socket/bind/sendto/recvfrom/net_config/sendto_bcast), userspace SDK | Phase 5 |
+| `net_dhcp_client.md` | Userspace DHCP client (`user/cmd/dhcp`), DORA exchange, config recording | Phase 5 |
 
 ## 4. Blocker Inventory
 

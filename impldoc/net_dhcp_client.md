@@ -180,10 +180,11 @@ func recvWithRetry(fd int, buf []byte, maxRetries int) (int, gooos.UDPInfo) {
 ```
 
 **Recommended v1**: Use blocking `sys_recvfrom` with no timeout.
-If no DHCP server responds, the program blocks forever. The
-user can interrupt with Ctrl+C (if signal support exists) or
-reboot. This matches the behavior of minimal DHCP clients in
-embedded systems.
+If no DHCP server responds, the program blocks forever (gooos
+has no signal/Ctrl+C support; reboot is the only recovery).
+**Run only with QEMU user-mode networking** which always has a
+built-in DHCP server (assigns 10.0.2.15). Running without a
+DHCP server requires reboot.
 
 ### 3.4 Transaction ID Generation
 

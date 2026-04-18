@@ -353,7 +353,7 @@ func arpResolve(ip uint32) ([6]byte, bool) {
             if found {
                 return mac, true
             }
-            hlt() // brief sleep
+            runtime.Gosched() // yield to let RX goroutine process ARP replies
         }
     }
 }

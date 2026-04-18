@@ -374,6 +374,27 @@ func main() {
 	lapicTimerInit()
 	serialPrintln("LAPIC timer: BSP initialized at 100 Hz")
 
+	// PCI scan + e1000 NIC init (Phases 1-4 of the networking stack).
+	pciInit()
+	if e1000Found {
+		e1000Init() // leaves IMS masked — we unmask after the handler.
+		e1000Vector := int(32 + e1000PCI.IRQLine)
+		registerHandler(e1000Vector, handleE1000IRQ)
+		serialPrintln("e1000: IRQ handler registered at vector " + utoa(uint64(e1000Vector)))
+		e1000EnableInterrupts() // safe now that the handler is live.
+		serialPrintln("e1000: NIC initialized")
+		netInit()
+		testNetBuf()
+		testICMPEchoReply()
+		// Dump a complete diagnostic snapshot ~5 s after boot so
+		// automated test scripts have a grep target and operators
+		// can eyeball link / counters without a shell command.
+		go func() {
+			<-afterTicks(500)
+			netDiag()
+		}()
+	}
+
 	// Register IPI handlers before IOAPIC (which enables interrupt
 	// delivery to APs).
 	registerHandler(ipiWakeupVector, handleWakeupIPI)
@@ -451,6 +472,14 @@ func main() {
 	fsCreate("smpprobe.elf")
 	fsWrite("smpprobe.elf", userElf_smpprobe[:])
 	serialPrintln("  smpprobe.elf: " + utoa(uint64(len(userElf_smpprobe))) + " bytes")
+
+	fsCreate("udpecho.elf")
+	fsWrite("udpecho.elf", userElf_udpecho[:])
+	serialPrintln("  udpecho.elf: " + utoa(uint64(len(userElf_udpecho))) + " bytes")
+
+	fsCreate("dhcp.elf")
+	fsWrite("dhcp.elf", userElf_dhcp[:])
+	serialPrintln("  dhcp.elf: " + utoa(uint64(len(userElf_dhcp))) + " bytes")
 
 	// Store a test file for cat/wc demos.
 	fsCreate("hello.txt")

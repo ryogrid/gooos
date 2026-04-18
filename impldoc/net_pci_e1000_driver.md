@@ -263,7 +263,7 @@ const (
     e1000TCTLEN   = 1 << 1  // Transmit Enable
     e1000TCTLPSP  = 1 << 3  // Pad Short Packets
     e1000TCTLCT   = 0x10 << 4  // Collision Threshold (default 0x10)
-    e1000TCTLCOLD = 0x40 << 12 // Collision Distance (full duplex)
+    e1000TCTLCOLD = 0x40 << 12 // Collision Distance (half-duplex; QEMU ignores)
 )
 ```
 
@@ -433,7 +433,7 @@ For TX: set TDBAL/TDBAH, TDLEN, TDH=0, TDT=0 (empty ring).
 func e1000Init() {
     // 1. Reset the device
     e1000Write(e1000CTRL, e1000Read(e1000CTRL) | e1000CTRLReset)
-    // Wait ~1 ms for reset to complete (spin on PIT ticks)
+    // Wait ~20 ms for reset to complete (2 PIT ticks, conservative)
     resetStart := pitTicks
     for pitTicks - resetStart < 2 { /* ~20ms at 100Hz */ }
 
@@ -602,7 +602,9 @@ interrupt signal.
 The e1000's PCI Interrupt Line register reports the legacy
 IRQ number (typically 11 on QEMU). The vector is
 `picMasterOffset + irqLine` (32 + 11 = 43) when using PIC
-pass-through.
+pass-through. Note: this formula works for all IRQs 0-15
+because the PIC remap places master (IRQ 0-7) at vectors
+32-39 and slave (IRQ 8-15) at vectors 40-47 contiguously.
 
 ```go
 func e1000RegisterIRQ() {

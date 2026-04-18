@@ -20,6 +20,31 @@ func ReadFile(name string) []byte {
 	return buf[:n]
 }
 
+// WriteFile writes `data` into the in-memory FS under `name`. The
+// underlying sys_fs_write creates the file when it is missing and
+// truncates it when it exists. Returns true on success.
+//
+// Used by the DHCP client to persist /network.conf after a
+// successful DORA exchange; any userspace program that wants to
+// emit a small config file can reuse it.
+func WriteFile(name string, data []byte) bool {
+	if len(name) == 0 {
+		return false
+	}
+	nameBytes := []byte(name)
+	var dataPtr uintptr
+	if len(data) > 0 {
+		dataPtr = uintptr(unsafe.Pointer(&data[0]))
+	}
+	r := syscall4(sysFsWrite,
+		uintptr(unsafe.Pointer(&nameBytes[0])),
+		uintptr(len(nameBytes)),
+		dataPtr,
+		uintptr(len(data)),
+	)
+	return r != 0xFFFFFFFFFFFFFFFF
+}
+
 // ListDir returns all filenames in the filesystem.
 func ListDir() []string {
 	buf := make([]byte, 4096)

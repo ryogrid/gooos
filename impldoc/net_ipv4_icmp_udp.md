@@ -119,12 +119,16 @@ complement sum of all 16-bit words in the header:
 
 ```go
 // ipv4Checksum computes the ones-complement checksum over the
-// given byte slice (must be even length). Returns 0 for a
-// valid received packet (checksum field included in input).
+// given byte slice (handles both even and odd lengths). Returns
+// 0 for a valid received packet (checksum field included).
+// Reused for IPv4 headers AND ICMP messages.
 func ipv4Checksum(data []byte) uint16 {
     var sum uint32
     for i := 0; i+1 < len(data); i += 2 {
         sum += uint32(data[i])<<8 | uint32(data[i+1])
+    }
+    if len(data)%2 != 0 {
+        sum += uint32(data[len(data)-1]) << 8
     }
     // Fold 32-bit sum to 16 bits
     for sum > 0xFFFF {
@@ -406,6 +410,31 @@ func udpChecksum(srcIP, dstIP uint32, udpPacket []byte) uint16 {
     }
     return result
 }
+
+// udpChecksumVerify validates a received UDP packet's checksum.
+// Returns true if the checksum is correct. Unlike udpChecksum
+// (which substitutes 0→0xFFFF for TX), this returns the raw
+// verification result: a valid packet's ones-complement sum
+// (including the received checksum field) folds to 0xFFFF.
+func udpChecksumVerify(srcIP, dstIP uint32, udpPacket []byte) bool {
+    var sum uint32
+    sum += uint32(srcIP >> 16)
+    sum += uint32(srcIP & 0xFFFF)
+    sum += uint32(dstIP >> 16)
+    sum += uint32(dstIP & 0xFFFF)
+    sum += uint32(ipProtoUDP)
+    sum += uint32(len(udpPacket))
+    for i := 0; i+1 < len(udpPacket); i += 2 {
+        sum += uint32(udpPacket[i])<<8 | uint32(udpPacket[i+1])
+    }
+    if len(udpPacket)%2 != 0 {
+        sum += uint32(udpPacket[len(udpPacket)-1]) << 8
+    }
+    for sum > 0xFFFF {
+        sum = (sum & 0xFFFF) + (sum >> 16)
+    }
+    return uint16(sum) == 0xFFFF
+}
 ```
 
 ### 3.4 Bind Table
@@ -487,9 +516,11 @@ func udpHandle(ipHdr IPv4Header, payload []byte) {
         return
     }
 
-    // Optional: verify checksum (skip if checksum == 0)
+    // Optional: verify checksum (skip if checksum == 0).
+    // Use udpChecksumVerify (not udpChecksum) because udpChecksum
+    // substitutes 0→0xFFFF for TX, which breaks RX verification.
     if hdr.Chksum != 0 {
-        if udpChecksum(ipHdr.SrcIP, ipHdr.DstIP, payload) != 0 {
+        if !udpChecksumVerify(ipHdr.SrcIP, ipHdr.DstIP, payload) {
             netStats.ChecksumErr++
             return
         }
