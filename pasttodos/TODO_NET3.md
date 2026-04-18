@@ -151,8 +151,18 @@ Commit-message style follows `pasttodos/TODO_NET2.md` precedent.
       sites (SYN_SENT→ESTABLISHED, SYN_RECEIVED→ESTABLISHED,
       ESTABLISHED). Verify: `make build` + `make lint`
       clean; TCP-1 regression still PASS.
-- [ ] `feat(net): FIN path (FIN_WAIT_1/FIN_WAIT_2/CLOSING)` —
-      remaining state-machine branches. Verify: T1.6 + T2.6.
+- [x] `feat(net): FIN path (FIN_WAIT_1/FIN_WAIT_2/CLOSING)` —
+      remaining state-machine branches wired into
+      `tcpDispatchToTCB`. `tcpClose(t)` helper handles active
+      close from either ESTABLISHED (→ FIN_WAIT_1) or
+      CLOSE_WAIT (→ LAST_ACK), pushing our FIN onto retxQ so
+      RTO retransmission covers lost FINs. FIN_WAIT_1 logic
+      handles the three sub-transitions (ACK-of-FIN →
+      FIN_WAIT_2; peer FIN → CLOSING; combined → TIME_WAIT).
+      TCB gains `timeWaitDeadline` (item 5 closes the loop).
+      Verify: `make build` + `make lint` clean; TCP-1
+      regression still PASS. T2.6 end-to-end is gated by
+      item 5's timer scan firing tcbFree.
 - [ ] `feat(net): TIME_WAIT timer` — 60 s via `afterTicks`;
       re-ACK retransmitted FIN resets the deadline. Verify:
       T2.6 transition sequence + T2.7 re-ACK.

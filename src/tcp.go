@@ -135,6 +135,11 @@ type TCB struct {
 	rttvarTicks    uint32
 	rttInitialized bool
 
+	// TIME_WAIT deadline (pitTicks). Populated when entering
+	// TIME_WAIT; consumed by the RTO/timer scanner which calls
+	// tcbFree on expiry. Phase TCP-2 item 5.
+	timeWaitDeadline uint64
+
 	// Bookkeeping.
 	userOwner int  // owning pid; -1 = kernel-internal
 	active    bool // false = slot is free
@@ -636,9 +641,16 @@ func tcpDispatchToTCB(t *TCB, h TCPHeader, payload []byte) {
 		tcpHandleCloseWait(t, h, payload)
 	case tcpStateLastAck:
 		tcpHandleLastAck(t, h, payload)
+	case tcpStateFinWait1:
+		tcpHandleFinWait1(t, h, payload)
+	case tcpStateFinWait2:
+		tcpHandleFinWait2(t, h, payload)
+	case tcpStateClosing:
+		tcpHandleClosing(t, h, payload)
+	case tcpStateTimeWait:
+		tcpHandleTimeWait(t, h, payload)
 	default:
-		// Remaining states (FIN_WAIT_* / CLOSING / TIME_WAIT
-		// / CLOSED) land in Phase TCP-2 items 4-5.
+		// tcpStateClosed, tcpStateListen: not dispatched here.
 	}
 }
 
@@ -825,6 +837,167 @@ const tcpEchoListenPort uint16 = 8080
 // 100 ms under QEMU user-mode. Rewire to a channel-based wake
 // when flow-control / persist timers land (Phase TCP-3).
 const tcpEchoPollTicks uint64 = 5
+
+// tcpTimeWaitTicks is the 2*MSL TIME_WAIT dwell. 60 s per
+// design doc TD5 in net_tcp_overview.md §5; shorter than RFC
+// 793's 4-minute default to keep the 16-slot TCB table usable
+// under churn.
+const tcpTimeWaitTicks uint64 = 6000 // 60 s at 100 Hz PIT
+
+// --- FIN path handlers (Phase TCP-2 item 4) ---
+
+// tcpClose initiates a graceful close. Called by whichever code
+// path "owns" the TCB (the kernel echo server, future
+// sys_close). Sends FIN|ACK and transitions the state machine
+// accordingly:
+//   ESTABLISHED → FIN_WAIT_1
+//   CLOSE_WAIT  → LAST_ACK  (peer already FIN'd; this is the
+//                            half-close completion from our side)
+// Caller must NOT hold tcbTableLock.
+func tcpClose(t *TCB) bool {
+	iflags := tcbTableLock.Acquire()
+	switch t.state {
+	case tcpStateEstablished:
+		t.state = tcpStateFinWait1
+	case tcpStateCloseWait:
+		t.state = tcpStateLastAck
+	default:
+		tcbTableLock.Release(iflags)
+		return false // nothing to close
+	}
+	tcbTableLock.Release(iflags)
+
+	ok := tcpSendSegment(t, tcpFlagFIN|tcpFlagACK, nil, nil)
+	if !ok {
+		return false
+	}
+	iflags = tcbTableLock.Acquire()
+	// FIN consumes 1 seq.
+	finSeq := t.sndNxt
+	t.sndNxt++
+	retxPush(t, tcpRetxEntry{
+		seq:       finSeq,
+		endSeq:    finSeq + 1,
+		flags:     tcpFlagFIN | tcpFlagACK,
+		sentTicks: pitTicks,
+	})
+	tcpArmRTO(t)
+	tcbTableLock.Release(iflags)
+	return true
+}
+
+// tcpHandleFinWait1: we've sent FIN and are waiting for its ACK
+// and/or the peer's FIN.
+//   ACK of our FIN alone  → FIN_WAIT_2
+//   FIN alone             → CLOSING (our FIN not yet acked)
+//   FIN + ACK of our FIN  → TIME_WAIT directly
+func tcpHandleFinWait1(t *TCB, h TCPHeader, payload []byte) {
+	iflags := tcbTableLock.Acquire()
+	// Accept in-order data riding along.
+	if h.Seq == t.rcvNxt && len(payload) > 0 {
+		n := t.rxBuf.rbWrite(payload)
+		t.rcvNxt += uint32(n)
+		if t.rcvWnd > uint32(n) {
+			t.rcvWnd -= uint32(n)
+		} else {
+			t.rcvWnd = 0
+		}
+	}
+	// Detect ACK-of-our-FIN: a valid ACK whose Ack equals our
+	// sndNxt (the FIN occupied the final seq in our window).
+	ackOfOurFin := false
+	if h.Flags&tcpFlagACK != 0 &&
+		seqLE(t.sndUna, h.Ack) && seqLE(h.Ack, t.sndNxt) {
+		if t.sndUna != h.Ack {
+			t.sndUna = h.Ack
+			_, oldestSent, anyPristine := retxAckTo(t, h.Ack)
+			tcpRTTSample(t, oldestSent, anyPristine)
+			if t.retxQ.n == 0 {
+				t.rtoDeadline = 0
+			} else {
+				tcpArmRTO(t)
+			}
+		}
+		if h.Ack == t.sndNxt {
+			ackOfOurFin = true
+		}
+	}
+	// Detect peer FIN (only if in-order).
+	peerFin := false
+	if h.Flags&tcpFlagFIN != 0 &&
+		h.Seq+uint32(len(payload)) == t.rcvNxt {
+		t.rcvNxt++
+		peerFin = true
+	}
+	switch {
+	case ackOfOurFin && peerFin:
+		t.state = tcpStateTimeWait
+		t.timeWaitDeadline = pitTicks + tcpTimeWaitTicks
+	case ackOfOurFin:
+		t.state = tcpStateFinWait2
+	case peerFin:
+		t.state = tcpStateClosing
+	}
+	tcbTableLock.Release(iflags)
+
+	// Always ACK (of data / of their FIN).
+	tcpSendPureACK(t)
+}
+
+// tcpHandleFinWait2: our FIN has been ACKed; waiting for peer FIN.
+func tcpHandleFinWait2(t *TCB, h TCPHeader, payload []byte) {
+	iflags := tcbTableLock.Acquire()
+	if h.Seq == t.rcvNxt && len(payload) > 0 {
+		n := t.rxBuf.rbWrite(payload)
+		t.rcvNxt += uint32(n)
+		if t.rcvWnd > uint32(n) {
+			t.rcvWnd -= uint32(n)
+		} else {
+			t.rcvWnd = 0
+		}
+	}
+	peerFin := false
+	if h.Flags&tcpFlagFIN != 0 && seqLE(h.Seq+uint32(len(payload)), t.rcvNxt) {
+		t.rcvNxt++
+		peerFin = true
+	}
+	if peerFin {
+		t.state = tcpStateTimeWait
+		t.timeWaitDeadline = pitTicks + tcpTimeWaitTicks
+	}
+	tcbTableLock.Release(iflags)
+	tcpSendPureACK(t)
+}
+
+// tcpHandleClosing: we and peer both sent FIN; waiting for ACK
+// of our FIN.
+func tcpHandleClosing(t *TCB, h TCPHeader, payload []byte) {
+	_ = payload
+	iflags := tcbTableLock.Acquire()
+	if h.Flags&tcpFlagACK != 0 && h.Ack == t.sndNxt {
+		_, oldestSent, anyPristine := retxAckTo(t, h.Ack)
+		tcpRTTSample(t, oldestSent, anyPristine)
+		if t.retxQ.n == 0 {
+			t.rtoDeadline = 0
+		}
+		t.state = tcpStateTimeWait
+		t.timeWaitDeadline = pitTicks + tcpTimeWaitTicks
+	}
+	tcbTableLock.Release(iflags)
+}
+
+// tcpHandleTimeWait: waiting for 2*MSL (60 s in v1) before
+// freeing the slot. Peer retransmits of FIN are re-ACKed and
+// reset the deadline (RFC 793 §3.5).
+func tcpHandleTimeWait(t *TCB, h TCPHeader, payload []byte) {
+	_ = payload
+	if h.Flags&tcpFlagFIN != 0 {
+		iflags := tcbTableLock.Acquire()
+		t.timeWaitDeadline = pitTicks + tcpTimeWaitTicks
+		tcbTableLock.Release(iflags)
+		tcpSendPureACK(t)
+	}
+}
 
 // tcpHandleSynSent: SYN_SENT + SYN|ACK (valid ACK of our SYN) →
 // ESTABLISHED; emit final ACK. SYN_SENT + RST → free. Simul-
