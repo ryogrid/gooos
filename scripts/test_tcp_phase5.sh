@@ -94,13 +94,17 @@ cat <<'PREP'
 Path E — userspace tcpecho.elf:
 1. Launch the kernel in interactive mode:
        make run-net
-2. At the gooos shell prompt:
-       tcpecho &
+2. At the gooos shell prompt (the gooos shell does NOT
+   support background jobs / `&` — tcpecho runs as a
+   blocking foreground command and its accept loop keeps
+   servicing connections while the shell stays blocked):
+       tcpecho
    Serial output shows "tcpecho: starting userspace echo on
-   TCP port 8081".
+   TCP port 8081"; the shell prompt does not return.
 3. From the host:
        echo hello | nc -w 3 127.0.0.1 10081
    Expected output: hello
+4. Close QEMU (Ctrl+A X in -serial stdio) when done.
 
 Active-open from the guest (tcpcli):
 1. On the host, start a listener before launching the guest:

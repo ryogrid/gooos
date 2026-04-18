@@ -207,16 +207,28 @@ row + any active TCBs.
 
 #### E. Userspace TCP echo (port 8081)
 
+**Note on shell behaviour:** the gooos shell currently has
+no background-job (`&`) support — `user/cmd/sh/main.go`
+always `Spawn`s then immediately `Wait`s. So `tcpecho`
+runs as a *blocking* foreground command: the shell prompt
+won't come back, but the echo loop inside `tcpecho.elf`
+services incoming TCP connections regardless (the accept
+loop and per-connection goroutines run as Ring-3 goroutines
+inside the blocked process). That's enough to demo Path E —
+just close QEMU when you're done with the demo.
+
 In the gooos shell (terminal 1, `make run-net`):
 
 ```
-$ tcpecho &
+$ tcpecho
 tcpecho: starting userspace echo on TCP port 8081
+            (prompt does NOT return — this is expected)
 ```
 
 `tcpecho.elf` is a Ring-3 program that loops
 `TCPAccept` → per-connection goroutine → `TCPRecv` / `TCPSendAll`
-→ close on peer FIN. From a second host terminal:
+→ close on peer FIN. With `tcpecho` blocking the shell, from
+a second host terminal:
 
 ```
 $ echo -n 'hello-userland-tcp' | nc -w 3 127.0.0.1 10081
