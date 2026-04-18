@@ -129,11 +129,12 @@ run-smp: $(KERNEL_ISO) check-multiboot
 #   host 9999/udp  -> guest 7    — kernel-builtin UDP echo server
 #   host 19999/udp -> guest 17   — userspace udpecho.elf (Phase 5 SDK smoke)
 #   host 10080/tcp -> guest 8080 — kernel-builtin TCP echo server (Path D)
+#   host 10081/tcp -> guest 8081 — userspace tcpecho.elf (Path E)
 # Guest default IP is 10.0.2.15, gateway 10.0.2.2.
 run-net: $(KERNEL_ISO) check-multiboot
 	$(QEMU) -cdrom $(KERNEL_ISO) -serial stdio -no-reboot -no-shutdown \
 	  -device e1000,netdev=n0 \
-	  -netdev user,id=n0,hostfwd=udp::9999-:7,hostfwd=udp::19999-:17,hostfwd=tcp::10080-:8080
+	  -netdev user,id=n0,hostfwd=udp::9999-:7,hostfwd=udp::19999-:17,hostfwd=tcp::10080-:8080,hostfwd=tcp::10081-:8081
 
 # test-net boots the kernel with an e1000 NIC under user-mode networking,
 # greps serial markers (PCI/MAC/link/NET init/ARP gratuitous/ICMP+netbuf

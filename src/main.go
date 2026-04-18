@@ -481,6 +481,14 @@ func main() {
 	fsWrite("dhcp.elf", userElf_dhcp[:])
 	serialPrintln("  dhcp.elf: " + utoa(uint64(len(userElf_dhcp))) + " bytes")
 
+	fsCreate("tcpecho.elf")
+	fsWrite("tcpecho.elf", userElf_tcpecho[:])
+	serialPrintln("  tcpecho.elf: " + utoa(uint64(len(userElf_tcpecho))) + " bytes")
+
+	fsCreate("tcpcli.elf")
+	fsWrite("tcpcli.elf", userElf_tcpcli[:])
+	serialPrintln("  tcpcli.elf: " + utoa(uint64(len(userElf_tcpcli))) + " bytes")
+
 	// Store a test file for cat/wc demos.
 	fsCreate("hello.txt")
 	fsWrite("hello.txt", []byte("Hello from the gooos filesystem!\nThis is a test file.\n"))

@@ -141,6 +141,121 @@ func UDPSendBroadcast(fd int, data []byte, dstPort uint16) int {
 	return int(int64(r))
 }
 
+// --- TCP socket API (Phase TCP-5) ----------------------------------------
+
+// TCP syscall numbers — see impldoc/net_tcp_socket_api.md §2.
+const (
+	sysListen   = 28
+	sysAccept   = 29
+	sysConnect  = 30
+	sysTcpSend  = 31
+	sysTcpRecv  = 32
+	sysShutdown = 33
+)
+
+// SOCK_STREAM and shutdown how values.
+const (
+	SOCK_STREAM = 1
+	SHUT_RD     = 0
+	SHUT_WR     = 1
+	SHUT_RDWR   = 2
+)
+
+// TCPSocket creates a TCP stream socket.
+func TCPSocket() int {
+	r := syscall3(sysSocket, AF_INET, SOCK_STREAM, 0)
+	return int(int64(r))
+}
+
+// TCPListen marks a bound TCP socket as passive. backlog is
+// advisory; the kernel uses a fixed 8-entry accept queue.
+func TCPListen(fd, backlog int) int {
+	r := syscall2(sysListen, uintptr(fd), uintptr(backlog))
+	return int(int64(r))
+}
+
+// TCPAccept pops the next completed connection from the listener.
+// timeoutTicks = 0 blocks forever. The returned UDPInfo carries
+// the peer's address (field names kept UDP-flavoured since the
+// wire layout is identical to the Phase-5 struct).
+func TCPAccept(fd int, timeoutTicks uint64) (int, UDPInfo) {
+	var info UDPInfo
+	r := syscall3(sysAccept,
+		uintptr(fd),
+		uintptr(unsafe.Pointer(&info)),
+		uintptr(timeoutTicks),
+	)
+	return int(int64(r)), info
+}
+
+// TCPConnect initiates an active open to dstIP:dstPort.
+// timeoutTicks = 0 uses the kernel's 12 s default envelope.
+func TCPConnect(fd int, dstIP uint32, dstPort uint16, timeoutTicks uint64) int {
+	r := syscall4(sysConnect,
+		uintptr(fd),
+		uintptr(dstIP),
+		uintptr(dstPort),
+		uintptr(timeoutTicks),
+	)
+	return int(int64(r))
+}
+
+// TCPSend writes up to len(data) bytes and returns the actual
+// count written (short writes possible when the kernel's send
+// buffer fills). Callers that need a full write should use
+// TCPSendAll.
+func TCPSend(fd int, data []byte) int {
+	if len(data) == 0 {
+		return 0
+	}
+	r := syscall3(sysTcpSend,
+		uintptr(fd),
+		uintptr(unsafe.Pointer(&data[0])),
+		uintptr(len(data)),
+	)
+	return int(int64(r))
+}
+
+// TCPSendAll loops TCPSend until every byte lands or an error
+// occurs. Returns the total bytes sent (== len(data) on success).
+func TCPSendAll(fd int, data []byte) int {
+	total := 0
+	for total < len(data) {
+		n := TCPSend(fd, data[total:])
+		if n <= 0 {
+			if total > 0 {
+				return total
+			}
+			return n
+		}
+		total += n
+	}
+	return total
+}
+
+// TCPRecv reads up to len(buf) bytes. Returns the number read;
+// 0 means EOF (peer has closed and all buffered bytes consumed).
+// timeoutTicks = 0 blocks forever.
+func TCPRecv(fd int, buf []byte, timeoutTicks uint64) int {
+	if len(buf) == 0 {
+		return 0
+	}
+	r := syscall4(sysTcpRecv,
+		uintptr(fd),
+		uintptr(unsafe.Pointer(&buf[0])),
+		uintptr(len(buf)),
+		uintptr(timeoutTicks),
+	)
+	return int(int64(r))
+}
+
+// TCPShutdown sends a FIN (SHUT_WR) or FIN + rx-drop (SHUT_RDWR).
+// SHUT_RD is not supported in v1.
+func TCPShutdown(fd, how int) int {
+	r := syscall2(sysShutdown, uintptr(fd), uintptr(how))
+	return int(int64(r))
+}
+
 // --- Network Configuration -----------------------------------------------
 
 // GetIP returns the kernel's current IP address as a host-order

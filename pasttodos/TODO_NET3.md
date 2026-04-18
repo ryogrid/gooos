@@ -329,27 +329,28 @@ Commit-message style follows `pasttodos/TODO_NET2.md` precedent.
 
 ### Userspace
 
-- [ ] `feat(net): user/gooos/net.go TCP SDK` — TCPSocket /
+- [x] `feat(net): user/gooos/net.go TCP SDK` — TCPSocket /
       TCPListen / TCPAccept / TCPConnect / TCPSend /
-      TCPSendAll / TCPRecv / TCPShutdown
-      (`net_tcp_socket_api.md §7`). Inserted between the
-      existing UDP block and config block. Verify:
-      `make -C user` clean.
-- [ ] `test(net): user/cmd/tcpecho/main.go` — userspace echo
-      server on port 8081. Mirrors
-      `user/cmd/udpecho/main.go`. Accept loop;
-      per-connection TCPRecv → TCPSendAll; close on EOF.
-- [ ] `test(net): user/cmd/tcpcli/main.go` — userspace
-      client. `argv = ip port message`. Connect, send, read
-      response, print to stdout.
-- [ ] `feat(net): embed tcpecho.elf + tcpcli.elf in kernel`
-      — add both to `user/Makefile` `CMDS` line; rerun
-      `scripts/embed_elfs.sh`; add two `fsCreate`/`fsWrite`
-      pairs after `src/main.go:482`. Verify: shell `ls`
-      shows both ELFs; `make build` clean.
-- [ ] `chore(net): Makefile run-net hostfwd tcp::10081-:8081`
-      — append to the existing `run-net` hostfwd list.
-      Verify: `make run-net` starts clean.
+      TCPSendAll / TCPRecv / TCPShutdown inserted before
+      the Network Configuration block. Syscall constants
+      sysListen..sysShutdown and SOCK_STREAM / SHUT_* consts
+      declared. Verify: `make -C user` clean.
+- [x] `test(net): user/cmd/tcpecho/main.go` — userspace
+      echo server on port 8081. Accept loop; each
+      connection handled in its own goroutine with
+      TCPRecv → TCPSendAll; close on EOF.
+- [x] `test(net): user/cmd/tcpcli/main.go` — userspace
+      client. Accepts `ip port message`; connects, sends,
+      reads response (2 s timeout), prints, shuts down.
+- [x] `feat(net): embed tcpecho.elf + tcpcli.elf in kernel`
+      — added to `user/Makefile` CMDS; `scripts/embed_elfs.sh`
+      auto-picked them up on the next build; `src/main.go`
+      has `fsCreate/fsWrite` pairs for both. Verify: kernel
+      boots with "tcpecho.elf" and "tcpcli.elf" in the fs
+      listing (visible via `ls` in the shell).
+- [x] `chore(net): Makefile run-net hostfwd tcp::10081-:8081`
+      — appended to the `run-net` hostfwd list; comment
+      block updated. Verify: `make build` clean.
 
 ### Closing
 
