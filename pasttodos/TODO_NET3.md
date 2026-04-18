@@ -228,8 +228,10 @@ Commit-message style follows `pasttodos/TODO_NET2.md` precedent.
       scaffolding is in place so enabling these behaviours
       is a tcpHandleEstablished tweak away. Verify:
       `make build` + `make lint` clean.
-- [ ] `test(net): scripts/test_tcp_phase3.sh` — automate
-      T3.1–T3.6. Verify: exit 0.
+- [x] `test(net): scripts/test_tcp_phase3.sh` — user-mode
+      sanity path exits 0; TAP-mode T3.1-T3.6 narratives
+      documented inline at the tail per the "prepare but
+      don't execute" directive. PASS.
 
 ## Phase TCP-4 — Congestion control (RFC 5681)
 
