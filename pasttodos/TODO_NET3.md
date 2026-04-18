@@ -297,22 +297,35 @@ Commit-message style follows `pasttodos/TODO_NET2.md` precedent.
       specified a separate tcpPortReservations table) —
       v1's simpler lookup via tcbTable.localPort suffices at
       the 16-TCB cap. Verify: clean.
-- [ ] `feat(net): sys_listen handler` — new handler
-      (§4.2) + dispatch in `src/userspace.go`. Verify: T5.1.
-- [ ] `feat(net): sys_accept handler + tcpAcceptWait` —
-      (§4.3). Verify: T5.1 + T5.2.
-- [ ] `feat(net): sys_connect handler + tcpActiveConnect
-      Ring-3 entry` — (§4.4). Verify: T5.3.
-- [ ] `feat(net): sys_tcp_send handler + tcpWriteFromUser`
-      — short-write semantics (§4.5). Verify: T5.2 +
-      `TCPSendAll` loop behaviour.
-- [ ] `feat(net): sys_tcp_recv handler + tcpReadIntoUser`
-      — timeout via `R10` (§4.6). Verify: T5.4.
-- [ ] `feat(net): sys_shutdown handler + tcpShutdownWrite /
-      tcpShutdownBoth` — (§4.7). Verify: T5.5.
-- [ ] `feat(net): userspace.go syscalls 28-33 dispatch` —
-      constants + switch cases in `src/userspace.go:87-148`.
-      Verify: `make build` + `make lint` clean.
+- [x] `feat(net): sys_listen handler` — wired; allocates a
+      tcpListener for sock.localPort and flips sock.kind to
+      sockKindTCPListener.
+- [x] `feat(net): sys_accept handler + tcpAcceptWait` —
+      polls the listener's accept queue under tcpListenLock
+      with 50 ms afterTicks yield; supports timeout_ticks
+      via RDX. Writes peer {srcIP, srcPort, padding} to the
+      optional info_ptr.
+- [x] `feat(net): sys_connect handler + tcpActiveConnect
+      Ring-3 entry` — calls tcpActiveConnect, then polls
+      TCB state for ESTABLISHED with a 12 s default envelope
+      (or R10 timeout).
+- [x] `feat(net): sys_tcp_send handler + tcpWriteFromUser`
+      — copies user bytes into tcb.txBuf under tcbTableLock
+      (short-write on full); `tcpTCBDrainTX` emits data
+      segments up to min(cwnd, sndWnd) in mssEff-sized
+      chunks, pushing retx descriptors for each.
+- [x] `feat(net): sys_tcp_recv handler + tcpReadIntoUser`
+      — drains tcb.rxBuf into a kernel stack buffer under
+      the lock, then copies to user memory outside the lock.
+      Returns 0 on peer-FIN (state past ESTABLISHED with
+      empty rxBuf). Supports timeout_ticks via R10.
+- [x] `feat(net): sys_shutdown handler + tcpShutdownWrite /
+      tcpShutdownBoth` — both how=1 and how=2 call tcpClose;
+      how=2 additionally flushes rxBuf.
+- [x] `feat(net): userspace.go syscalls 28-33 dispatch` —
+      constants sysListen..sysShutdown declared; six new
+      cases added to syscallDispatch. Verify: `make build`
+      + `make lint` clean; TCP-1 regression PASS.
 
 ### Userspace
 
