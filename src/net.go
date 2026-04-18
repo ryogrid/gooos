@@ -48,6 +48,8 @@ func netInit() {
 	serialPrintln("NET: RX dispatch goroutine started")
 
 	go udpEchoServer()
+
+	tcpInit()
 }
 
 // netRxLoop drives the receive side. It drains the RX descriptor

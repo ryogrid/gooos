@@ -70,10 +70,16 @@ Commit-message style follows `pasttodos/TODO_NET2.md` precedent.
       still dropped silently — never respond to RST with
       RST. Verify: `make build` + `make lint` clean. T1.2 +
       T1.7 pcap verification gated behind item 10 (hostfwd).
-- [ ] `feat(net): kernel tcpEchoServer goroutine on port 8080`
-      — spawned from `netInit()` analogous to
-      `udpEchoServer` at `src/udp.go:312-324`. Verify: T1.5
-      host `nc` round-trips a payload.
+- [x] `feat(net): kernel tcpEchoServer goroutine on port 8080`
+      — spawned from `netInit()` via new `tcpInit()`. Polls
+      the TCB table every 50 ms (tcpEchoPollTicks=5 @100 Hz
+      PIT) for ESTABLISHED TCBs with buffered rxBuf bytes;
+      drains up to mssEff bytes per iteration, sends them
+      back as ACK|PSH segments via tcpSendSegment. Drives
+      CLOSE_WAIT → LAST_ACK by emitting FIN|ACK once rxBuf
+      has drained. Verify: `make build` + `make lint` clean.
+      QEMU round-trip verification deferred to item 10
+      (hostfwd) + item 11 (test harness).
 - [ ] `feat(net): netDiag TCP rows` — extend `netDiag()` in
       `src/net.go` to print per-TCB state + listener-table
       snapshot. Verify: T1.3 serial row format.

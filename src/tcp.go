@@ -761,3 +761,116 @@ func tcpSendReset(srcIP uint32, srcPort uint16,
 // and compare via signed subtraction.
 func seqLT(a, b uint32) bool { return int32(a-b) < 0 }
 func seqLE(a, b uint32) bool { return int32(a-b) <= 0 }
+
+// --- kernel echo server (Phase TCP-1 item 8) ---
+
+// tcpEchoListenPort is the fixed port for the kernel TCP echo
+// service. Matches the Makefile run-net hostfwd that maps
+// host 10080 → guest 8080.
+const tcpEchoListenPort uint16 = 8080
+
+// tcpEchoPollTicks is how often the echo goroutine checks for
+// work. At 100 Hz PIT this is ~50 ms — coarse enough to keep
+// CPU use low, fine enough that small-message RTT stays under
+// 100 ms under QEMU user-mode. Rewire to a channel-based wake
+// when flow-control / persist timers land (Phase TCP-3).
+const tcpEchoPollTicks uint64 = 5
+
+// tcpInit registers the kernel echo listener on port 8080 and
+// spawns the echo goroutine. Called from netInit after ARP is
+// ready.
+func tcpInit() {
+	flags := tcpListenLock.Acquire()
+	l := tcpListenerAllocLocked(tcpEchoListenPort, -1)
+	tcpListenLock.Release(flags)
+	if l == nil {
+		serialPrintln("TCP: failed to register echo listener")
+		return
+	}
+	serialPrintln("TCP: listener port=8080 (kernel echo)")
+	go tcpEchoServer()
+}
+
+// tcpEchoServer is the kernel-internal echo service for port
+// 8080. Polls every TCB for bytes pending in rxBuf, sends them
+// back as data segments, and drives the close handshake once
+// the peer has FIN'd and our side has drained.
+func tcpEchoServer() {
+	var buf [tcpScratchSize]byte
+	for {
+		work := tcpEchoPass(buf[:])
+		if !work {
+			<-afterTicks(tcpEchoPollTicks)
+		}
+	}
+}
+
+// tcpEchoPass executes one scan across the TCB table, performing
+// echo and close work. Returns true if any TCB was serviced —
+// that signals the caller to loop immediately without sleeping
+// so bursts drain quickly.
+func tcpEchoPass(scratch []byte) bool {
+	worked := false
+	// Snapshot each candidate under the lock, but do the TX
+	// outside (ipv4Send → netBufLock rank 5).
+	for idx := 0; idx < tcbMax; idx++ {
+		tflags := tcbTableLock.Acquire()
+		t := &tcbTable[idx]
+		if !t.active || t.localPort != tcpEchoListenPort {
+			tcbTableLock.Release(tflags)
+			continue
+		}
+		switch t.state {
+		case tcpStateEstablished:
+			if t.rxBuf.rbLen() == 0 {
+				tcbTableLock.Release(tflags)
+				continue
+			}
+			// Copy out up to mssEff bytes (or scratch capacity).
+			limit := int(t.mssEff)
+			if limit == 0 || limit > len(scratch) {
+				limit = len(scratch)
+			}
+			n := t.rxBuf.rbRead(scratch[:limit])
+			// Let rcvWnd recover — we just drained rxBuf.
+			t.rcvWnd += uint32(n)
+			if t.rcvWnd > uint32(tcpRxBufSize) {
+				t.rcvWnd = uint32(tcpRxBufSize)
+			}
+			tcbTableLock.Release(tflags)
+
+			if n == 0 {
+				continue
+			}
+			ok := tcpSendSegment(t, tcpFlagACK|tcpFlagPSH, nil, scratch[:n])
+			if ok {
+				tflags = tcbTableLock.Acquire()
+				t.sndNxt += uint32(n)
+				tcbTableLock.Release(tflags)
+				worked = true
+			}
+			// On TX failure the echoed bytes are dropped; Phase
+			// TCP-2 retransmission will recover that.
+
+		case tcpStateCloseWait:
+			// Peer closed; if we've drained, send our FIN.
+			if t.rxBuf.rbLen() != 0 {
+				tcbTableLock.Release(tflags)
+				continue
+			}
+			tcbTableLock.Release(tflags)
+			ok := tcpSendSegment(t, tcpFlagFIN|tcpFlagACK, nil, nil)
+			if ok {
+				tflags = tcbTableLock.Acquire()
+				t.sndNxt++ // FIN consumes 1 seq
+				t.state = tcpStateLastAck
+				tcbTableLock.Release(tflags)
+				worked = true
+			}
+
+		default:
+			tcbTableLock.Release(tflags)
+		}
+	}
+	return worked
+}
