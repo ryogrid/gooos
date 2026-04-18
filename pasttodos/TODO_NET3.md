@@ -83,9 +83,11 @@ Commit-message style follows `pasttodos/TODO_NET2.md` precedent.
 - [ ] `feat(net): netDiag TCP rows` — extend `netDiag()` in
       `src/net.go` to print per-TCB state + listener-table
       snapshot. Verify: T1.3 serial row format.
-- [ ] `chore(net): Makefile run-net hostfwd tcp::10080-:8080`
-      — append to the existing `run-net` hostfwd list.
-      Verify: `make run-net` starts clean.
+- [x] `chore(net): Makefile run-net hostfwd tcp::10080-:8080`
+      — appended to the existing `run-net` hostfwd list;
+      comment block in Makefile extended with the TCP row.
+      Verify: `make run-net` parses the target (no syntax
+      change to QEMU invocation).
 - [ ] `test(net): scripts/test_tcp_phase1.sh` — automate
       T1.1–T1.8 with serial-log grep; follows the
       `scripts/test_net.sh` precedent (not `tmp/`). Verify:
