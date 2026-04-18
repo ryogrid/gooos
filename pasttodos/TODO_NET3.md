@@ -274,11 +274,12 @@ Commit-message style follows `pasttodos/TODO_NET2.md` precedent.
 
 ### Kernel side
 
-- [ ] `feat(net): socketFd kind discriminant + sockKind* consts`
-      — extend `socketFd` at `src/netsock.go:90-94`
-      per `net_tcp_socket_api.md §3`. Existing Phase-5 UDP
-      paths observe zero semantic change. Verify:
-      `make build` + TODO_NET2 Part C regression.
+- [x] `feat(net): socketFd kind discriminant + sockKind* consts`
+      — `socketFd` extended with `kind uint8` (default 0 =
+      sockKindUDP so all existing UDP allocations are
+      unchanged) plus tcpListener/tcpTCB fields. Phase-5 UDP
+      semantics preserved bit-for-bit. Verify: `make build`
+      + `make lint` clean; TCP-1 regression PASS.
 - [ ] `feat(net): sys_socket branch for SOCK_STREAM` —
       extend `sysSocketHandler` at
       `src/netsock.go:138-155` (§4.0). Verify:

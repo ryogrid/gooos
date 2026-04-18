@@ -83,14 +83,40 @@ func userBufInRange(ptr, length uintptr) bool {
 	return end <= userAddrMax
 }
 
+// sockKind* discriminates UDP from TCP socketFds. Default zero
+// value (sockKindUDP) preserves Phase-5 UDP semantics for every
+// existing call site that allocates `&socketFd{...}` without
+// setting kind.
+const (
+	sockKindUDP         uint8 = 0
+	sockKindTCPIdle     uint8 = 1 // post-Socket, pre-listen/connect
+	sockKindTCPListener uint8 = 2 // after sys_listen
+	sockKindTCPConn     uint8 = 3 // after sys_connect or sys_accept
+)
+
 // socketFd is the FileDesc implementation behind every Ring-3 socket.
-// recvCh is owned by the socketFd — udpBindWithChannel is given the
-// same channel at bind time, so when the socket closes, unbind
-// removes the kernel reference and the channel becomes garbage.
+//
+// For UDP (kind == sockKindUDP), recvCh is the bound receive queue
+// owned by the socket; udpBindWithChannel is given the same channel
+// at bind time so when the socket closes, unbind removes the kernel
+// reference and the channel becomes garbage.
+//
+// For TCP sockets (kind == sockKindTCP*), tcpTCB points at the TCB
+// in the kernel-wide pool; tcpListener points at the listener
+// entry for sockKindTCPListener sockets. The recvCh/localPort UDP
+// fields are unused.
 type socketFd struct {
+	kind uint8 // discriminant; see sockKind* constants
+
+	// UDP fields (valid when kind == sockKindUDP).
 	localPort uint16
 	bound     bool
 	recvCh    chan UDPDatagram
+
+	// TCP fields (valid when kind ∈ {sockKindTCPIdle,
+	// sockKindTCPListener, sockKindTCPConn}).
+	tcpListener *tcpListener
+	tcpTCB      *TCB
 }
 
 // Read is defined so socketFd satisfies FileDesc. The real receive
