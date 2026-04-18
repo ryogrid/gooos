@@ -472,7 +472,15 @@ func tcpHandle(hdr IPv4Header, inner []byte) {
 		tcpTryPassiveOpen(hdr, h, payload)
 		return
 	}
-	// No match; drop for now (item 7 adds RST).
+	// No match and not a passive-open SYN. RFC 793 §3.4: reply
+	// with RST unless the incoming segment already has RST.
+	if h.Flags&tcpFlagRST == 0 {
+		tcpSendReset(
+			hdr.DstIP, h.DstPort,
+			hdr.SrcIP, h.SrcPort,
+			h.Ack, h.Seq, h.Flags, len(payload),
+		)
+	}
 }
 
 // tcpTryPassiveOpen handles an incoming SYN against the listener
@@ -487,11 +495,21 @@ func tcpTryPassiveOpen(hdr IPv4Header, h TCPHeader, payload []byte) {
 	l := tcpListenerLookupLocked(h.DstPort)
 	if l == nil {
 		tcpListenLock.Release(lflags)
-		return // no listener → drop (item 7 will RST here)
+		tcpSendReset(
+			hdr.DstIP, h.DstPort,
+			hdr.SrcIP, h.SrcPort,
+			h.Ack, h.Seq, h.Flags, len(payload),
+		)
+		return
 	}
 	// Reject if pending+accept already at depth cap.
 	if l.nPending+l.nAccept >= tcpAcceptQueueDepth {
 		tcpListenLock.Release(lflags)
+		tcpSendReset(
+			hdr.DstIP, h.DstPort,
+			hdr.SrcIP, h.SrcPort,
+			h.Ack, h.Seq, h.Flags, len(payload),
+		)
 		return
 	}
 	tcpListenLock.Release(lflags)
@@ -499,7 +517,13 @@ func tcpTryPassiveOpen(hdr IPv4Header, h TCPHeader, payload []byte) {
 	// Allocate TCB.
 	t := tcbAlloc(hdr.DstIP, h.DstPort, hdr.SrcIP, h.SrcPort)
 	if t == nil {
-		return // TCB table full → silent drop (item 7 adds RST)
+		// TCB-table exhaustion → send RST so the peer can retry.
+		tcpSendReset(
+			hdr.DstIP, h.DstPort,
+			hdr.SrcIP, h.SrcPort,
+			h.Ack, h.Seq, h.Flags, len(payload),
+		)
+		return
 	}
 
 	// Parse peer options for MSS.
@@ -692,6 +716,44 @@ func tcpHandleLastAck(t *TCB, h TCPHeader, payload []byte) {
 // FIN acknowledgement. Caller must NOT hold tcbTableLock.
 func tcpSendPureACK(t *TCB) bool {
 	return tcpSendSegment(t, tcpFlagACK, nil, nil)
+}
+
+// tcpSendReset emits a stateless RST for a segment that has no
+// matching TCB. Per RFC 793 §3.4:
+//   - incoming RST=1: caller must NOT invoke this (drop silently).
+//   - incoming ACK=1: reply carries RST only, seq=inAck.
+//   - incoming ACK=0: reply carries RST|ACK, seq=0,
+//                     ack=inSeq+segLen.
+// srcIP/srcPort are the local endpoint (i.e. the incoming
+// segment's DstIP/DstPort) and dstIP/dstPort are the peer's.
+func tcpSendReset(srcIP uint32, srcPort uint16,
+	dstIP uint32, dstPort uint16,
+	inAck, inSeq uint32, inFlags uint8, inPayloadLen int) bool {
+	var seq, ack uint32
+	var flags uint8
+	if inFlags&tcpFlagACK != 0 {
+		flags = tcpFlagRST
+		seq = inAck
+		ack = 0
+	} else {
+		flags = tcpFlagRST | tcpFlagACK
+		seq = 0
+		ack = inSeq + segLen(inFlags, inPayloadLen)
+	}
+	var buf [tcpHeaderMinSize]byte
+	n := tcpBuildSegment(
+		buf[:],
+		srcPort, dstPort,
+		seq, ack,
+		flags,
+		0, // zero window on a stateless RST
+		nil, nil,
+	)
+	if n == 0 {
+		return false
+	}
+	tcpComputeAndSetChecksum(srcIP, dstIP, buf[:n])
+	return ipv4Send(ipProtoTCP, dstIP, buf[:n])
 }
 
 // seqLT / seqLE are RFC 793 §3.3 modular sequence-number

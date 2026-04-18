@@ -61,10 +61,15 @@ Commit-message style follows `pasttodos/TODO_NET2.md` precedent.
       item 5 because item 5's state machine depends on this
       primitive — TODO order preserved for traceability but
       commit ordering respects the actual dependency.)
-- [ ] `feat(net): tcpRejectSegment + RST-on-no-match` —
-      unacceptable-segment path (RFC 793 §3.9) and the
-      RST-on-no-TCB/no-listener branch
-      (`net_tcp_segment_io.md §7`). Verify: T1.2 + T1.7.
+- [x] `feat(net): tcpRejectSegment + RST-on-no-match` —
+      stateless RST helper `tcpSendReset` covering RFC 793
+      §3.4 reply rules (seq=inAck when incoming ACK=1, else
+      seq=0/ack=inSeq+segLen). Wired into tcpHandle (no TCB
+      + no-SYN path), tcpTryPassiveOpen (no listener,
+      listener-queue full, TCB-table full). Incoming RST is
+      still dropped silently — never respond to RST with
+      RST. Verify: `make build` + `make lint` clean. T1.2 +
+      T1.7 pcap verification gated behind item 10 (hostfwd).
 - [ ] `feat(net): kernel tcpEchoServer goroutine on port 8080`
       — spawned from `netInit()` analogous to
       `udpEchoServer` at `src/udp.go:312-324`. Verify: T1.5
