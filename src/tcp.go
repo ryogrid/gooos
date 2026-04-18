@@ -45,6 +45,35 @@ type tcpRingBuf struct {
 	count uint32 // bytes currently buffered
 }
 
+// tcpMaxListeners caps concurrent passive-open ports.
+// tcpAcceptQueueDepth caps pending + accepted connections per
+// listener. See TD2 in impldoc/net_tcp_overview.md §5.
+const (
+	tcpMaxListeners     = 4
+	tcpAcceptQueueDepth = 8
+)
+
+// tcpListener tracks one passive-open port. Protected by
+// tcpListenLock (rank 10). See net_tcp_state_machine.md §6.
+type tcpListener struct {
+	port    uint16
+	active  bool
+	owner   int // pid; -1 = kernel-internal
+
+	// TCBs in SYN_RECEIVED, waiting for the third-handshake ACK.
+	pending  [tcpAcceptQueueDepth]*TCB
+	nPending int
+
+	// TCBs in ESTABLISHED (or beyond), waiting for accept().
+	accept  [tcpAcceptQueueDepth]*TCB
+	nAccept int
+}
+
+var (
+	tcpListeners  [tcpMaxListeners]tcpListener
+	tcpListenLock Spinlock // lock ordering rank 10
+)
+
 // TCB — Transmission Control Block. Protected by tcbTableLock
 // (rank 9). One TCB per active connection; fixed-size table
 // keeps memory bounded and avoids allocation on the RX path.
@@ -58,6 +87,10 @@ type TCB struct {
 
 	// State.
 	state tcbState
+
+	// Listener that spawned us (non-nil only for passive-open
+	// TCBs). Used to splice into pending → accept queues.
+	listener *tcpListener
 
 	// Send sequence space (RFC 793 §3.2).
 	sndUna uint32 // oldest unacknowledged sequence number
@@ -289,11 +322,380 @@ func tcpSendSegment(t *TCB, flags uint8, options, payload []byte) bool {
 	return ipv4Send(ipProtoTCP, t.remoteIP, buf[:n])
 }
 
-// tcpHandle is the RX dispatcher for TCP segments, called from
-// ipv4Handle's protocol switch (src/ipv4.go). Full state-
-// machine dispatch lands in the next Phase TCP-1 commit; this
-// interim version silently drops segments (no RST yet).
-func tcpHandle(hdr IPv4Header, inner []byte) {
-	_ = hdr
-	_ = inner
+// --- listener table helpers (caller must hold tcpListenLock) ---
+
+// tcpListenerAllocLocked claims a free listener slot for `port`
+// and pid `owner`. Returns nil if the port is already taken or
+// the table is full. Caller MUST hold tcpListenLock.
+func tcpListenerAllocLocked(port uint16, owner int) *tcpListener {
+	for i := 0; i < tcpMaxListeners; i++ {
+		l := &tcpListeners[i]
+		if l.active && l.port == port {
+			return nil
+		}
+	}
+	for i := 0; i < tcpMaxListeners; i++ {
+		l := &tcpListeners[i]
+		if !l.active {
+			l.port = port
+			l.owner = owner
+			l.active = true
+			l.nPending = 0
+			l.nAccept = 0
+			return l
+		}
+	}
+	return nil
 }
+
+// tcpListenerLookupLocked returns the active listener bound to
+// `port`, or nil. Caller MUST hold tcpListenLock.
+func tcpListenerLookupLocked(port uint16) *tcpListener {
+	for i := 0; i < tcpMaxListeners; i++ {
+		l := &tcpListeners[i]
+		if l.active && l.port == port {
+			return l
+		}
+	}
+	return nil
+}
+
+// tcpListenerPushPending appends a SYN_RECEIVED TCB to the
+// listener's pending queue. Returns false if the queue is full.
+// Caller MUST hold tcpListenLock.
+func tcpListenerPushPending(l *tcpListener, t *TCB) bool {
+	if l.nPending+l.nAccept >= tcpAcceptQueueDepth {
+		return false
+	}
+	l.pending[l.nPending] = t
+	l.nPending++
+	return true
+}
+
+// tcpListenerPromote splices a TCB from pending → accept on the
+// third-handshake ACK. Returns false if the TCB isn't in
+// pending. Caller MUST hold tcpListenLock.
+func tcpListenerPromote(l *tcpListener, t *TCB) bool {
+	idx := -1
+	for i := 0; i < l.nPending; i++ {
+		if l.pending[i] == t {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return false
+	}
+	// Shift left.
+	for i := idx; i < l.nPending-1; i++ {
+		l.pending[i] = l.pending[i+1]
+	}
+	l.pending[l.nPending-1] = nil
+	l.nPending--
+	// Append to accept.
+	if l.nAccept >= tcpAcceptQueueDepth {
+		return false
+	}
+	l.accept[l.nAccept] = t
+	l.nAccept++
+	return true
+}
+
+// tcpListenerRemove drops a TCB from either queue on a reset
+// path. Caller MUST hold tcpListenLock.
+func tcpListenerRemove(l *tcpListener, t *TCB) {
+	for i := 0; i < l.nPending; i++ {
+		if l.pending[i] == t {
+			for j := i; j < l.nPending-1; j++ {
+				l.pending[j] = l.pending[j+1]
+			}
+			l.pending[l.nPending-1] = nil
+			l.nPending--
+			return
+		}
+	}
+	for i := 0; i < l.nAccept; i++ {
+		if l.accept[i] == t {
+			for j := i; j < l.nAccept-1; j++ {
+				l.accept[j] = l.accept[j+1]
+			}
+			l.accept[l.nAccept-1] = nil
+			l.nAccept--
+			return
+		}
+	}
+}
+
+// --- state-machine dispatch ---
+
+// segLen returns the RFC 793 "sequence number space" consumed
+// by a segment: payload bytes plus 1 for each of SYN/FIN.
+func segLen(flags uint8, payloadLen int) uint32 {
+	n := uint32(payloadLen)
+	if flags&tcpFlagSYN != 0 {
+		n++
+	}
+	if flags&tcpFlagFIN != 0 {
+		n++
+	}
+	return n
+}
+
+// tcpHandle is the RX dispatcher for TCP segments, called from
+// ipv4Handle's protocol switch (src/ipv4.go). Parses the
+// segment, verifies the checksum, looks up the owning TCB (or
+// listener), and dispatches to a per-state handler. Segments
+// that don't match any TCB or listener are silently dropped at
+// this stage; RST-on-no-match lands in Phase TCP-1 item 7
+// (tcpRejectSegment). Runs from the netRxLoop goroutine, not
+// from the e1000 ISR itself — allocation is allowed.
+func tcpHandle(hdr IPv4Header, inner []byte) {
+	if len(inner) < tcpHeaderMinSize {
+		return
+	}
+	if !tcpChecksumVerify(hdr.SrcIP, hdr.DstIP, inner) {
+		return
+	}
+	h, payload, ok := tcpParse(inner)
+	if !ok {
+		return
+	}
+	// Look up an existing TCB first (handles retransmits of the
+	// initial SYN and all post-handshake segments).
+	t := tcbLookup(hdr.DstIP, h.DstPort, hdr.SrcIP, h.SrcPort)
+	if t != nil {
+		tcpDispatchToTCB(t, h, payload)
+		return
+	}
+	// No TCB — try the listener table for passive open on SYN.
+	if h.Flags&tcpFlagSYN != 0 && h.Flags&tcpFlagACK == 0 {
+		tcpTryPassiveOpen(hdr, h, payload)
+		return
+	}
+	// No match; drop for now (item 7 adds RST).
+}
+
+// tcpTryPassiveOpen handles an incoming SYN against the listener
+// table. Allocates a fresh TCB, negotiates MSS from the SYN's
+// options, sends SYN|ACK, and parks the TCB on the listener's
+// pending queue.
+func tcpTryPassiveOpen(hdr IPv4Header, h TCPHeader, payload []byte) {
+	_ = payload // no payload expected on a pure SYN
+
+	// Find listener under tcpListenLock.
+	lflags := tcpListenLock.Acquire()
+	l := tcpListenerLookupLocked(h.DstPort)
+	if l == nil {
+		tcpListenLock.Release(lflags)
+		return // no listener → drop (item 7 will RST here)
+	}
+	// Reject if pending+accept already at depth cap.
+	if l.nPending+l.nAccept >= tcpAcceptQueueDepth {
+		tcpListenLock.Release(lflags)
+		return
+	}
+	tcpListenLock.Release(lflags)
+
+	// Allocate TCB.
+	t := tcbAlloc(hdr.DstIP, h.DstPort, hdr.SrcIP, h.SrcPort)
+	if t == nil {
+		return // TCB table full → silent drop (item 7 adds RST)
+	}
+
+	// Parse peer options for MSS.
+	peerMSS := tcpDefaultMSS
+	if h.OptLen > 0 {
+		peerMSS, _ = tcpParseOptions(h.Options[:h.OptLen])
+	}
+
+	// Initialise TCB under tcbTableLock.
+	iflags := tcbTableLock.Acquire()
+	t.state = tcpStateSynReceived
+	t.iss = isnNext()
+	t.irs = h.Seq
+	t.rcvNxt = h.Seq + 1 // past the SYN
+	t.rcvWnd = uint32(tcpRxBufSize)
+	t.sndUna = t.iss
+	t.sndNxt = t.iss + 1 // past our SYN
+	t.sndWnd = uint32(h.Window)
+	t.sndWl1 = h.Seq
+	t.sndWl2 = 0
+	t.mssLocal = tcpDefaultMSS
+	t.mssPeer = peerMSS
+	if peerMSS < t.mssLocal {
+		t.mssEff = peerMSS
+	} else {
+		t.mssEff = t.mssLocal
+	}
+	t.listener = l
+	tcbTableLock.Release(iflags)
+
+	// Attach to listener's pending queue.
+	lflags = tcpListenLock.Acquire()
+	if !tcpListenerPushPending(l, t) {
+		tcpListenLock.Release(lflags)
+		tcbFree(t)
+		return
+	}
+	tcpListenLock.Release(lflags)
+
+	// Build outbound SYN|ACK with the MSS option. sndNxt already
+	// sits one past iss, but the SYN|ACK itself occupies iss —
+	// temporarily roll back for the send.
+	iflags = tcbTableLock.Acquire()
+	origSndNxt := t.sndNxt
+	t.sndNxt = t.iss
+	tcbTableLock.Release(iflags)
+
+	var mssOpt [4]byte
+	tcpBuildMSSOption(mssOpt[:], t.mssLocal)
+	ok := tcpSendSegment(t, tcpFlagSYN|tcpFlagACK, mssOpt[:], nil)
+
+	iflags = tcbTableLock.Acquire()
+	t.sndNxt = origSndNxt // restore past-SYN cursor
+	tcbTableLock.Release(iflags)
+
+	if !ok {
+		// SYN|ACK TX failed; unwind.
+		lflags = tcpListenLock.Acquire()
+		tcpListenerRemove(l, t)
+		tcpListenLock.Release(lflags)
+		tcbFree(t)
+	}
+}
+
+// tcpDispatchToTCB routes a parsed segment to the per-state
+// handler. The TCB pointer stays valid for the duration of the
+// call (no other goroutine frees it while we hold the segment
+// in hand; worst case a concurrent syscall observes a stale
+// state enum, which is benign because each handler re-checks
+// under tcbTableLock before mutating).
+func tcpDispatchToTCB(t *TCB, h TCPHeader, payload []byte) {
+	switch t.state {
+	case tcpStateSynReceived:
+		tcpHandleSynReceived(t, h, payload)
+	case tcpStateEstablished:
+		tcpHandleEstablished(t, h, payload)
+	case tcpStateCloseWait:
+		tcpHandleCloseWait(t, h, payload)
+	case tcpStateLastAck:
+		tcpHandleLastAck(t, h, payload)
+	default:
+		// Other states (SYN_SENT / FIN_WAIT_* / CLOSING /
+		// TIME_WAIT / CLOSED) land in Phase TCP-2.
+	}
+}
+
+// tcpHandleSynReceived: SYN_RECEIVED + ACK (of our SYN|ACK) →
+// ESTABLISHED. Moves TCB from pending to accept queue. Other
+// incoming segments here are ignored for now; item 7 refines.
+func tcpHandleSynReceived(t *TCB, h TCPHeader, payload []byte) {
+	if h.Flags&tcpFlagACK == 0 {
+		return
+	}
+	// Validate ACK covers our SYN.
+	if h.Ack != t.sndNxt {
+		return
+	}
+	iflags := tcbTableLock.Acquire()
+	t.state = tcpStateEstablished
+	t.sndUna = h.Ack
+	t.sndWnd = uint32(h.Window)
+	t.sndWl1 = h.Seq
+	t.sndWl2 = h.Ack
+	l := t.listener
+	tcbTableLock.Release(iflags)
+
+	if l != nil {
+		lflags := tcpListenLock.Acquire()
+		tcpListenerPromote(l, t)
+		tcpListenLock.Release(lflags)
+	}
+	// If the third-handshake segment also carried data, run the
+	// ESTABLISHED-state receive path over it.
+	if len(payload) > 0 || h.Flags&tcpFlagFIN != 0 {
+		tcpHandleEstablished(t, h, payload)
+	}
+}
+
+// tcpHandleEstablished: ESTABLISHED data + ACK handling. Data
+// is copied into rxBuf and an ACK is sent immediately (delayed-
+// ACK arrives in Phase TCP-3). FIN transitions into CLOSE_WAIT.
+func tcpHandleEstablished(t *TCB, h TCPHeader, payload []byte) {
+	// Only accept in-order data (out-of-order dropped per v1
+	// non-goal in overview §1.2).
+	iflags := tcbTableLock.Acquire()
+	if h.Seq != t.rcvNxt {
+		// Out-of-order — send a pure ACK to help peer recover.
+		tcbTableLock.Release(iflags)
+		tcpSendPureACK(t)
+		return
+	}
+	// Update send-window tracking from this segment's ACK/window.
+	if h.Flags&tcpFlagACK != 0 {
+		if seqLE(t.sndUna, h.Ack) && seqLE(h.Ack, t.sndNxt) {
+			t.sndUna = h.Ack
+		}
+		if seqLT(t.sndWl1, h.Seq) ||
+			(t.sndWl1 == h.Seq && seqLE(t.sndWl2, h.Ack)) {
+			t.sndWnd = uint32(h.Window)
+			t.sndWl1 = h.Seq
+			t.sndWl2 = h.Ack
+		}
+	}
+	// Accept in-order payload bytes into rxBuf.
+	if len(payload) > 0 {
+		n := t.rxBuf.rbWrite(payload)
+		t.rcvNxt += uint32(n)
+		// rcvWnd shrinks by what we just buffered.
+		if t.rcvWnd > uint32(n) {
+			t.rcvWnd -= uint32(n)
+		} else {
+			t.rcvWnd = 0
+		}
+	}
+	// FIN consumes one sequence number.
+	fin := h.Flags&tcpFlagFIN != 0
+	if fin {
+		t.rcvNxt++
+		t.state = tcpStateCloseWait
+	}
+	tcbTableLock.Release(iflags)
+
+	// Acknowledge. This is a pure ACK (no payload of our own
+	// yet — the echo goroutine in item 8 sends data-bearing
+	// segments).
+	tcpSendPureACK(t)
+}
+
+// tcpHandleCloseWait: peer has already FIN'd; we're waiting for
+// local close. Retransmitted data / FIN is ACKed; nothing else.
+func tcpHandleCloseWait(t *TCB, h TCPHeader, payload []byte) {
+	_ = payload
+	if h.Flags&tcpFlagFIN != 0 {
+		// Peer retransmit of FIN — just re-ACK rcvNxt.
+		tcpSendPureACK(t)
+	}
+}
+
+// tcpHandleLastAck: waiting for ACK of our FIN. On match, free
+// the TCB. Other segments ignored.
+func tcpHandleLastAck(t *TCB, h TCPHeader, payload []byte) {
+	_ = payload
+	if h.Flags&tcpFlagACK != 0 && h.Ack == t.sndNxt {
+		tcbFree(t)
+	}
+}
+
+// tcpSendPureACK emits an ACK segment with no payload and no
+// options. Used for rcvNxt advance + out-of-order rejection +
+// FIN acknowledgement. Caller must NOT hold tcbTableLock.
+func tcpSendPureACK(t *TCB) bool {
+	return tcpSendSegment(t, tcpFlagACK, nil, nil)
+}
+
+// seqLT / seqLE are RFC 793 §3.3 modular sequence-number
+// comparisons. Interpret the 32-bit sequence space as a circle
+// and compare via signed subtraction.
+func seqLT(a, b uint32) bool { return int32(a-b) < 0 }
+func seqLE(a, b uint32) bool { return int32(a-b) <= 0 }

@@ -41,12 +41,18 @@ Commit-message style follows `pasttodos/TODO_NET2.md` precedent.
       rbReset. Verify: `make build` + `make lint` +
       `verify-globals` clean. 16 TCB × 16 KiB buffers =
       256 KiB static .bss; well under kernel-heap budget.
-- [ ] `feat(net): TCP state machine dispatch + LISTEN path` —
+- [x] `feat(net): TCP state machine dispatch + LISTEN path` —
       handlers for CLOSED, LISTEN, SYN_RECEIVED, ESTABLISHED,
       CLOSE_WAIT, LAST_ACK states (`net_tcp_state_machine.md
-      §3.2`); listener table + accept queue (§6-§7). Add
-      `tcpListenLock` at rank 10 to `src/spinlock.go`.
-      Verify: `make build` clean; T1.3 LISTEN creation log.
+      §3.2`); listener table + accept queue (§6-§7). Adds
+      `tcpListenLock` at rank 10 to `src/spinlock.go`;
+      listener allocator + pending/accept queue helpers;
+      `tcpTryPassiveOpen` wiring SYN → SYN_RECEIVED →
+      SYN|ACK; ESTABLISHED handler copies payload into rxBuf
+      and emits pure ACK; FIN → CLOSE_WAIT; LAST_ACK → ACK →
+      free. Verify: `make build` + `make lint` clean. T1.3
+      LISTEN-creation serial row is gated behind item 9
+      netDiag work.
 - [x] `feat(net): ISN generator + tcpSendSegment` —
       `isnNext()` (§5) and the shared send path
       (`net_tcp_segment_io.md §6`). Send path uses the 3-arg
