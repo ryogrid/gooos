@@ -127,6 +127,12 @@ type TCB struct {
 	xmitCountHead       uint8  // retransmits of head-of-queue
 	rtoGoroutineRunning bool
 
+	// rtoFastRetx: true when the next tcpRTOFire was forced by
+	// fast-retransmit (3 dup ACKs). In that case tcpRTOFire
+	// skips the RFC 5681 cwnd-to-1-MSS collapse — CC already
+	// set cwnd = ssthresh + 3*mss via tcpCCOnDupAck.
+	rtoFastRetx bool
+
 	// RTT estimator state (RFC 6298 — see src/tcp_rtt.go).
 	// srttTicks is scaled ×8, rttvarTicks ×4; rttInitialized
 	// distinguishes "never sampled" (use init path) from
@@ -753,9 +759,13 @@ func tcpHandleEstablished(t *TCB, h TCPHeader, payload []byte) {
 			// scan pass (within 50 ms). Using the scanner avoids
 			// an inline retransmit while we hold tcbTableLock —
 			// tcpRTOFire releases the lock before calling
-			// ipv4Send, which is the right ordering.
+			// ipv4Send, which is the right ordering. The
+			// rtoFastRetx flag tells tcpRTOFire to skip its
+			// cwnd-to-1-MSS collapse — CC already picked the
+			// right cwnd via tcpCCOnDupAck.
 			t.rtoDeadline = 1 // any past tick
 			t.xmitCountHead = 0
+			t.rtoFastRetx = true
 		}
 	} else {
 		tcpAckUpdate(t, h) // handles non-dup ACKs

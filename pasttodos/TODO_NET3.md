@@ -256,9 +256,16 @@ Commit-message style follows `pasttodos/TODO_NET2.md` precedent.
       pass retransmits the head within ~50 ms (avoids inline
       TX while holding rank-9 lock). Verify: `make build` +
       `make lint` clean; TCP-1 regression still PASS.
-- [ ] `feat(net): RTO → cwnd collapse` — wire into the RTO
-      fire path from `net_tcp_timers_and_rtt.md §3.2`.
-      Verify: T4.5.
+- [x] `feat(net): RTO → cwnd collapse` — `tcpRTOFire`
+      now calls `tcpCCOnRTO(t)` before applying the
+      RFC 6298 exponential back-off, so cwnd collapses to
+      1×mss and ssthresh = max(flight/2, 2*mss) on genuine
+      timeout. A new `rtoFastRetx` flag lets the scanner
+      distinguish forced-by-dup-ACK fires from real RTO
+      timeouts; in the fast-retransmit case the collapse is
+      skipped because tcpCCOnDupAck already picked cwnd =
+      ssthresh + 3*mss. Verify: `make build` + `make lint`
+      clean; TCP-1 regression still PASS.
 - [ ] `test(net): scripts/test_tcp_phase4.sh` — automate
       T4.1–T4.5 (T4.6 iperf3 deferred per design doc).
       Verify: exit 0.

@@ -235,6 +235,14 @@ func tcpRTOFire(t *TCB) {
 	head.xmitCount++
 	head.sentTicks = pitTicks
 	t.xmitCountHead++
+	// RFC 5681 §3.1: genuine RTO fire collapses cwnd. Skip the
+	// collapse when the scanner was forced by fast retransmit —
+	// tcpCCOnDupAck already set cwnd = ssthresh + 3*mss.
+	if t.rtoFastRetx {
+		t.rtoFastRetx = false
+	} else {
+		tcpCCOnRTO(t)
+	}
 	// RFC 6298 §5.5: exponential back-off, clamped to RTO max.
 	t.rtoTicks *= 2
 	if t.rtoTicks > tcpRTOMaxTicks {
