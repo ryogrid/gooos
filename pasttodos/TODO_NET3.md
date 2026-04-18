@@ -25,12 +25,15 @@ Commit-message style follows `pasttodos/TODO_NET2.md` precedent.
       parse/build round-trip test deferred to the
       `test_tcp_phase1.sh` harness that exercises these
       functions end-to-end via real segments.
-- [ ] `feat(net): TCB + tcbTable + tcbAlloc/Free/Lookup` —
+- [x] `feat(net): TCB + tcbTable + tcbAlloc/Free/Lookup` —
       new `src/tcp.go` with TCB struct per
       `net_tcp_state_machine.md §2`, 16-entry table, and
       `tcbTableLock` (rank 9). Extend the lock-ordering
       comment in `src/spinlock.go:7-15` to include rank 9.
-      Verify: `make lint` + `make build` clean.
+      Verify: `make lint` + `make build` clean. Minimum-
+      viable TCB fields landed; state-machine / buffer /
+      timer / CC fields grow into this struct in subsequent
+      TCP-1..TCP-4 items.
 - [ ] `feat(net): tcpRingBuf + rbWrite/rbRead/rbPeek` —
       byte-granular FIFO ring per `net_tcp_buffers.md §3`.
       Embedded in TCB as txBuf + rxBuf (8 KiB each). Verify:

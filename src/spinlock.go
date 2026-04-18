@@ -13,6 +13,7 @@
 //   6. arpLock        — ARP cache (src/arp.go)
 //   7. udpLock        — UDP bind table (src/udp.go)
 //   8. statsLock      — network statistics counters (src/netstats.go)
+//   9. tcbTableLock   — TCP TCB table (src/tcp.go)
 //
 // A function holding lock N must not acquire lock M where M < N.
 //
