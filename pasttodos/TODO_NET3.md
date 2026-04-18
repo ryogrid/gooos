@@ -266,9 +266,9 @@ Commit-message style follows `pasttodos/TODO_NET2.md` precedent.
       skipped because tcpCCOnDupAck already picked cwnd =
       ssthresh + 3*mss. Verify: `make build` + `make lint`
       clean; TCP-1 regression still PASS.
-- [ ] `test(net): scripts/test_tcp_phase4.sh` — automate
-      T4.1–T4.5 (T4.6 iperf3 deferred per design doc).
-      Verify: exit 0.
+- [x] `test(net): scripts/test_tcp_phase4.sh` — user-mode
+      sanity path PASSes; TAP-mode T4.1-T4.5 narrative
+      documented inline. Verified PASS.
 
 ## Phase TCP-5 — Socket API + Ring-3 SDK + demos + README
 
