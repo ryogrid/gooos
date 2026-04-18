@@ -7,20 +7,24 @@ Commit-message style follows `pasttodos/TODO_NET2.md` precedent.
 
 ## Phase TCP-1 — Passive open + kernel echo server
 
-- [ ] `feat(net): ipProtoTCP constant + ipv4Handle case` — add
+- [x] `feat(net): ipProtoTCP constant + ipv4Handle case` — add
       `ipProtoTCP = uint8(6)` near `src/ipv4.go:19` (alongside
       `ipProtoICMP` / `ipProtoUDP`) and insert `case
       ipProtoTCP: tcpHandle(hdr, inner)` in the demux switch
       at `src/ipv4.go:205-212`. Verify: `make build` clean;
-      a TCP segment to the guest with no listener yet elicits
-      a RST (T1.2).
-- [ ] `feat(net): tcp_segment.go parse/build + checksum` —
+      RST-on-no-match verification moved to item 7 below
+      (this item only lands the const + switch case + a no-op
+      `src/tcp.go` stub so the build stays green).
+      Commit `1eceb97` — `make build` + `make lint` clean.
+- [x] `feat(net): tcp_segment.go parse/build + checksum` —
       new `src/tcp_segment.go`. Exports `tcpParse`,
       `tcpBuildSegment`, `tcpParseOptions`,
       `tcpBuildMSSOption`, `tcpChecksum`,
       `tcpChecksumVerify`, `tcpComputeAndSetChecksum`.
-      Verify: `make build` clean; round-trip test (build a
-      segment, parse it back, fields match).
+      Verify: `make build` + `make lint` clean. Unit-level
+      parse/build round-trip test deferred to the
+      `test_tcp_phase1.sh` harness that exercises these
+      functions end-to-end via real segments.
 - [ ] `feat(net): TCB + tcbTable + tcbAlloc/Free/Lookup` —
       new `src/tcp.go` with TCB struct per
       `net_tcp_state_machine.md §2`, 16-entry table, and
