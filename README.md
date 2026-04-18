@@ -48,7 +48,31 @@ An experimental x86_64 operating system written in **Go (TinyGo) + GNU assembly*
 
 gooos talks UDP/IP/Ethernet AND TCP/IP to the host through the
 emulated Intel 82540EM NIC. Five end-to-end paths are manually
-verifiable:
+verifiable.
+
+**Before you start — two easy-to-trip-over gotchas:**
+
+1. **The gooos shell lives on the serial line, not the QEMU
+   window.** `make run-net` launches QEMU with `-serial stdio`.
+   That means the gooos shell prompt, boot log, and all stdout
+   appear in **the terminal where you ran `make run-net`** —
+   _not_ in the VGA window QEMU pops up. The VGA window shows a
+   few boot banners and then sits quietly; it is not the
+   interactive console. Type commands in the terminal.
+   (Keystrokes typed in the QEMU window are delivered to the
+   kernel via PS/2 IRQ and do reach the shell, but the echoed
+   output still goes to serial, so typing there looks like
+   nothing is happening.)
+2. **Host-side `nc` needs a *second* terminal.** Terminal 1 is
+   occupied by `make run-net` / the gooos shell. Open a second
+   host shell and run `nc` from there. Also wait for the serial
+   log in terminal 1 to show `TCP: listener port=8080 (kernel
+   echo)` (Path D) or `tcpecho: starting userspace echo on TCP
+   port 8081` (Path E) before invoking `nc` — hitting a port
+   before the listener is up will just RST-close the connection
+   and `nc` exits silently.
+
+The five paths:
 
 | Path | Listener | Host-side port | What it exercises |
 |---|---|---|---|
@@ -188,22 +212,33 @@ A `netDiag` dump (boot-time or wire a user command) now shows
 
 #### D. Kernel-builtin TCP echo (port 8080)
 
-No shell commands needed — `tcpInit` registers the listener and
-spawns `tcpEchoServer` during `netInit` at boot. From a second
-host terminal:
+No gooos-shell commands needed — `tcpInit` registers the
+listener and spawns `tcpEchoServer` during `netInit` at boot.
 
 ```
-$ make run-net            # terminal 1: boots gooos, shell prompt on stdio
+# Terminal 1 — boot gooos (leave this running):
+$ make run-net
+...
+PCI: found e1000 at 00:03.0 ...
+e1000: link up
+NET: initialized IP=10.0.2.15 gw=10.0.2.2
+...
+TCP: listener port=8080 (kernel echo)       <-- wait for this
 
-$ echo -n 'hello-tcp' | nc -w 3 127.0.0.1 10080    # terminal 2
+# Terminal 2 — from any host shell, round-trip a payload:
+$ echo -n 'hello-tcp' | nc -w 3 127.0.0.1 10080
 hello-tcp
 ```
 
-Exercises the full 3-way handshake (SYN → SYN|ACK → ACK), the
-echo data path, and the close handshake (peer FIN → our ACK →
-our FIN → peer ACK → CLOSED). `netDiag` auto-dump (~5 s after
-boot, or on re-run after more traffic) shows the TCP listener
-row + any active TCBs.
+If `nc` exits with no output, check terminal 1 for the "TCP:
+listener port=8080" line — it takes a second or two after the
+VGA banner. Running `nc` before that will just RST-close.
+
+This exercises the full 3-way handshake (SYN → SYN|ACK → ACK),
+the echo data path, and the close handshake (peer FIN → our
+ACK → our FIN → peer ACK → CLOSED). The `netDiag` auto-dump
+(~5 s after boot, or on re-run after more traffic) shows the
+TCP listener row + any active TCBs.
 
 #### E. Userspace TCP echo (port 8081)
 
