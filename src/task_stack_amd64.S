@@ -1,11 +1,12 @@
 /* src/task_stack_amd64.S — goroutine context-switch stubs.
  *
- * Copy of /home/ryo/.local/tinygo/src/internal/task/task_stack_amd64.S
- * (TinyGo 0.33.0). TinyGo's build pipeline does not assemble .S files
- * under our "tinygo build -o *.o" flow, so the stubs are imported here
- * and linked via the existing Makefile. tinygo_pause is a Go function
- * exported from internal/task/task_stack.go and is provided by the
- * TinyGo runtime as linked into kernel_go.o.
+ * Copy of $HOME/.local/tinygo0.40.1/src/internal/task/task_stack_amd64.S.
+ * TinyGo's build pipeline does not assemble .S files under our
+ * "tinygo build -o *.o" flow, so the stubs are imported here and
+ * linked via the existing Makefile. tinygo_task_exit is a Go function
+ * exported from internal/task/task_stack.go (renamed from the 0.33.0
+ * tinygo_pause; see impldoc/smp_migration_overview.md) and is provided
+ * by the TinyGo runtime as linked into kernel_go.o.
  */
 
 .section .text.tinygo_startTask
@@ -24,7 +25,7 @@ tinygo_startTask:
     callq *%r12
 
     /* After return, exit this goroutine. This is a tail call. */
-    jmp tinygo_pause
+    jmp tinygo_task_exit
     .cfi_endproc
 
 .section .text.tinygo_swapTask
