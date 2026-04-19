@@ -241,8 +241,18 @@ func apEntry(apIndex uint64) {
 	for lapicCalibratedInitCnt == 0 {
 		gooosPause()
 	}
-	// AP LAPIC timer deferred — enabling it causes boot hang.
-	// APs will be woken by IPI or PIC passthrough timer tick.
+	// AP LAPIC timer still deferred. M2-2 retired the racy global
+	// gooos_in_interrupt_depth counter, which was the primary
+	// suspect per impldoc/smp_deferred_and_known_issues.md §2.2,
+	// but enabling lapicTimerInit() on APs still hangs boot after
+	// "Scheduler: TinyGo goroutines active" — observed under
+	// -smp 4 during M2-4 verification. The remaining cause is
+	// not the dual-counter race but something else in the AP's
+	// LAPIC timer ISR dispatch path (likely: AP timer fires during
+	// BSP's setupUserspace and handleLAPICTimer's go_interrupt_handler
+	// dispatch hits a non-nosplit path or contends with another
+	// BSP-held lock). Requires further investigation tracked as
+	// M2-4 Deferred in TODO_SMP4.md. APs continue to wake via IPI.
 	// lapicTimerInit()
 
 	serialPutChar('A')
