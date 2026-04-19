@@ -246,311 +246,39 @@ index b4425de3..4bfe5af9 100644
 +	currentTasks[idx] = nil
  }
 diff --git a/src/runtime/gc_blocks.go b/src/runtime/gc_blocks.go
-index a95edbfd..9aa709e6 100644
+index a95edbfd..39758646 100644
 --- a/src/runtime/gc_blocks.go
 +++ b/src/runtime/gc_blocks.go
-@@ -58,6 +58,20 @@ var (
+@@ -58,6 +58,15 @@ var (
  	gcLock        task.PMutex    // lock to avoid race conditions on multicore systems
  )
  
-+// gooos SMP heap spinlock — provides cross-CPU mutual exclusion for
-+// alloc/GC. Under scheduler=tasks, task.PMutex above is a no-op
-+// (tinygo.unicore path), so SMP correctness requires an explicit
-+// spinlock. Under scheduler=cores, gcLock becomes a real Mutex and
-+// this spinlock is redundant but harmless (Wave 2 cleanup candidate).
-+//
-+//go:linkname gooos_heapSpinlockAcquire spinlockAcquire
-+func gooos_heapSpinlockAcquire(lock *uint32)
-+
-+//go:linkname gooos_heapSpinlockRelease spinlockRelease
-+func gooos_heapSpinlockRelease(lock *uint32)
-+
-+var heapLock uint32
++// gooos SMP note: alloc() / GC() rely on upstream's gcLock
++// (task.PMutex). Under scheduler=tasks gcLock is a no-op
++// (tinygo.unicore), which is safe on gooos only because APs do
++// not run goroutines that allocate while BSP is in GC (APs park
++// in waitForEvents). Under scheduler=cores (Wave 2), gcLock
++// becomes a real Mutex routing through atomicsLock and provides
++// cross-CPU protection. The per-CPU gcPauseCore IPI (M5) closes
++// the remaining concurrent-mutator gap.
 +
  // zeroSizedAlloc is just a sentinel that gets returned when allocating 0 bytes.
  var zeroSizedAlloc uint8
  
-@@ -412,6 +426,9 @@ func alloc(size uintptr, layout unsafe.Pointer) unsafe.Pointer {
- 	// Make sure there are no concurrent allocations. The heap is not currently
- 	// designed for concurrent alloc/GC.
- 	gcLock.Lock()
-+	// gooos SMP: explicit spinlock because gcLock (task.PMutex) is a
-+	// no-op under scheduler=tasks. Redundant under scheduler=cores.
-+	gooos_heapSpinlockAcquire(&heapLock)
- 
- 	// Update the total allocation counters.
- 	gcTotalAlloc += uint64(rawSize)
-@@ -468,6 +485,7 @@ func alloc(size uintptr, layout unsafe.Pointer) unsafe.Pointer {
- 	header.layout = parseGCLayout(layout)
- 
- 	// We've claimed this allocation, now we can unlock the heap.
-+	gooos_heapSpinlockRelease(&heapLock)
- 	gcLock.Unlock()
- 
- 	// Return a pointer to this allocation.
-@@ -507,7 +525,9 @@ func free(ptr unsafe.Pointer) {
- // GC performs a garbage collection cycle.
- func GC() {
- 	gcLock.Lock()
-+	gooos_heapSpinlockAcquire(&heapLock)
- 	runGC()
-+	gooos_heapSpinlockRelease(&heapLock)
- 	gcLock.Unlock()
+@@ -505,6 +514,13 @@ func free(ptr unsafe.Pointer) {
  }
  
-diff --git a/src/runtime/interrupt/interrupt_gooos.go b/src/runtime/interrupt/interrupt_gooos.go
-new file mode 100644
-index 00000000..cedf80b9
---- /dev/null
-+++ b/src/runtime/interrupt/interrupt_gooos.go
-@@ -0,0 +1,33 @@
-+//go:build gooos && baremetal && kernelspace
-+
-+package interrupt
-+
-+//go:linkname gooos_readFlags readFlags
-+func gooos_readFlags() uintptr
-+
-+//go:linkname gooos_restoreFlags restoreFlags
-+func gooos_restoreFlags(flags uintptr)
-+
-+//go:linkname gooos_cli cli
-+func gooos_cli()
-+
-+// State holds RFLAGS at the moment of Disable() so Restore() can
-+// decide whether to re-enable interrupts.
-+type State uintptr
-+
-+func Disable() State {
-+	flags := gooos_readFlags()
-+	gooos_cli()
-+	return State(flags)
-+}
-+
-+func Restore(state State) { gooos_restoreFlags(uintptr(state)) }
-+
-+// In always returns false on gooos. The TinyGo runtime uses In()
-+// to prevent heap allocation and task.Pause() in ISR context. On
-+// gooos, syscall handlers (which run in ISR context via int 0x80)
-+// ARE allowed to block on channels and allocate — this is the
-+// fundamental design: each Ring-3 process is a goroutine that
-+// blocks mid-ISR during syscalls. The ISR depth counter is
-+// managed by processExit for the sys_exit path.
-+func In() bool { return false }
-diff --git a/src/runtime/interrupt/interrupt_gooos_user.go b/src/runtime/interrupt/interrupt_gooos_user.go
-new file mode 100644
-index 00000000..8d645459
---- /dev/null
-+++ b/src/runtime/interrupt/interrupt_gooos_user.go
-@@ -0,0 +1,14 @@
-+//go:build gooos && baremetal && !kernelspace
-+
-+// Userspace has no IRQs; Disable / Restore / In are trivial no-ops.
-+// This file exists only so code under the (gooos && baremetal) tag
-+// combo (runtime.addTimer, scheduler internals) resolves the
-+// interrupt.* symbols at link time.
-+
-+package interrupt
-+
-+type State uintptr
-+
-+func Disable() State      { return 0 }
-+func Restore(state State) {}
-+func In() bool            { return false }
-diff --git a/src/runtime/runtime_gooos.go b/src/runtime/runtime_gooos.go
-new file mode 100644
-index 00000000..a8c2d0d6
---- /dev/null
-+++ b/src/runtime/runtime_gooos.go
-@@ -0,0 +1,97 @@
-+//go:build gooos && baremetal && kernelspace
-+
-+// gooos-local runtime bodies for bare-metal x86_64 Ring 0.
-+// Replaces the parts of runtime_unix.go incompatible with kernel
-+// mode. The kernel defines putchar, pitTicks, and the cli/sti/hlt
-+// primitives these stubs rely on.
-+
-+package runtime
-+
-+// timeUnit is defined in upstream runtime.go since TinyGo 0.40.x;
-+// no longer redeclared here.
-+
-+// TinyGo 0.40.x disallows //go:linkname on variable declarations (it
-+// creates a local symbol that collides with the kernel's definition).
-+// Use //go:extern, which marks the variable as "allocated elsewhere"
-+// so the compiler emits only a reference.
-+//
-+//go:extern main.pitTicks
-+var gooos_pitTicks uint64
-+
-+// The kernel's assembly stubs in src/stubs.S use unqualified names
-+// (no package prefix), so we link directly to those symbols.
-+
-+//go:linkname gooos_cli cli
-+func gooos_cli()
-+
-+//go:linkname gooos_sti sti
-+func gooos_sti()
-+
-+//go:linkname gooos_hlt hlt
-+func gooos_hlt()
-+
-+// sleepTicks idles on the PIT counter until `d` ticks have elapsed.
-+// The kernel's timer ISR increments gooos_pitTicks at 100 Hz.
-+func sleepTicks(d timeUnit) {
-+	deadline := gooos_pitTicks + uint64(d)
-+	for gooos_pitTicks < deadline {
-+		gooos_sti()
-+		gooos_hlt()
-+		gooos_cli()
-+	}
-+}
-+
-+func ticks() timeUnit { return timeUnit(gooos_pitTicks) }
-+
-+// 100 Hz PIT: one tick = 10 ms = 10_000_000 ns.
-+func ticksToNanoseconds(t timeUnit) int64  { return int64(t) * 10_000_000 }
-+func nanosecondsToTicks(ns int64) timeUnit { return timeUnit(ns / 10_000_000) }
-+
-+// tinygo_register_fatal_signals is provided by src/stubs.S (the
-+// kernel has had this stub since before goroutine support). No Go
-+// body needed here.
-+
-+// putchar writes a single byte to COM1. Used by runtime.printstring.
-+//
-+//go:linkname gooos_outb outb
-+func gooos_outb(port uint16, value uint8)
-+
-+func putchar(c byte) { gooos_outb(0x3F8, c) }
-+
-+// buffered is a no-op on bare metal — no line-buffered stdio.
-+func buffered() int { return 0 }
-+
-+// getchar is not used by gooos; return 0 to avoid pulling in stdin.
-+func getchar() byte { return 0 }
-+
-+// exit / abort: kernel panic paths. No process to exit; halt forever.
-+func exit(code int) {
-+	for {
-+		gooos_hlt()
-+	}
-+}
-+
-+func abort() {
-+	for {
-+		gooos_hlt()
-+	}
-+}
-+
-+// preinit is called by the runtime before initAll(). gooos's main.go
-+// performs all hardware init in user main(), so preinit is a no-op.
-+func preinit() {}
-+
-+// main is the C-ABI entry point called from boot.S after the
-+// 32->64-bit bootstrap. run() initializes the heap, runs package
-+// init functions, and invokes the user-written main in main.go.
-+// If run() returns, halt forever.
-+//
-+//export main
-+func main() {
-+	preinit()
-+	run()
-+	exit(0)
-+}
-+
-+// waitForEvents provided by wait_other.go (fallback). No override
-+// needed — that fallback body is a no-op, acceptable here.
-diff --git a/src/runtime/runtime_gooos_user.go b/src/runtime/runtime_gooos_user.go
-new file mode 100644
-index 00000000..3102f251
---- /dev/null
-+++ b/src/runtime/runtime_gooos_user.go
-@@ -0,0 +1,85 @@
-+//go:build gooos && baremetal && !kernelspace
-+
-+// gooos userspace runtime bodies for Ring-3 user programs. The
-+// kernel equivalent is runtime_gooos.go; the two files share the
-+// (gooos && baremetal) tag prefix but are disambiguated by the
-+// kernelspace tag on src/target.json. Primitives here route
-+// through gooos syscalls exposed by user/rt0.S (syscall1 /
-+// syscall3) rather than kernel asm stubs.
-+
-+package runtime
-+
-+import "unsafe"
-+
-+// timeUnit is defined in upstream runtime.go since TinyGo 0.40.x;
-+// no longer redeclared here.
-+
-+// Syscall numbers are fixed by the kernel dispatch table
-+// (src/userspace.go): sys_exit=0, sys_write=1, sys_sleep=8.
-+// The asm wrappers in user/rt0.S are reached via //go:linkname,
-+// matching the pattern in user/gooos/syscall.go.
-+
-+//go:linkname userSyscall1 syscall1
-+func userSyscall1(nr, a1 uintptr) uintptr
-+
-+//go:linkname userSyscall3 syscall3
-+func userSyscall3(nr, a1, a2, a3 uintptr) uintptr
-+
-+// userTicks is a Go-side monotonic counter bumped whenever
-+// sleepTicks returns. Coarse (10 ms resolution) but monotonic.
-+// Good enough for time.Sleep; not a wall clock.
-+var userTicks uint64
-+
-+// sleepTicks blocks this process on sys_sleep for d ticks, then
-+// bumps the local tick counter. Called from the scheduler idle
-+// path when every task is parked.
-+func sleepTicks(d timeUnit) {
-+	if d <= 0 {
-+		return
-+	}
-+	userSyscall1(8, uintptr(d)) // sys_sleep
-+	userTicks += uint64(d)
-+}
-+
-+func ticks() timeUnit { return timeUnit(userTicks) }
-+
-+// 100 Hz PIT tick = 10 ms = 10_000_000 ns (matches kernel).
-+func ticksToNanoseconds(t timeUnit) int64  { return int64(t) * 10_000_000 }
-+func nanosecondsToTicks(ns int64) timeUnit { return timeUnit(ns / 10_000_000) }
-+
-+// putchar writes one byte via sys_write(buf, len, fd=1). fd=1 is
-+// serial-only (fd=0 also routes to VGA but requires Ring-0 MMIO).
-+// Used by runtime.printstring on panic paths.
-+func putchar(c byte) {
-+	b := c
-+	userSyscall3(1, uintptr(unsafe.Pointer(&b)), 1, 1)
-+}
-+
-+// buffered / getchar: no line-buffered stdio in userspace.
-+func buffered() int { return 0 }
-+func getchar() byte { return 0 }
-+
-+// exit routes to sys_exit. The kernel handler parks the
-+// ring3Wrapper goroutine, so sys_exit never returns; the
-+// trailing loop exists only to satisfy control-flow analysis.
-+func exit(code int) {
-+	userSyscall1(0, uintptr(code))
-+	for {
-+	}
-+}
-+
-+func abort() { exit(1) }
-+
-+// preinit runs before initAll(). Nothing to do in userspace.
-+func preinit() {}
-+
-+// main is the C-ABI entry point called from user/rt0.S:_start.
-+// run() initializes the heap, runs package init funcs, and enters
-+// the scheduler loop (seeded with main.main under scheduler=tasks).
-+//
-+//export main
-+func main() {
-+	preinit()
-+	run()
-+	exit(0)
-+}
+ // GC performs a garbage collection cycle.
++// gooos SMP: do NOT wrap runGC() with heapLock here. runGC's
++// runqueue-scan path calls into the Queue/Task code which can
++// indirectly trigger paths that re-acquire heapLock under some
++// conditions, causing self-deadlock on the non-reentrant spinlock.
++// Concurrent alloc() from another CPU still takes heapLock, so
++// explicit GC() + concurrent alloc can observe a partial mark;
++// that race is covered by the M5 gcPauseCore IPI design.
+ func GC() {
+ 	gcLock.Lock()
+ 	runGC()
 diff --git a/src/runtime/scheduler_cooperative.go b/src/runtime/scheduler_cooperative.go
 index 2c2bf099..dd1ed3b0 100644
 --- a/src/runtime/scheduler_cooperative.go
@@ -754,45 +482,6 @@ index 2c2bf099..dd1ed3b0 100644
  
  			if schedulerDebug {
  				println("  sleeping...", sleepQueue, uint(timeLeft))
-diff --git a/src/runtime/wait_gooos.go b/src/runtime/wait_gooos.go
-new file mode 100644
-index 00000000..3841e659
---- /dev/null
-+++ b/src/runtime/wait_gooos.go
-@@ -0,0 +1,14 @@
-+//go:build gooos && baremetal && kernelspace
-+
-+package runtime
-+
-+// waitForEvents is called by the scheduler when the runqueue is
-+// empty and there are no sleeping/timer tasks. On APs this is the
-+// normal idle state — halt until an IPI or LAPIC timer wakes us.
-+// On the BSP it means all goroutines are blocked (rare but safe
-+// to idle briefly).
-+func waitForEvents() {
-+	gooos_sti()
-+	gooos_hlt()
-+	gooos_cli()
-+}
-diff --git a/src/runtime/wait_gooos_user.go b/src/runtime/wait_gooos_user.go
-new file mode 100644
-index 00000000..afcaf30b
---- /dev/null
-+++ b/src/runtime/wait_gooos_user.go
-@@ -0,0 +1,13 @@
-+//go:build gooos && baremetal && !kernelspace
-+
-+package runtime
-+
-+// waitForEvents is called by the scheduler when the runqueue is
-+// empty and no sleeping/timer tasks are pending. In userspace (Ring 3)
-+// we cannot execute sti/cli/hlt, so the best we can do is a no-op
-+// fallback — if the runqueue truly has no future wake source this is
-+// a deadlock, but the kernel will still preempt us on timer IRQ.
-+//
-+// The kernel build uses wait_gooos.go (//go:build ... && kernelspace).
-+func waitForEvents() {
-+}
 diff --git a/src/runtime/wait_other.go b/src/runtime/wait_other.go
 index f1487e39..18980b11 100644
 --- a/src/runtime/wait_other.go

@@ -78,7 +78,6 @@ TSU="$TINYGO_SRC/internal/task/task_stack_unicore.go"
 # scheduler hunks landed on scheduler_cooperative.go (0.40.1 split
 # from the 0.33.0 monolithic scheduler.go).
 SCHED="$TINYGO_SRC/runtime/scheduler_cooperative.go"
-GCBLK="$TINYGO_SRC/runtime/gc_blocks.go"
 
 if [[ -f "$RG" && -f "$RGU" && -f "$IG" && -f "$IGU" && -f "$WG" && -f "$WGU" ]] \
     && grep -q '&& kernelspace' "$RG" \
@@ -91,7 +90,6 @@ if [[ -f "$RG" && -f "$RGU" && -f "$IG" && -f "$IGU" && -f "$WG" && -f "$WGU" ]]
     && grep -q 'apScheduler' "$SCHED" \
     && grep -q 'systemStacks' "$TS64" \
     && grep -q 'currentTasks' "$TSU" \
-    && grep -q 'heapLock' "$GCBLK" \
     && grep -q 'gooos_spinlockAcquire' "$TINYGO_SRC/internal/task/queue.go"; then
     echo "already-applied: tinygo runtime patch (SMP v2 on 0.40.1) present at $TINYGO_SRC"
     echo "(delete the gooos* runtime files and the in-place changes to re-run)"
@@ -175,10 +173,6 @@ if ! grep -q 'systemStacks' "$TS64"; then
 fi
 if ! grep -q 'currentTasks' "$TSU"; then
     echo "error: $TSU is missing per-CPU currentTasks" >&2
-    fail=1
-fi
-if ! grep -q 'heapLock' "$GCBLK"; then
-    echo "error: $GCBLK is missing heapLock (SMP heap spinlock)" >&2
     fail=1
 fi
 if (( fail )); then
