@@ -23,15 +23,17 @@ and its listed verification passes.
 - [x] `diag(net): afterTicks call counter` — add `afterTicksCalls`
       uint64 in `src/afterticks.go` incremented on every call.
       Verify: `make build` clean.
-- [ ] `diag(net): expose afterTicks counter in netDiag` — add row
+- [x] `diag(net): expose afterTicks counter in netDiag` — add row
       in `src/net.go` netDiag output: `Sched: afterTicksCalls=N`.
       Verify: `make run-net` serial shows a nonzero counter.
-- [ ] `diag(net): capture pre-fix latetiming evidence` — run
+- [x] `diag(net): capture pre-fix latetiming evidence` — run
       `scripts/test_tcp_latetiming.sh`, archive the serial log to
       `tmp/serial_pre_fix.log` (not committed), confirm the
       counter grows across the netDiag piggyback dumps. Verify:
       counter value in the last dump is substantially larger
-      than in the first (monotonic growth).
+      than in the first (monotonic growth). **Confirmed**:
+      172 → 180 → 344 across three piggyback dumps, ~20-30
+      calls/s matching the hot-loop cadence.
 
 ## Phase 2 — Timer-wheel fix
 
