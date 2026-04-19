@@ -118,30 +118,32 @@ index b6c4a5df..aca4122b 100644
  	// Get a pointer to the top of the stack, where the initial register values
  	// are stored. They will be popped off the stack on the first stack switch
 diff --git a/src/internal/task/task_stack_amd64.go b/src/internal/task/task_stack_amd64.go
-index d252b1c5..fe643e76 100644
+index d252b1c5..5e20bca8 100644
 --- a/src/internal/task/task_stack_amd64.go
 +++ b/src/internal/task/task_stack_amd64.go
-@@ -4,7 +4,18 @@ package task
+@@ -1,10 +1,19 @@
+-//go:build scheduler.tasks && amd64 && !windows
++//go:build (scheduler.tasks || scheduler.cores) && amd64 && !windows
+ 
+ package task
  
  import "unsafe"
  
 -var systemStack uintptr
-+// gooosSMPMaxCPUs must match the kernel's maxCPUs (src/percpu.go).
-+const gooosSMPMaxCPUs = 17
-+
-+// Per-CPU system stacks. Each CPU's scheduler uses its own stack
-+// during task switching to avoid cross-CPU collisions.
-+var systemStacks [gooosSMPMaxCPUs]uintptr
-+
-+// gooosCpuID returns the current CPU index from per-CPU storage.
-+// Linked to the gooos kernel's cpuID() which reads %gs:0.
++// runtime_systemStackPtr returns a pointer to the per-CPU system
++// stack slot. Under scheduler=tasks, upstream scheduler_tasks.go:11
++// provides the scalar &systemStack. Under scheduler=cores,
++// scheduler_cores.go:298-300 provides array-indexed
++// &systemStack[currentCPU()]. Either way, the consumer here only
++// needs a *uintptr; the upstream implementation owns the per-CPU
++// indexing. Mirror of task_stack_tinygoriscv.go:12-13.
 +//
-+//go:linkname gooosCpuID cpuID
-+func gooosCpuID() uint32
++//go:linkname runtime_systemStackPtr runtime.systemStackPtr
++func runtime_systemStackPtr() *uintptr
  
  // calleeSavedRegs is the list of registers that must be saved and restored when
  // switching between tasks. Also see task_stack_amd64.S that relies on the exact
-@@ -44,18 +55,24 @@ func (s *state) archInit(r *calleeSavedRegs, fn uintptr, args unsafe.Pointer) {
+@@ -44,18 +53,23 @@ func (s *state) archInit(r *calleeSavedRegs, fn uintptr, args unsafe.Pointer) {
  	r.r13 = uintptr(args)
  }
  
@@ -151,16 +153,15 @@ index d252b1c5..fe643e76 100644
  func (s *state) resume() {
 -	swapTask(s.sp, &systemStack)
 +	gooosOnResume() // gooos — update TSS.RSP0 for resumed goroutine
-+	idx := gooosCpuID()
-+	swapTask(s.sp, &systemStacks[idx])
++	swapTask(s.sp, runtime_systemStackPtr())
  }
  
  func (s *state) pause() {
 -	newStack := systemStack
 -	systemStack = 0
-+	idx := gooosCpuID()
-+	newStack := systemStacks[idx]
-+	systemStacks[idx] = 0
++	systemStackPtr := runtime_systemStackPtr()
++	newStack := *systemStackPtr
++	*systemStackPtr = 0
  	swapTask(newStack, &s.sp)
  }
  
@@ -170,7 +171,7 @@ index d252b1c5..fe643e76 100644
 +// called from a task stack. Returns 0 when called from the system stack.
  func SystemStack() uintptr {
 -	return systemStack
-+	return systemStacks[gooosCpuID()]
++	return *runtime_systemStackPtr()
  }
 diff --git a/src/internal/task/task_stack_unicore.go b/src/internal/task/task_stack_unicore.go
 index b4425de3..4bfe5af9 100644
