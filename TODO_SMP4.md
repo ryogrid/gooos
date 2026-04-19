@@ -18,13 +18,13 @@ Closing (README + docs).
 
 ## M2 — AP LAPIC timer race fix (per `impldoc/smp_m2_ap_lapic_timer.md`)
 
-- [ ] **M2-1. Per-CPU `readInterruptDepth` + `readSyscallDepth` asm helpers + `syscallDepth` field**
+- [x] **M2-1. Per-CPU `readInterruptDepth` + `readSyscallDepth` asm helpers + `syscallDepth` field**
   - `src/stubs.S`: add `readInterruptDepth` (movl `%gs:4`, `%eax`; ret) and `readSyscallDepth` (movl `%gs:12`, `%eax`; ret) leaf functions
   - `src/percpu.go`: add `syscallDepth uint32` field at offset 12 to `PerCPU` struct; add `pcpuOffSyscallDepth = 12` constant; keep 64-byte alignment
   - Verify: `grep -n 'readSyscallDepth' src/stubs.S src/percpu.go` shows the new declarations; `make build` clean; `make run` (single-CPU) still boots to shell
   - Commit: `fix(smp): per-CPU readInterruptDepth + readSyscallDepth helpers`
 
-- [ ] **M2-2. Drop global `gooos_in_interrupt_depth`; syscall-aware ISR prologue/epilogue**
+- [x] **M2-2. Drop global `gooos_in_interrupt_depth`; syscall-aware ISR prologue/epilogue**
   - `src/isr.S` prologue (~line 110-111): drop `incl gooos_in_interrupt_depth(%rip)`; keep `incl %gs:4`; add `cmpq $0x80, 120(%rsp); jne .Lnosys_enter; incl %gs:12; .Lnosys_enter:`
   - `src/isr.S` epilogue (~line 129-130): mirror decrement + conditional `decl %gs:12`
   - `src/isr.S` (~line 152-168): delete the `.bss` block for `gooos_in_interrupt_depth`
@@ -32,27 +32,22 @@ Closing (README + docs).
   - Verify: `grep -n 'gooos_in_interrupt_depth' src/` → 0 matches; `make build` clean; `make run` boots; no `blocked inside interrupt` panics under `scripts/test_sendkey.sh 1`
   - Commit: `fix(smp): drop global gooos_in_interrupt_depth; syscall-aware per-CPU depth`
 
-- [ ] **M2-3. Migrate runtime `interrupt.In()` to per-CPU counters**
+- [x] **M2-3. Migrate runtime `interrupt.In()` to per-CPU counters**
   - `~/.local/tinygo0.40.1/src/runtime/interrupt/interrupt_gooos.go`: replace `func In() bool { return false }` with `readInterruptDepth() != 0 && readSyscallDepth() == 0`; add linkname declarations for the two helpers
   - Regenerate `scripts/tinygo_runtime.patch` via `git -C /home/ryo/work/tinygo diff > scripts/tinygo_runtime.patch`
   - Update `scripts/patch_tinygo_runtime.sh` post-conditions: grep for `readInterruptDepth`/`readSyscallDepth`
   - Verify: `bash scripts/patch_tinygo_runtime.sh` prints `already-applied:` on the patched tree; `make build` clean; `bash scripts/test_net.sh` PASS; `bash scripts/test_tcp_phase5.sh` PASS
   - Commit: `fix(smp): migrate runtime interrupt.In() to per-CPU counters`
 
-- [ ] **M2-4. Enable AP LAPIC timer at 100 Hz**
-  - `src/main.go`: un-gate `lapicTimerInitAP()` call on each AP
-  - Verify: `make run-smp` — serial log shows `LAPIC timer: N ticks/10ms` on BSP calibration; boot reaches shell without hanging at "Scheduler: TinyGo goroutines active"; `scripts/test_net.sh` + `test_tcp_phase5.sh` PASS
-  - Commit: `fix(smp): enable AP LAPIC timer at 100 Hz`
+- [ ] ~~**M2-4. Enable AP LAPIC timer at 100 Hz**~~ **(deferred — second-order hang, see Deferred further)**
+  - Attempted: un-gated `lapicTimerInit()` on APs in `src/smp.go`. Boot under `-smp 4` still hangs after "Scheduler: TinyGo goroutines active"; APs never print "AP N online" and BSP's `setupUserspace` never emits "ELF: spawning boot shell". Retired the global counter in M2-2 was necessary but not sufficient.
+  - Reverted in commit `dfad7a6 fix(smp): re-disable AP LAPIC timer pending M2-4 follow-up`.
 
-- [ ] **M2-5. `scripts/test_smp_m2_timer.sh` + boot-time probe**
-  - `src/main.go` (gated `const runM2Probe = true`): spawn N goroutines × 100 × `time.Sleep(10ms)`; emit `m2_probe: PASS count=N` on success
-  - `scripts/test_smp_m2_timer.sh`: boot `-smp 4`, grep serial for `m2_probe: PASS`
-  - Verify: `bash scripts/test_smp_m2_timer.sh` PASSes
-  - Commit: `test(smp): add M2 timer probe harness`
+- [ ] ~~**M2-5. `scripts/test_smp_m2_timer.sh` + boot-time probe**~~ **(transitively deferred — depends on M2-4)**
 
 ## M4 — AP Ring-3 iretq triple-fault investigation + fix (per `impldoc/smp_m4_ring3_fault.md`)
 
-- [ ] **M4-investigation. QEMU + GDB evidence-capture pass**
+- [x] **M4-investigation. QEMU + GDB evidence-capture pass** (done via `-d int,cpu_reset,guest_errors` alone; evidence in `tmp/m4_qemu.log`)
   - Temporarily enable `stealWork()` call in `scheduler_cooperative.go:247-254`
   - Rebuild; boot `-smp 4` with `-s -S -d int,cpu_reset,guest_errors -D tmp/m4_qemu.log`
   - GDB session per `smp_m4_ring3_fault.md §3.2`: breakpoints, register dumps
@@ -62,7 +57,7 @@ Closing (README + docs).
   - Verify: evidence file committed; Wave 1 build still clean
   - Commit (evidence): `test(smp): M4 investigation evidence capture`
 
-- [ ] **M4-fix. Apply fix per confirmed hypothesis**
+- [x] **M4-fix. Apply fix per confirmed hypothesis** (IDT not loaded on APs — 2-line fix in idt.go + smp.go)
   - Code edit at the fix site named by the confirmed hypothesis row
   - Verify: `make build` clean; **reproducer now passes** — with stealWork enabled, shell boots under `-smp 4` without triple-faulting; `scripts/test_sendkey.sh 1` PASSes under `-smp 4`; mark `impldoc/smp_deferred_and_known_issues.md §2.1` Resolved
   - Commit: `fix(smp): AP Ring-3 iretq <root cause>`
