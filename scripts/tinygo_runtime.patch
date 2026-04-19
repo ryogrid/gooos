@@ -824,6 +824,100 @@ index 2c2bf099..c94723b0 100644
  
  			if schedulerDebug {
  				println("  sleeping...", sleepQueue, uint(timeLeft))
+diff --git a/src/runtime/scheduler_cores.go b/src/runtime/scheduler_cores.go
+index e45eaf39..07a222f9 100644
+--- a/src/runtime/scheduler_cores.go
++++ b/src/runtime/scheduler_cores.go
+@@ -24,8 +24,16 @@ var cpuTasks [numCPU]*task.Task
+ var (
+ 	sleepQueue *task.Task
+ 	runqueue   task.Queue
++	// gooos SMP v2: per-CPU runqueues alongside the upstream single
++	// global runqueue. Every push site below retargets to the caller's
++	// CPU; every pop site drains the caller's CPU queue first, then
++	// optionally steals from peers via stealWork().
++	runqueues [numCPU]task.Queue
+ )
+ 
++//go:linkname gooosCpuID cpuID
++func gooosCpuID() uint32
++
+ func deadlock() {
+ 	// Call yield without requesting a wakeup.
+ 	task.Pause()
+@@ -39,8 +47,9 @@ func scheduleTask(t *task.Task) {
+ 	switch t.RunState {
+ 	case task.RunStatePaused:
+ 		// Paused, state is saved on the stack.
+-		// Add it to the runqueue...
+-		runqueue.Push(t)
++		// gooos SMP v2: push onto the waker's per-CPU runqueue.
++		// Work-stealing (stealWork below) distributes to idle peers.
++		runqueues[gooosCpuID()].Push(t)
+ 		// ...and wake up a sleeping core, if there is one.
+ 		// (If all cores are already busy, this is a no-op).
+ 		schedulerWake()
+@@ -86,7 +95,7 @@ func addSleepTask(t *task.Task, wakeup timeUnit) {
+ 
+ func Gosched() {
+ 	schedulerLock.Lock()
+-	runqueue.Push(task.Current())
++	runqueues[gooosCpuID()].Push(task.Current())
+ 	task.PauseLocked()
+ }
+ 
+@@ -110,7 +119,36 @@ func removeTimer(t *timer) *timerNode {
+ }
+ 
+ func schedulerRunQueue() *task.Queue {
+-	return &runqueue
++	return &runqueues[gooosCpuID()]
++}
++
++// stealWork scans peer per-CPU runqueues (round-robin starting at
++// self+1) and pops one task from the first non-empty peer. Returns
++// nil if every peer queue is empty. Called from scheduler() when
++// the local queue has nothing. Gated by M3-6 (not yet active).
++//
++//go:nosplit
++func stealWork() *task.Task {
++	me := gooosCpuID()
++	for i := uint32(1); i < numCPU; i++ {
++		peer := (me + i) % numCPU
++		if t := runqueues[peer].Pop(); t != nil {
++			return t
++		}
++	}
++	return nil
++}
++
++// apScheduler is the TinyGo scheduler entry for AP cores. Called
++// from gooos's src/smp.go:apEntry after per-CPU init + bspBootDone
++// gate. Does NOT reinitialize the heap or call main — that's the
++// BSP's job via run(). The scheduler runs forever until mainExited.
++//
++//go:linkname apScheduler runtime.apScheduler
++func apScheduler() {
++	schedulerLock.Lock()
++	scheduler(false)
++	schedulerLock.Unlock()
+ }
+ 
+ // Pause the current task for a given time.
+@@ -162,8 +200,11 @@ func run() {
+ 
+ func scheduler(_ bool) {
+ 	for mainExited.Load() == 0 {
+-		// Check for ready-to-run tasks.
+-		if runnable := runqueue.Pop(); runnable != nil {
++		// gooos SMP v2: pop from local per-CPU queue first. stealWork
++		// from peers is intentionally NOT called here yet — M3-6 will
++		// wire it in; leaving dormant at M3-3 keeps this commit
++		// bisectable against the stealWork wire-up.
++		if runnable := runqueues[gooosCpuID()].Pop(); runnable != nil {
+ 			// Resume it now.
+ 			setCurrentTask(runnable)
+ 			runnable.RunState = task.RunStateRunning
 diff --git a/src/runtime/wait_gooos.go b/src/runtime/wait_gooos.go
 new file mode 100644
 index 00000000..3841e659
