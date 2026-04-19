@@ -28,7 +28,25 @@
 
 set -euo pipefail
 
-TINYGO_SRC="${TINYGO_SRC:-$HOME/.local/tinygo/src}"
+# Dual-version detection. Default to 0.40.1 (new canonical location);
+# fall back to the legacy 0.33.0 tree with a deprecation warning if
+# only it exists. Drop the legacy branch after SMP migration M3 lands.
+if [[ -z "${TINYGO_SRC:-}" ]]; then
+    if [[ -d "$HOME/.local/tinygo0.40.1/src" ]]; then
+        TINYGO_SRC="$HOME/.local/tinygo0.40.1/src"
+    elif [[ -d "$HOME/.local/tinygo/src" ]]; then
+        TINYGO_SRC="$HOME/.local/tinygo/src"
+        echo "warning: using deprecated 0.33.0 tree at $TINYGO_SRC" >&2
+        echo "         upgrade to 0.40.1 per README.md (path changed" \
+             "to ~/.local/tinygo0.40.1)" >&2
+    else
+        echo "error: neither 0.40.1 nor legacy 0.33.0 TinyGo tree found" >&2
+        echo "       expected ~/.local/tinygo0.40.1/src or ~/.local/tinygo/src" >&2
+        echo "       set TINYGO_SRC to override the path" >&2
+        exit 1
+    fi
+fi
+
 PATCH_FILE="$(cd "$(dirname "$0")" && pwd)/tinygo_runtime.patch"
 
 if [[ ! -f "$PATCH_FILE" ]]; then
