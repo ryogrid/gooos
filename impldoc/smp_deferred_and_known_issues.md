@@ -1,9 +1,11 @@
 # SMP Deferred Items and Known Issues
 
-Status snapshot as of the latest commit on `smp-use2`.
+Status snapshot post `smp-take3` TinyGo 0.33.0 → 0.40.1 migration
+(see `impldoc/smp_migration_overview.md` for the migration plan and
+`TODO_SMP3.md` for per-item completion status).
 Cross-references `impldoc/smp_overview.md` (items 1-19),
 `impldoc/smp_ap_safety_overview.md` (items 0-8),
-`TODO_SMP1.md`, and `TODO_SMP2.md`.
+`TODO_SMP1.md`, `TODO_SMP2.md`, and `TODO_SMP3.md`.
 
 ## 1. What Is Implemented
 
@@ -16,17 +18,17 @@ Cross-references `impldoc/smp_overview.md` (items 1-19),
 | LAPIC register defs + EOI | Done | `src/smp.go`: LVTTimer, TimerDivCfg, etc.; `lapicSendEOI()` |
 | LAPIC timer calibration (BSP) | Done | `src/lapic_timer.go`: calibrated against PIT, 100 Hz periodic on BSP |
 | IOAPIC driver code | Done | `src/ioapic.go`: MADT type-1 parsing, redirection table, PIC disable — but **disabled at runtime** |
-| Per-CPU runqueues | Done | TinyGo `scheduler.go`: `runqueues[17]`, `runqueuePushBack` per-CPU |
+| Per-CPU runqueues | Done | TinyGo `scheduler_cooperative.go` (was `scheduler.go` in 0.33.0): `runqueues[17]`, `scheduleTask` / `Gosched` per-CPU |
 | Per-CPU systemStacks | Done | TinyGo `task_stack_amd64.go`: `systemStacks[17]` |
-| Queue spinlock | Done | TinyGo `queue.go`: `gooos_spinlockAcquire/Release` in Push/Pop/Append/Empty |
-| Heap spinlock | Done | TinyGo `gc_blocks.go`: `heapLock` around `alloc()` |
-| schedLock (sleep/timer) | Done | TinyGo `scheduler.go`: spinlock around `sleepQueue`/`timerQueue` access |
-| Per-CPU currentTask | Done | TinyGo `task_stack.go`: `currentTasks[17]` indexed by `cpuID()` |
-| Work stealing | Done | TinyGo `scheduler.go`: `stealWork()` round-robin peer scan |
-| AP scheduler entry function | Done | TinyGo `scheduler.go`: `apScheduler()` → `scheduler()` |
+| Queue spinlock | Done | TinyGo `queue.go`: `gooos_spinlockAcquire/Release` on top of upstream's `lockAtomics` (per-CPU-only under `scheduler=tasks`) |
+| Heap spinlock | **Retired in 0.40.1 migration** | Upstream 0.40.x ships `gcLock task.PMutex` (no-op under `tinygo.unicore`, real Mutex under `scheduler=cores`). gooos relies on BSP-only-allocates contract under Wave 1; M5 `gcPauseCore` closes the cross-CPU gap under Wave 2 |
+| schedLock (sleep/timer) | Done | TinyGo `scheduler_cooperative.go`: spinlock around `sleepQueue`/`timerQueue` access |
+| Per-CPU currentTask | Done | TinyGo `task_stack_unicore.go` (new file in 0.40.1; was `task_stack.go` in 0.33.0): `currentTasks[17]` indexed by `cpuID()` |
+| Work stealing | **Dormant** | TinyGo `scheduler_cooperative.go`: `stealWork()` function exists but is **not called** from the scheduler's pop site. Wiring it triggers the Ring-3 AP triple-fault below. Enabling deferred to `TODO_SMP3.md` M3 |
+| AP scheduler entry function | Done | TinyGo `scheduler_cooperative.go`: `apScheduler()` → `scheduler()` |
 | Boot-phase gating | Done | `src/smp.go`: `bspBootDone` flag; APs spin with `gooosPause()` |
-| `waitForEvents` override | Done | TinyGo `wait_gooos.go`: `sti; hlt; cli` (replaces panic) |
-| `interrupt.In()` override | Done | TinyGo `interrupt_gooos.go`: always returns false (gooos syscall design) |
+| `waitForEvents` override | Done | TinyGo `wait_gooos.go` (kernel) + `wait_gooos_user.go` (userspace, new): `sti; hlt; cli` idle in kernel, no-op in Ring 3 |
+| `interrupt.In()` override | Done | TinyGo `interrupt_gooos.go`: always returns false (gooos syscall design; §2.2) |
 | IPI send primitive | Done | `src/ipi.go`: `lapicSendIPI()`, wakeup vector 0xFC |
 | Page allocator spinlock | Done | `src/vm.go`: `pageAllocLock` |
 | Process map spinlocks | Done | `src/process.go`: `procLock` on `procByTask`/`procByPID`/`foregroundProc` |
@@ -35,7 +37,7 @@ Cross-references `impldoc/smp_overview.md` (items 1-19),
 | `sys_getcpuid` syscall | Done | `src/userspace.go`: syscall #21 returns `cpuID()` |
 | `smpprobe` demo command | Done | `user/cmd/smpprobe`: spawns workers, reports cpuID |
 | User-space SMP stubs | Done | `user/runtime_asm_amd64.S`: no-op `spinlockAcquire/Release/cpuID` |
-| TinyGo patch (853 lines) | Done | `scripts/tinygo_runtime.patch` covers all above TinyGo changes |
+| TinyGo patch (~800 lines) | Done | `scripts/tinygo_runtime.patch` covers all above TinyGo changes; targets `~/.local/tinygo0.40.1/src/`. Size dropped from 853 (0.33.0) after the migration retired the heapLock and split hunks across `scheduler_cooperative.go` / `scheduler.go` / `task_stack_unicore.go` / `wait_gooos_user.go` |
 
 ## 2. Known Issues (Blocking AP Scheduling)
 
