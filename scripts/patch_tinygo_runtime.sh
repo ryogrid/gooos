@@ -90,6 +90,8 @@ if [[ -f "$RG" && -f "$RGU" && -f "$IG" && -f "$IGU" && -f "$WG" && -f "$WGU" ]]
     && grep -q 'apScheduler' "$SCHED" \
     && grep -q 'systemStacks' "$TS64" \
     && grep -q 'currentTasks' "$TSU" \
+    && grep -q 'gooos_readInterruptDepth' "$IG" \
+    && grep -q 'gooos_readSyscallDepth' "$IG" \
     && grep -q 'gooos_spinlockAcquire' "$TINYGO_SRC/internal/task/queue.go"; then
     echo "already-applied: tinygo runtime patch (SMP v2 on 0.40.1) present at $TINYGO_SRC"
     echo "(delete the gooos* runtime files and the in-place changes to re-run)"
@@ -173,6 +175,14 @@ if ! grep -q 'systemStacks' "$TS64"; then
 fi
 if ! grep -q 'currentTasks' "$TSU"; then
     echo "error: $TSU is missing per-CPU currentTasks" >&2
+    fail=1
+fi
+if ! grep -q 'gooos_readInterruptDepth' "$IG"; then
+    echo "error: $IG is missing readInterruptDepth linkname" >&2
+    fail=1
+fi
+if ! grep -q 'gooos_readSyscallDepth' "$IG"; then
+    echo "error: $IG is missing readSyscallDepth linkname (M2)" >&2
     fail=1
 fi
 if (( fail )); then
