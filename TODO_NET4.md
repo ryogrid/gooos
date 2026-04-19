@@ -47,7 +47,7 @@ and its listed verification passes.
       `afterTicksInit` spawn hook. `afterTicks(d) <-chan struct{}`
       signature unchanged. Verify: `make build && make lint &&
       make verify-globals` clean.
-- [ ] `feat(main): spawn timer dispatcher at boot` — call
+- [x] `feat(main): spawn timer dispatcher at boot` — call
       `afterTicksInit()` in `src/main.go` after `pitInit`, before
       `netInit`/`ring3Start`. Verify: `make build` clean.
 - [ ] `test(net): latetiming PASSes + phase1..5 regression green` —

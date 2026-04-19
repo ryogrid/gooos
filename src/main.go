@@ -167,6 +167,12 @@ func main() {
 	vgaWriteLine(5, "Interrupts: enabled")
 	serialPrintln("Interrupts: enabled")
 
+	// Start the afterTicks timer-wheel dispatcher. Must be after
+	// pitInit (dispatcher reads pitTicks) and before any caller of
+	// afterTicks (testAfterTicks, netInit spawns, Ring-3 wrappers).
+	afterTicksInit()
+	serialPrintln("Timer wheel: afterTicksInit")
+
 	// Phase 1: Allocate many objects that immediately become garbage.
 	const numAllocs = 500
 	for i := 0; i < numAllocs; i++ {
