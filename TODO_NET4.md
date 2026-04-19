@@ -40,7 +40,7 @@ and its listed verification passes.
 - [x] `feat(spinlock): add lock rank 12 (timerListLock)` — extend
       `src/spinlock.go` lock-ordering comment with rank 12 for
       the afterTicks timer wheel. Verify: `make build` clean.
-- [ ] `feat(net): single-dispatcher timer wheel in afterTicks` —
+- [x] `feat(net): single-dispatcher timer wheel in afterTicks` —
       rewrite `src/afterticks.go`: add `timerEntry` array,
       `timerListLock`, `timerDispatcher` goroutine that walks the
       list on every Gosched cycle and fires matured channels,
