@@ -77,10 +77,15 @@ and its listed verification passes.
       `afterTicks(1000)` periodic goroutine; no piggyback in
       `netRxLoop`; netDiag body trimmed to RX-pipeline + Sched +
       tcpDiag. Test PASSes.
-- [ ] `chore(net): finalize scheduler counter decision` — either
+- [x] `chore(net): finalize scheduler counter decision` — either
       keep `afterTicksCalls` as a permanent diagnostic in
       `netDiag` (recommended) or revert. Document the decision
       in the commit body.
+      **Decision: keep.** Single uint64, single increment per
+      afterTicks call, one netDiag row. Matches the pattern of
+      existing permanent diagnostics (`e1000IRQCount`,
+      `NetRxLoopWakes`, `NetRxFrames`). Cheap ongoing signal
+      for any future scheduler-starvation regression.
 
 ## Phase 4 — Docs + reviewer pass
 
