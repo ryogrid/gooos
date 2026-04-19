@@ -16,8 +16,14 @@
 //   9. tcbTableLock   — TCP TCB table (src/tcp.go)
 //  10. tcpListenLock  — TCP listener + accept queue (src/tcp.go)
 //  11. tcpTimerLock   — TCP timer bookkeeping (src/tcp_retx.go)
+//  12. timerListLock  — afterTicks timer wheel (src/afterticks.go)
 //
 // A function holding lock N must not acquire lock M where M < N.
+//
+// Rank 12 (afterTicks timer wheel) is the highest: callers can
+// safely invoke afterTicks while holding any lower-ranked lock,
+// since the timer wheel itself never acquires another lock while
+// holding its own.
 //
 // See impldoc/smp_percpu_and_sync.md §4 for the full design.
 

@@ -37,7 +37,7 @@ and its listed verification passes.
 
 ## Phase 2 — Timer-wheel fix
 
-- [ ] `feat(spinlock): add lock rank 12 (timerListLock)` — extend
+- [x] `feat(spinlock): add lock rank 12 (timerListLock)` — extend
       `src/spinlock.go` lock-ordering comment with rank 12 for
       the afterTicks timer wheel. Verify: `make build` clean.
 - [ ] `feat(net): single-dispatcher timer wheel in afterTicks` —
