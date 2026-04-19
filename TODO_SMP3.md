@@ -135,12 +135,12 @@ Deferred transitively.
   - Mark resolved items (per milestones landed); retain deferred items with current status
   - Commit: `docs(smp): update deferred/known issues post-migration`
 
-- [ ] **C-4. Reviewer pass + CRITICAL/MAJOR fix-in**
+- [x] **C-4. Reviewer pass + CRITICAL/MAJOR fix-in**
   - Spawn `general-purpose` subagent with the review brief from `hoge.md §8`
   - Fix CRITICAL + MAJOR inline; record MINOR in `TODO_SMP3.md` Reviewer findings tail
   - Commit(s): per finding, `docs(review): incorporate SMP migration reviewer <finding>`
 
-- [ ] **C-5. Final completeness audit**
+- [x] **C-5. Final completeness audit**
   - `grep -rnE 'TODO|FIXME|XXX' src/ user/ scripts/ impldoc/` — diff vs. pre-session baseline; no new markers
   - Patch re-apply idempotency: fresh 0.40.1 tree → apply → apply (expect `already-applied:`)
   - `git status --porcelain` clean
