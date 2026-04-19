@@ -21,9 +21,18 @@ package main
 
 import "runtime"
 
+// afterTicksCalls counts every invocation of afterTicks. Plain
+// uint64 (no lock) — single-writer-per-goroutine racey increment
+// is acceptable for a diagnostic counter; the order-of-magnitude
+// signal is what matters. netDiag reads it to correlate
+// goroutine-spawn churn with the late-timing RX stall
+// (tcp_problem_review2/summary.md).
+var afterTicksCalls uint64
+
 // afterTicks returns a channel that becomes readable after `d`
 // PIT ticks (10 ms each). Replacement for time.After.
 func afterTicks(d uint64) <-chan struct{} {
+	afterTicksCalls++
 	ch := make(chan struct{}, 1)
 	go func() {
 		deadline := pitTicks + d
