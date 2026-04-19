@@ -65,13 +65,18 @@ and its listed verification passes.
 
 ## Phase 3 — Cleanup of WIP diagnostics
 
-- [ ] `chore(net): restore proper periodic netDiag` — remove the
+- [x] `chore(net): restore proper periodic netDiag` — remove the
       `netRxLoop`-piggyback diag at `src/net.go:70-85`, replace
       with a dedicated `afterTicks`-based periodic goroutine now
       that the timer wheel survives. Tone down the expanded
       `netDiag` body added in commit `fe627b5`/`2abec07` to the
       essentials. Verify: serial log shows a steady cadence of
       netDiag dumps over 30+ s without piggybacking on netRxLoop.
+      **Confirmed**: latetiming serial log shows two netDiag dumps
+      (at ~5 s and ~15 s) matching the new `afterTicks(500)`-then-
+      `afterTicks(1000)` periodic goroutine; no piggyback in
+      `netRxLoop`; netDiag body trimmed to RX-pipeline + Sched +
+      tcpDiag. Test PASSes.
 - [ ] `chore(net): finalize scheduler counter decision` — either
       keep `afterTicksCalls` as a permanent diagnostic in
       `netDiag` (recommended) or revert. Document the decision

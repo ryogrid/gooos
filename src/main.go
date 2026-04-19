@@ -392,17 +392,19 @@ func main() {
 		netInit()
 		testNetBuf()
 		testICMPEchoReply()
-		// Dump one complete diagnostic snapshot ~5 s after boot
-		// so automated test scripts have their initial grep
-		// target. Subsequent periodic dumps are fired from
-		// inside netRxLoop itself (see src/net.go
-		// netRxDiagPeriodIterations) because separate
-		// afterTicks-based goroutines demonstrably stop firing
-		// after a handful of iterations post-Ring-3, while
-		// netRxLoop's plain-Gosched loop keeps running.
+		// Periodic netDiag: first dump ~5 s after boot for
+		// test-script grep targets, then every ~10 s forever.
+		// The loop is safe post-Ring-3 because afterTicks is
+		// backed by the single-dispatcher timer wheel
+		// (src/afterticks.go) instead of the per-call spawn
+		// that previously leaked Task structs.
 		go func() {
 			<-afterTicks(500)
 			netDiag()
+			for {
+				<-afterTicks(1000)
+				netDiag()
+			}
 		}()
 	}
 
