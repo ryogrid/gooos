@@ -104,11 +104,19 @@ isr_common:
     pushq   %r15
 
     /* Bump per-CPU interrupt depth counter (%gs:4) for SMP-safe
-     * kernel-side checks, and the global counter for TinyGo's
-     * interrupt.In() (which needs to work during early boot
-     * before per-CPU GS base may be fully reliable). */
-    incl    gooos_in_interrupt_depth(%rip)
+     * kernel-side checks. The legacy global gooos_in_interrupt_depth
+     * has been retired per M2 (impldoc/smp_m2_ap_lapic_timer.md) —
+     * it was racy on SMP and is no longer referenced.
+     *
+     * For vector 0x80 (syscall), additionally bump the per-CPU
+     * syscall-dispatch depth (%gs:44) so runtime interrupt.In()
+     * returns false during syscall handlers and task.Pause() is
+     * allowed there. Any other vector leaves %gs:44 at 0. */
     incl    %gs:4
+    cmpq    $0x80, 120(%rsp)        /* vector == 0x80? */
+    jne     1f
+    incl    %gs:44                  /* syscall depth */
+1:
 
     /* Vector number is at RSP + 15*8 = RSP + 120 */
     /* Error code  is at RSP + 15*8 + 8 = RSP + 128 */
@@ -125,8 +133,12 @@ isr_common:
 
     movq    %rbx, %rsp              /* restore original RSP */
 
-    /* Leave ISR context — decrement both counters. */
-    decl    gooos_in_interrupt_depth(%rip)
+    /* Leave ISR context — mirror the prologue's conditional syscall-
+     * depth decrement before decrementing the plain ISR depth. */
+    cmpq    $0x80, 120(%rsp)
+    jne     2f
+    decl    %gs:44                  /* syscall depth */
+2:
     decl    %gs:4
 
     /* Restore all general-purpose registers */
@@ -149,26 +161,11 @@ isr_common:
     addq    $16, %rsp               /* skip vector number + error code */
     iretq
 
-    /* ---- gooos_in_interrupt_depth: ISR-depth counter ------------------ */
-    /* Incremented by the ISR prologue, decremented by the epilogue.
-     * Bridged into runtime/interrupt.In() via //go:linkname in
-     * src/goroutine_irq.go. Defined here (not in a Go file) so TinyGo's
-     * dead-code eliminator cannot strip it when no Go code references
-     * it — the only accesses are from assembly and from the patched
-     * TinyGo runtime (interrupt_gooos.go).
-     *
-     * v1 is BSP-only, so the plain (non-atomic) incl/decl above is
-     * safe: x86_64 IDT gates clear IF on entry, ISRs never call sti,
-     * and NMI observes the incl/decl as atomic at the instruction
-     * boundary. SMP v2 will need per-CPU counters (or lock incl) —
-     * see impldoc/goroutine_design_gc_and_smp.md §5. */
-    .section .bss
-    .global gooos_in_interrupt_depth
-    .align 4
-gooos_in_interrupt_depth:
-    .skip 4
-
-    .section .text
+    /* The global gooos_in_interrupt_depth .bss counter was retired
+     * in M2 (impldoc/smp_m2_ap_lapic_timer.md). The per-CPU
+     * %gs:4 + %gs:44 pair now provides SMP-safe ISR/syscall depth
+     * accounting; runtime interrupt.In() consumes them via
+     * readInterruptDepth / readSyscallDepth in src/stubs.S. */
 /* ---- ISR address table ------------------------------------------------- */
 /* A table of 256 function pointers, one per ISR stub.                       */
 /* Go code reads this via isrTableAddr() to populate IDT entries.            */

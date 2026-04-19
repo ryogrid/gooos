@@ -439,15 +439,17 @@ func processExit(exitCode uintptr) {
 		proc.poolIdx = -1
 	}
 	// This goroutine was entered from an int 0x80 ISR, so the ISR
-	// prologue bumped both the global and per-CPU interrupt depth.
+	// prologue bumped %gs:4 (InterruptDepth) and %gs:44 (SyscallDepth).
 	// The ISR epilogue on this goroutine's kernel stack will never
-	// run (taskPause below parks forever). Decrement both counters.
-	if gooosInInterruptDepth > 0 {
-		gooosInInterruptDepth--
-	}
-	if readInterruptDepth() > 0 {
-		idx := cpuID()
+	// run (taskPause below parks forever). Decrement both per-CPU
+	// counters now. The legacy global gooos_in_interrupt_depth was
+	// retired in M2 (impldoc/smp_m2_ap_lapic_timer.md).
+	idx := cpuID()
+	if perCPUBlocks[idx].InterruptDepth > 0 {
 		perCPUBlocks[idx].InterruptDepth--
+	}
+	if perCPUBlocks[idx].SyscallDepth > 0 {
+		perCPUBlocks[idx].SyscallDepth--
 	}
 	taskPause() // never returns for this goroutine
 	for {
