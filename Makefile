@@ -5,12 +5,14 @@
 
 # Note: LD is overridden (not ?=) because make has a builtin LD=ld.
 #
-# TINYGOROOT points to a user-writable copy of the TinyGo tree so the
-# kernel build can install its own bare-metal runtime files
-# (runtime_gooos.go, interrupt_gooos.go) without sudo. The system
-# TinyGo at /usr/local/lib/tinygo is root-owned. See
-# scripts/patch_tinygo_runtime.sh and TODO.md "Deferred".
-TINYGOROOT ?= $(HOME)/.local/tinygo
+# TINYGOROOT points to a user-writable copy of the patched TinyGo 0.40.1
+# tree so the kernel build can install its own bare-metal runtime files
+# (runtime_gooos.go, interrupt_gooos.go, wait_gooos.go, ...) without sudo.
+# The 0.40.1 release is used because it ships the `scheduler.cores`
+# multi-core runtime that unblocks gooos SMP goroutine scheduling; see
+# impldoc/smp_migration_overview.md. Run scripts/patch_tinygo_runtime.sh
+# to (re)apply the gooos runtime patch after refreshing the tree.
+TINYGOROOT ?= $(HOME)/.local/tinygo0.40.1
 export TINYGOROOT
 TINYGO ?= $(TINYGOROOT)/bin/tinygo
 AS     ?= as
