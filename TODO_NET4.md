@@ -50,12 +50,18 @@ and its listed verification passes.
 - [x] `feat(main): spawn timer dispatcher at boot` — call
       `afterTicksInit()` in `src/main.go` after `pitInit`, before
       `netInit`/`ring3Start`. Verify: `make build` clean.
-- [ ] `test(net): latetiming PASSes + phase1..5 regression green` —
+- [x] `test(net): latetiming PASSes + phase1..5 regression green` —
       run all six scripts. Verify:
       `scripts/test_tcp_latetiming.sh` exits 0;
       `scripts/test_tcp_phase{1..5}.sh` each exit 0;
       the Phase-1 counter from the instrumentation still rises
       (afterTicks is still being called), but the stall is gone.
+      **Confirmed**: latetiming PASS 3x in a row; phase1..5 all
+      PASS; post-fix serial log shows 4 netDiag dumps (vs 3
+      pre-fix before the stall froze the loop) with
+      afterTicksCalls climbing 196 → 586 while `netRxLoop`
+      kept advancing iter=1000 → 3000. Evidence archived at
+      `tmp/serial_post_fix.log`.
 
 ## Phase 3 — Cleanup of WIP diagnostics
 
