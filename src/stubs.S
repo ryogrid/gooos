@@ -466,6 +466,18 @@ readInterruptDepth:
     movl    %gs:4, %eax
     ret
 
+    /* ---- readSyscallDepth: per-CPU syscall-dispatch depth counter ---- */
+    /* readSyscallDepth() uint32                                         */
+    /* Reads %gs:44 (pcpuOffSyscallDepth). Set by the ISR prologue when   */
+    /* the incoming interrupt vector is 0x80 (syscall); cleared by the    */
+    /* matching epilogue. interrupt.In() uses this to distinguish a real  */
+    /* ISR from a syscall handler so task.Pause() is allowed during       */
+    /* blocking syscalls. */
+    .global readSyscallDepth
+readSyscallDepth:
+    movl    %gs:44, %eax
+    ret
+
     /* ---- pause: x86 spin-wait hint ----------------------------------- */
     /* pause()                                                           */
     /* CPU pipeline hint for spin-wait loops. Reduces power and avoids   */

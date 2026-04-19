@@ -21,26 +21,28 @@ const ia32GSBASE = 0xC0000101
 // byte offsets documented below.
 type PerCPU struct {
 	CPUIndex       uint32  // offset 0:  CPU index (0 = BSP)
-	InterruptDepth uint32  // offset 4:  ISR nesting counter
+	InterruptDepth uint32  // offset 4:  ISR nesting counter (%gs:4)
 	SystemStack    uintptr // offset 8:  scheduler stack for TinyGo
 	TSSPtr         uintptr // offset 16: pointer to this CPU's TSS
 	APICID         uint32  // offset 24: LAPIC APIC ID
 	WantReschedule uint32  // offset 28: timer preemption flag
 	CurrentPML4    uintptr // offset 32: CR3 of current goroutine
 	CurrentPoolIdx int32   // offset 40: ring3 pool slot (-1 if kernel)
-	_pad           [20]byte // pad to 64-byte cache line boundary
+	SyscallDepth   uint32  // offset 44: syscall-dispatch depth (%gs:44)
+	_pad           [16]byte // pad to 64-byte cache line boundary
 }
 
 // Assembly-visible byte offsets (must match struct layout above).
 const (
-	pcpuOffCPUIndex        = 0
-	pcpuOffInterruptDepth  = 4
-	pcpuOffSystemStack     = 8
-	pcpuOffTSSPtr          = 16
-	pcpuOffAPICID          = 24
-	pcpuOffWantReschedule  = 28
-	pcpuOffCurrentPML4     = 32
-	pcpuOffCurrentPoolIdx  = 40
+	pcpuOffCPUIndex       = 0
+	pcpuOffInterruptDepth = 4
+	pcpuOffSystemStack    = 8
+	pcpuOffTSSPtr         = 16
+	pcpuOffAPICID         = 24
+	pcpuOffWantReschedule = 28
+	pcpuOffCurrentPML4    = 32
+	pcpuOffCurrentPoolIdx = 40
+	pcpuOffSyscallDepth   = 44
 )
 
 // perCPUBlocks is the .bss-resident array. Each entry is padded to
