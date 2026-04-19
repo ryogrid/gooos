@@ -9,6 +9,19 @@
 //
 // exercises the full 3WHS → data → close sequence through Ring-3
 // user code. Mirrors the scope of udpecho.elf.
+//
+// Connections are handled **serially** — one at a time in the
+// main goroutine. A `go handleConn(cfd)` pattern would be more
+// idiomatic but deadlocks against gooos's accepted v1
+// limitation that a blocking syscall parks the entire user
+// process's ring3Wrapper goroutine, freezing every user
+// goroutine in the process (see
+// `impldoc/userspace_scheduler_integration.md` §4). Since
+// `TCPAccept` is blocking, spawning `handleConn` in a
+// goroutine means it would never get scheduled until accept
+// returns — which never happens while accept is blocked. §4.3
+// explicitly prescribes this "blocking I/O inline" pattern;
+// `udpecho.elf` follows it.
 
 package main
 
@@ -35,25 +48,21 @@ func main() {
 		return
 	}
 
+	var buf [1500]byte
 	for {
 		cfd, _ := gooos.TCPAccept(fd, 0 /* block forever */)
 		if cfd < 0 {
 			continue
 		}
-		go handleConn(cfd)
-	}
-}
-
-func handleConn(fd int) {
-	defer gooos.Close(fd)
-	var buf [1500]byte
-	for {
-		n := gooos.TCPRecv(fd, buf[:], 0)
-		if n <= 0 {
-			return // 0 = peer EOF; <0 = error
+		for {
+			n := gooos.TCPRecv(cfd, buf[:], 0)
+			if n <= 0 {
+				break // 0 = peer EOF; <0 = error
+			}
+			if gooos.TCPSendAll(cfd, buf[:n]) <= 0 {
+				break
+			}
 		}
-		if gooos.TCPSendAll(fd, buf[:n]) <= 0 {
-			return
-		}
+		gooos.Close(cfd)
 	}
 }
