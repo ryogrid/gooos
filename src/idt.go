@@ -91,6 +91,20 @@ func setGateDPL3(vector int) {
 	idtTable[vector].TypeAttr = gateInterruptUser
 }
 
+// idtLoadAP loads the (already-populated) IDT into this AP's IDTR.
+// Must be called on every AP before Ring-3 transitions or any
+// exception-triggering code path, since each CPU has its own IDTR
+// and an AP starts with IDTR = {base=0, limit=0xFFFF} (x86 reset
+// default). Any exception before this call triple-faults because
+// the CPU reads a zero-filled descriptor from physical address 0.
+// Root cause of the AP Ring-3 `iretq` triple-fault documented in
+// impldoc/smp_deferred_and_known_issues.md §2.1.
+//
+//go:nosplit
+func idtLoadAP() {
+	lidt(uintptr(unsafe.Pointer(&idtDesc[0])))
+}
+
 // isrTableAddr returns the base address of the 256-entry ISR stub
 // address table in assembly. Implemented in isr.S.
 //

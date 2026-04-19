@@ -232,6 +232,15 @@ func apEntry(apIndex uint64) {
 	// Load per-CPU GDT + TSS for this AP.
 	gdtInitPerCPU(int(apIndex) + 1)
 
+	// Load the IDT on this AP. Each CPU has its own IDTR, and an
+	// AP starts with IDTR = {base=0, limit=0xFFFF} (x86 reset
+	// default). Without this, any exception on the AP triple-faults
+	// because the CPU reads a zero-filled descriptor from address 0
+	// — the root cause of the Ring-3 iretq triple-fault investigated
+	// in M4 (impldoc/smp_m4_ring3_fault.md, evidence in
+	// tmp/m4_qemu.log: "IDT=     0000000000000000 0000ffff").
+	idtLoadAP()
+
 	// Enable this AP's LAPIC (software-enable bit + spurious vector).
 	// The BSP does this in smpInit; APs must do it themselves.
 	svr := lapicRead(lapicRegSVR)
