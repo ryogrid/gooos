@@ -471,6 +471,16 @@ What is BROKEN post-boot:
 
 ### Investigation update — root cause is upstream of e1000
 
+**STATUS (2026-04-19): RESOLVED.** Fixed via a single-dispatcher
+timer wheel in `src/afterticks.go` that eliminates the per-call
+goroutine spawn (see `TODO_NET4.md` and
+`current_impl_doc/known_issues.md` §"afterTicks single-dispatcher
+timer wheel"). `scripts/test_tcp_latetiming.sh` now PASSes
+reproducibly; `scripts/test_tcp_phase{1..5}.sh` remain green.
+The investigation notes below are kept as history of the
+diagnostic path — particularly the evidence of what was
+ruled out — rather than active guidance.
+
 The Option C investigation session (instrumentation commit
 follows) uncovered that the e1000 RX stall is **not** a
 NIC-level bug. The actual root cause:

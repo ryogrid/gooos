@@ -89,7 +89,7 @@ and its listed verification passes.
 
 ## Phase 4 — Docs + reviewer pass
 
-- [ ] `docs+review(net): record fix, reviewer pass, close the bug` —
+- [x] `docs+review(net): record fix, reviewer pass, close the bug` —
       Add "Late-timing RX stall" entry to
       `current_impl_doc/known_issues.md` under "Active Workarounds"
       or "Resolved issues". Strike the
@@ -101,6 +101,12 @@ and its listed verification passes.
       changed (not expected). Verify: all checkboxes in this file
       `- [x]`; `grep -rnE 'TODO|FIXME|XXX' src/ user/` shows no
       new markers vs baseline; `git status --porcelain` clean.
+      **Confirmed**: known_issues.md entry added; TODO_NET3
+      banner prepended; reviewer verdict "land as-is" with 0
+      CRITICAL / 0 MAJOR / 4 MINOR; M1+M4 applied inline, M2+M3
+      recorded below; grep markers clean; `make build && make
+      lint && make verify-globals` clean. README unchanged —
+      user-visible behaviour (Path D/E demo) is identical.
 
 ## Deferred further (not in this TODO)
 
@@ -109,11 +115,40 @@ and its listed verification passes.
 
 ## Reviewer findings
 
+Reviewer subagent ran 2026-04-19 against commits
+`32a1c4d..<docs commit>` (this session). Verdict: **land as-is.**
+Test reproduction: `scripts/test_tcp_latetiming.sh` exit 0,
+`scripts/test_tcp_phase1.sh` exit 0, `grep -rnE
+'TODO|FIXME|XXX' src/ user/` = 0 new markers.
+
 CRITICAL:
-- (none yet)
+- (none)
 
 MAJOR:
-- (none yet)
+- (none)
 
 MINOR:
-- (none yet)
+- **M1** — `afterTicksCalls` counter comment said "single
+  writer per call site", but the counter is written from every
+  call site concurrently. Fixed inline this session:
+  `src/afterticks.go` comment reworded to "multi-writer racey
+  increment, acceptable for a diagnostic counter". Code
+  behaviour was always correct.
+- **M2** — dispatcher `ready` buffer (`[256]chan<- struct{}`)
+  lives on the goroutine stack, ~2 KiB of the 8 KiB default.
+  Functionally fine at current scale; if `maxPendingTimers`
+  ever grows to 1024+, move to package-level storage
+  (dispatcher is single-reader so no lock needed). **Deferred
+  — no action required now.**
+- **M3** — dispatcher does an O(N=256) linear scan on every
+  Gosched. Steady state has <50 active, so most slots are
+  empty. A sorted min-heap or bucketed wheel would be
+  warranted if live-timer counts grow by an order of
+  magnitude. **Deferred — track via profile, not
+  speculatively.**
+- **M4** — overflow path originally used a bare `ch <-
+  struct{}{}` send. The channel is buffered cap 1 so the send
+  never blocks today, but a future refactor that shrinks the
+  buffer would silently deadlock. Fixed inline this session
+  by wrapping in `select { case ch <- struct{}{}: default: }`,
+  symmetric with the dispatcher's send pattern.

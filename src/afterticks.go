@@ -20,7 +20,7 @@
 // accumulated hundreds of dead tasks within ~15 s, at which
 // point cooperative scheduling stopped progressing and every
 // kernel service goroutine including netRxLoop stalled. See
-// tcp_problem_review2/ and TODO_NET4.md for the full trail.
+// tcp_problem_review2/ for the full trail.
 //
 // The fix: a single long-lived `timerDispatcher` goroutine owns
 // all deadline tracking. Every afterTicks(d) call inserts
@@ -54,10 +54,11 @@ package main
 import "runtime"
 
 // afterTicksCalls counts every invocation of afterTicks.
-// Plain uint64 (single writer per call site, racey increment
-// OK for a diagnostic counter). netDiag prints it to confirm
-// the timer wheel stays stable (growth rate must match the
-// hot-loop cadence but the stall must not reappear).
+// Plain uint64 — multi-writer racey increment, acceptable for a
+// diagnostic counter where the order-of-magnitude signal matters
+// more than exactness. netDiag prints it to confirm the timer
+// wheel stays stable (growth rate must match the hot-loop
+// cadence but the stall must not reappear).
 var afterTicksCalls uint64
 
 // maxPendingTimers caps the number of in-flight afterTicks
@@ -136,6 +137,12 @@ func afterTicks(d uint64) <-chan struct{} {
 	}
 	timerListLock.Release(flags)
 	// Overflow: fire immediately so the caller doesn't deadlock.
-	ch <- struct{}{}
+	// Non-blocking send — symmetric with the dispatcher's send
+	// so the channel semantics stay consistent if someone later
+	// shrinks the buffer to 0.
+	select {
+	case ch <- struct{}{}:
+	default:
+	}
 	return ch
 }
