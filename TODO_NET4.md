@@ -20,7 +20,7 @@ and its listed verification passes.
 
 ## Phase 1 — Instrumentation (confirm the hypothesis)
 
-- [ ] `diag(net): afterTicks call counter` — add `afterTicksCalls`
+- [x] `diag(net): afterTicks call counter` — add `afterTicksCalls`
       uint64 in `src/afterticks.go` incremented on every call.
       Verify: `make build` clean.
 - [ ] `diag(net): expose afterTicks counter in netDiag` — add row

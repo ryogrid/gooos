@@ -198,6 +198,7 @@ func netDiag() {
 		" idleParks=" + utoa(s.NetRxLoopWakes) +
 		" netRxFrames=" + utoa(s.NetRxFrames) +
 		" pitTicks=" + utoa(pitTicks))
+	serialPrintln("Sched: afterTicksCalls=" + utoa(afterTicksCalls))
 	// DIAG: raw ring state — if netRxFrames stays 0 despite IRQs
 	// firing, this tells us whether hardware actually wrote a
 	// packet (RDH advanced, DD set) or whether our polling is
