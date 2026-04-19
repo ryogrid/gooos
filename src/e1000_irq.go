@@ -42,11 +42,6 @@ var lastICR uint32
 func handleE1000IRQ(vector uint64) {
 	e1000IRQCount++
 
-	// DIAG — remove once RX path is stable again.
-	if e1000IRQCount <= 20 {
-		serialPrintln("e1000 IRQ fired")
-	}
-
 	// ICR is clear-on-read: reading it both tells us what happened
 	// and acknowledges the causes so the NIC can re-assert on the
 	// next event.

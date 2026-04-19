@@ -60,18 +60,26 @@ func netInit() {
 // an unsolvable race where ISR-context channel sends couldn't
 // wake a parked receiver under gooos's cooperative scheduler.
 // Polling is slightly more CPU-hungry but trivially correct.
+//
+// DIAG: also fires the periodic netDiag dump every ~1000
+// iterations (~5 s at observed ~200/s cadence). Piggybacking
+// on netRxLoop sidesteps a separate bug where afterTicks-based
+// periodic goroutines stop firing after 2-6 iterations despite
+// pitTicks still advancing — netRxLoop itself is immune
+// because it never parks / never waits on afterTicks.
+const netRxDiagPeriodIterations uint64 = 1000
+
 func netRxLoop() {
-	lastRDH := uint32(0xFFFFFFFF)
+	nextDiagAt := netRxDiagPeriodIterations
+	iter := uint64(0)
 	for {
-		rdh := e1000Read(e1000RDH)
-		if rdh != lastRDH {
-			if lastRDH != 0xFFFFFFFF {
-				serialPrintln("netRxLoop: RDH changed")
-			}
-			lastRDH = rdh
-		}
 		drainRxRing()
 		statsInc(&netStats.NetRxLoopWakes) // counts iterations
+		iter++
+		if iter >= nextDiagAt {
+			netDiag()
+			nextDiagAt = iter + netRxDiagPeriodIterations
+		}
 		runtime.Gosched()
 	}
 }
@@ -188,7 +196,8 @@ func netDiag() {
 	serialPrintln("Buf alloc fails: " + utoa(s.BufAllocFail))
 	serialPrintln("RX pipeline: e1000IRQs=" + utoa(e1000IRQCount) +
 		" idleParks=" + utoa(s.NetRxLoopWakes) +
-		" netRxFrames=" + utoa(s.NetRxFrames))
+		" netRxFrames=" + utoa(s.NetRxFrames) +
+		" pitTicks=" + utoa(pitTicks))
 	// DIAG: raw ring state — if netRxFrames stays 0 despite IRQs
 	// firing, this tells us whether hardware actually wrote a
 	// packet (RDH advanced, DD set) or whether our polling is
@@ -196,10 +205,30 @@ func netDiag() {
 	next := (rxTail + 1) % e1000NumRxDesc
 	serialPrintln("RX ring: rxTail=" + utoa(uint64(rxTail)) +
 		" next=" + utoa(uint64(next)) +
-		" DDstatus=" + hextoa(uint64(rxDescStatus(next))) +
 		" RDH=" + utoa(uint64(e1000Read(e1000RDH))) +
 		" RDT=" + utoa(uint64(e1000Read(e1000RDT))) +
 		" lastICR=" + hextoa(uint64(lastICR)))
+	// DIAG: regs that shouldn't change post-boot. If any of
+	// these drift from e1000Init's configured values, a code
+	// path is corrupting NIC state.
+	serialPrintln("RX config: IMS=" + hextoa(uint64(e1000Read(e1000IMS))) +
+		" RCTL=" + hextoa(uint64(e1000Read(e1000RCTL))) +
+		" RDBAL=" + hextoa(uint64(e1000Read(e1000RDBAL))) +
+		" RDBAH=" + hextoa(uint64(e1000Read(e1000RDBAH))) +
+		" RDLEN=" + hextoa(uint64(e1000Read(e1000RDLEN))))
+	// DIAG: DD-bit snapshot for the first 8 RX descriptors
+	// (+rxTail, so covers the ones the NIC would next write).
+	// Format: "DD[0..7] = S0 S1 ... S7" where each Sx is the
+	// descriptor's status byte in hex (bit 0 = DD).
+	serialPrintln("DD[0..7] = " +
+		hextoa(uint64(rxDescStatus(0))) + " " +
+		hextoa(uint64(rxDescStatus(1))) + " " +
+		hextoa(uint64(rxDescStatus(2))) + " " +
+		hextoa(uint64(rxDescStatus(3))) + " " +
+		hextoa(uint64(rxDescStatus(4))) + " " +
+		hextoa(uint64(rxDescStatus(5))) + " " +
+		hextoa(uint64(rxDescStatus(6))) + " " +
+		hextoa(uint64(rxDescStatus(7))))
 	tcpDiag()
 	serialPrintln("=== end ===")
 }

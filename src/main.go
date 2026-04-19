@@ -386,27 +386,17 @@ func main() {
 		netInit()
 		testNetBuf()
 		testICMPEchoReply()
-		// Dump a complete diagnostic snapshot ~5 s after boot so
-		// automated test scripts have a grep target, then every
-		// 10 s thereafter so operators can watch counters evolve
-		// during manual testing (e.g. late-timing RX diagnosis).
+		// Dump one complete diagnostic snapshot ~5 s after boot
+		// so automated test scripts have their initial grep
+		// target. Subsequent periodic dumps are fired from
+		// inside netRxLoop itself (see src/net.go
+		// netRxDiagPeriodIterations) because separate
+		// afterTicks-based goroutines demonstrably stop firing
+		// after a handful of iterations post-Ring-3, while
+		// netRxLoop's plain-Gosched loop keeps running.
 		go func() {
-			<-afterTicks(500) // first dump at ~5 s
+			<-afterTicks(500)
 			netDiag()
-			for {
-				<-afterTicks(1000) // every 10 s afterwards
-				netDiag()
-			}
-		}()
-
-		// DIAG: lightweight heartbeat goroutine — prints a line
-		// every 2 s so we can tell whether kernel goroutines are
-		// still being scheduled after the Ring-3 shell starts.
-		go func() {
-			for {
-				<-afterTicks(200)
-				serialPrintln("heartbeat")
-			}
 		}()
 	}
 

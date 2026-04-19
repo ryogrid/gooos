@@ -469,6 +469,135 @@ What is BROKEN post-boot:
   netRxLoop RDH-change print, etc.) and restore a clean
   ISR.
 
+### Investigation update — root cause is upstream of e1000
+
+The Option C investigation session (instrumentation commit
+follows) uncovered that the e1000 RX stall is **not** a
+NIC-level bug. The actual root cause:
+
+**TinyGo cooperative scheduler stops dispatching kernel
+goroutines ~12-16 seconds after Ring-3 shell startup, even
+though the PIT IRQ (and the idle sti/hlt loop it wakes)
+continues to run.**
+
+Evidence (all captured, reproducible via
+`scripts/test_tcp_latetiming.sh` which FAILs on HEAD):
+
+1. A one-line PIT-handler diagnostic (`pit alive` every
+   200 ticks) fires **continuously for 30+ seconds** —
+   pitTicks is advancing the whole time.
+2. A 2-second `heartbeat` goroutine (plain `afterTicks(200)`
+   in a `for{}` loop) fires **6 times and stops**.
+3. A self-rescheduling periodic netDiag goroutine fires
+   **~2 times and stops**.
+4. `netRxLoop` itself (the tightest Gosched-yield loop in
+   the kernel) survives two piggyback netDiag fires
+   (iter=1000, iter=2000) but stops before iter=3000.
+5. After the stall, the e1000 ISR still fires — `lastICR`
+   in a fresh post-stall netDiag snapshot would update —
+   but `rxReadyFlag` is set and nobody polls it because
+   `netRxLoop`'s goroutine is no longer being scheduled.
+   Same mechanism by which host→guest SYN delivered at
+   t=16 s was never drained into `drainRxRing`.
+
+Hypotheses ruled out by this investigation (all covered by
+the Option C items 1-3 above):
+
+- **CR3 / identity-map corruption** — refuted because
+  `netDiag`'s `e1000Read(e1000RDH)` succeeds (returns 0,
+  matching init state) after the stall begins. That MMIO
+  read proves the BAR0 mapping is still live in the active
+  PML4. Also `newProcPML4` (`src/proc_pml4.go:66-92`)
+  copies boot PDP[3] **after** `e1000Init` runs, so the
+  e1000 PT chain is shared into every per-process PML4.
+- **GC reclaiming DMA pages** — refuted:
+  `allocPagesContig` (`src/vm.go:114-129`) returns from a
+  bump allocator, not the Go heap, so the GC has no visibility
+  into those physical pages. `uintptr` storage for
+  `rxDescRing` / `rxBufs` / etc. means the GC cannot confuse
+  them with heap pointers either.
+- **IMS / IMC cleared after boot** — refuted: `grep
+  'e1000Write(e1000IMS' src/` and `'e1000Write(e1000IMC'`
+  each yield exactly one hit, both in `e1000Init`.
+
+Hypothesis **not** ruled out, likely the real story:
+
+- **TinyGo task slot / stack leak** in gooos's cooperative
+  scheduler. `afterTicks` spawns a fresh sub-goroutine on
+  every call (`go func() { for pitTicks<deadline; Gosched();
+  }; ch <- struct{}{} }()`). Each call is a new task.
+  heartbeat's 2-second cadence spawns one every 2 seconds;
+  6 spawns and then the pool is exhausted and no new task
+  can be admitted. netRxLoop itself is a **long-lived**
+  goroutine with no sub-spawns, so it survives longer, but
+  it may depend on channel / scheduler state that the
+  exhausted pool eventually corrupts — OR the Gosched call
+  itself fails once the pool is in a bad state.
+- **Ring-3 shell yield behaviour.** The shell's syscall
+  path may be yielding in a way that starves cooperative
+  kernel goroutines — plausible because the stall timing
+  aligns with shell activity (boot-test `testAfterTicks`
+  spawns a kernel goroutine that fires "afterTicks: OK"
+  which appears AFTER the shell prompt, not before;
+  suggests scheduler prefers Ring-3 over kernel goroutines).
+
+### Next-next-session plan (fix design)
+
+The fix session should:
+
+1. Instrument the TinyGo scheduler to report the goroutine
+   count / stack-pool occupancy on every netDiag fire. If
+   the count plateaus at the limit when the stall begins,
+   that's the confirmation.
+2. Options for the real fix:
+   - **(a) Reuse** an afterTicks goroutine instead of
+     spawning a new sub-goroutine per call. Reuse comes
+     with its own plumbing (a timer wheel or single
+     scheduler goroutine).
+   - **(b) Bump the task slot count** in the TinyGo
+     scheduler (if it's a fixed cap). Least invasive
+     if the cap is the cause.
+   - **(c) Rewrite the RX dispatch path to not depend on
+     any kernel goroutine**. The e1000 ISR writes to the
+     RX ring directly (not the netbuf) and processes
+     packets inline in the ISR. Impractical — ISR
+     should stay fast — but possible with a deferred
+     bottom half that's driven by the e1000 TX-done IRQ
+     instead of a polling goroutine.
+   - **(d) Give netRxLoop a dedicated non-cooperative
+     thread** (a separate task that doesn't share the
+     scheduler's runqueue). Needs deeper TinyGo-runtime
+     work.
+3. Once the fix is in, `scripts/test_tcp_latetiming.sh`
+   must PASS, `scripts/test_tcp_phase{1..5}.sh` must
+   still PASS, and the "netDiag only fires once" symptom
+   goes away.
+
+### Instrumentation left in place (stacks on WIP commit `fe627b5`)
+
+The commit from this investigation session keeps:
+
+- `e1000IRQCount`, `rxReadyFlag`, `lastICR` (in
+  `src/e1000_irq.go`).
+- `NetRxLoopWakes` / `NetRxFrames` / augmented netDiag
+  output including IMS / RCTL / RDBAL/H / RDLEN / DD bits
+  for descriptors 0..7 / `lastICR` / `pitTicks`.
+- `netRxLoop`-piggybacked periodic netDiag every ~5 s
+  (`netRxDiagPeriodIterations = 1000`) — only fires while
+  `netRxLoop` is still alive, so its absence is itself a
+  stall indicator.
+- New `scripts/test_tcp_latetiming.sh` — expected-FAIL
+  harness reproducing the bug.
+
+Removed in this session:
+- `e1000 IRQ fired` and `netRxLoop: RDH changed` hot-path
+  prints (too noisy now that structured diagnostics
+  suffice).
+- `pit alive` ISR print (only needed to prove PIT itself
+  keeps firing).
+- `heartbeat` goroutine — the netRxLoop-piggybacked diag
+  serves the same role more usefully.
+
 ## Deferred further (not in this TODO)
 
 - **T1.9 / T1.10 pcap verification of TCB-exhaustion +
