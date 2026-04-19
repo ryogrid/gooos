@@ -25,7 +25,7 @@ Ring-3 target with its own full goroutine scheduler.
 
 Key: `scheduler=tasks` + `build-tags=["gooos","baremetal"]`
 means the user build picks up
-`~/.local/tinygo/src/runtime/runtime_gooos_user.go` — a sibling
+`~/.local/tinygo0.40.1/src/runtime/runtime_gooos_user.go` — a sibling
 of the kernel's `runtime_gooos.go` that routes `sleepTicks`
 through `sys_sleep` and `putchar` through `sys_write(fd=1)`.
 See `impldoc/userspace_goroutines_overview.md`.

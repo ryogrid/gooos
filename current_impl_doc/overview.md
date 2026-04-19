@@ -3,7 +3,7 @@
 ## What is gooos
 
 An experimental x86_64 operating system written in **Go (TinyGo
-0.33.0) + GNU assembly**. The kernel runs on **TinyGo's native
+0.40.1) + GNU assembly**. The kernel runs on **TinyGo's native
 goroutine runtime** (`scheduler=tasks`, `gc=conservative`):
 service loops are plain `go func()` goroutines, IPC uses Go's
 built-in `chan` and `select`, and Ring-3 processes are
@@ -121,7 +121,7 @@ flowchart LR
 | Kernel GC | `conservative` | `src/target.json:8` |
 | User scheduler | TinyGo `scheduler=tasks` | `user/target.json:9` |
 | User GC | `leaking` | `user/target.json:8` |
-| Preemption | **cooperative** — PIT IRQ fires but doesn't preempt goroutines | `src/pit.go` + `~/.local/tinygo/src/runtime/runtime_gooos.go` (patched) |
+| Preemption | **cooperative** — PIT IRQ fires but doesn't preempt goroutines | `src/pit.go` + `~/.local/tinygo0.40.1/src/runtime/runtime_gooos.go` (patched) |
 | Goroutine count | unbounded (heap-allocated tasks) | TinyGo runtime |
 | Active kernel goroutines at shell-start | `fsTask`, `keyboardPump`, `ring3Wrapper(sh)`, plus transient `afterTicks` workers | `src/main.go` |
 

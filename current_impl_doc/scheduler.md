@@ -4,8 +4,10 @@ gooos **does not have a custom scheduler**. Every running
 thing in the kernel — service loops, Ring-3 wrappers,
 `afterTicks` timers, per-process exit watchers — is a TinyGo
 goroutine. TinyGo's `scheduler=tasks` runtime (loaded from
-`~/.local/tinygo/src/runtime/scheduler_any.go` + a few gooos
-patches) does all the context-switching.
+`~/.local/tinygo0.40.1/src/runtime/scheduler_cooperative.go`
++ `scheduler.go` common + a few gooos patches; see
+`impldoc/smp_migration_overview.md` for the 0.33.0 → 0.40.1
+migration background) does all the context-switching.
 
 ## Scheduler Anatomy
 
@@ -38,7 +40,7 @@ block-beta
 
 ## gooos Hooks into TinyGo's Runtime
 
-Patched files under `~/.local/tinygo/src/` (via
+Patched files under `~/.local/tinygo0.40.1/src/` (via
 `scripts/tinygo_runtime.patch`):
 
 | File | Hook |
