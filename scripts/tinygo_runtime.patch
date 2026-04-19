@@ -280,7 +280,7 @@ index a95edbfd..39758646 100644
  	gcLock.Lock()
  	runGC()
 diff --git a/src/runtime/scheduler_cooperative.go b/src/runtime/scheduler_cooperative.go
-index 2c2bf099..dd1ed3b0 100644
+index 2c2bf099..c94723b0 100644
 --- a/src/runtime/scheduler_cooperative.go
 +++ b/src/runtime/scheduler_cooperative.go
 @@ -34,9 +34,34 @@ var mainExited bool
@@ -450,7 +450,7 @@ index 2c2bf099..dd1ed3b0 100644
  		if timerQueue != nil && now >= timerQueue.whenTicks() {
  			scheduleLog("--- timer awoke")
  			delay := ticksToNanoseconds(now - timerQueue.whenTicks())
-@@ -164,13 +237,22 @@ func scheduler(returnAtDeadlock bool) {
+@@ -164,13 +237,25 @@ func scheduler(returnAtDeadlock bool) {
  			tn := timerQueue
  			timerQueue = tn.next
  			tn.next = nil
@@ -463,10 +463,13 @@ index 2c2bf099..dd1ed3b0 100644
  
 -		t := runqueue.Pop()
 +		t := runqueues[gooosCpuID()].Pop()
-+		if t == nil {
-+			// Local queue empty — try to steal work from peer CPUs.
-+			t = stealWork()
-+		}
++		// stealWork is intentionally NOT called here under Wave 1 (tasks
++		// mode). Work stealing triggers the AP Ring-3 iretq triple-fault
++		// documented in impldoc/smp_deferred_and_known_issues.md §2.1
++		// because APs may steal ring3Wrapper goroutines and crash on
++		// their per-CPU TSS transition. Enabling stealWork is deferred
++		// to milestone M3/M4 after the underlying Ring-3 AP fault is
++		// resolved. APs therefore idle in waitForEvents under -smp N.
  		if t == nil {
 +			gooos_schedSpinlockAcquire(&schedLock)
  			if sleepQueue == nil && timerQueue == nil {
@@ -474,7 +477,7 @@ index 2c2bf099..dd1ed3b0 100644
  				if returnAtDeadlock {
  					return
  				}
-@@ -192,6 +274,7 @@ func scheduler(returnAtDeadlock bool) {
+@@ -192,6 +277,7 @@ func scheduler(returnAtDeadlock bool) {
  					timeLeft = timeLeftForTimer
  				}
  			}
