@@ -170,7 +170,7 @@ gooos/
 
 Tested on **WSL2 Ubuntu 24.04** with:
 
-- **TinyGo 0.33.0** (LLVM 18.1.2) — install from the official `.deb` at <https://github.com/tinygo-org/tinygo/releases>
+- **TinyGo 0.40.1** (LLVM 20.1.1) — install from the official `.deb` or tarball at <https://github.com/tinygo-org/tinygo/releases>
 - **binutils** (`as`, `ld`, `objdump`, `readelf`, `nm`) — via `build-essential`
 - **lld** — provides `ld.lld`
 - **grub-pc-bin**, **grub-common** — provide `grub-file` and `grub-mkrescue`
@@ -190,14 +190,15 @@ sudo apt install -y build-essential grub-pc-bin grub-common xorriso mtools qemu-
 gooos needs a set of local changes to TinyGo's runtime for
 `scheduler=tasks` to work in Ring 0, plus SMP v2 per-CPU
 runqueue support. The system TinyGo at
-`/usr/local/lib/tinygo/` is root-owned, so the build uses a
-user-writable copy at `$HOME/.local/tinygo/` (overridable via
-the `TINYGOROOT` environment variable the Makefile exports).
+`/usr/local/lib/tinygo0.40.1/` (or wherever the `.deb` installs
+it) is root-owned, so the build uses a user-writable copy at
+`$HOME/.local/tinygo0.40.1/` (overridable via the `TINYGOROOT`
+environment variable the Makefile exports).
 
 The full edit is captured as a unified diff at
 `scripts/tinygo_runtime.patch` (reviewable with
 `git apply --stat scripts/tinygo_runtime.patch` against a
-pristine TinyGo 0.33.0 tree). The patch installs:
+pristine TinyGo 0.40.1 tree). The patch installs:
 
 - **`runtime/runtime_gooos.go`** (new, `gooos && baremetal && kernelspace`)
   — kernel bodies for `sleepTicks`, `ticks`, `putchar`, `exit`,
@@ -208,18 +209,29 @@ pristine TinyGo 0.33.0 tree). The patch installs:
 - **`runtime/interrupt/interrupt_gooos.go`** (new, kernel) and
   **`runtime/interrupt/interrupt_gooos_user.go`** (new, userspace)
   — `interrupt.Disable` / `Restore` / `In` implementations.
-- **`runtime/wait_gooos.go`** (new) — `waitForEvents` as an
-  `sti; hlt; cli` idle loop.
-- **`runtime/scheduler.go`** (patched in place) — per-CPU
+- **`runtime/wait_gooos.go`** (new, kernel) — `waitForEvents` as
+  an `sti; hlt; cli` idle loop.
+- **`runtime/wait_gooos_user.go`** (new, userspace) — `waitForEvents`
+  no-op for Ring-3 builds (kernel preempts on timer IRQ).
+- **`runtime/scheduler_cooperative.go`** (patched in place — this
+  file was named `scheduler.go` in TinyGo 0.33.0) — per-CPU
   `runqueues[17]`, `schedLock` spinlock over sleep/timer queues,
-  `runqueuePushTo`, work-stealing helpers, `apScheduler()` entry
-  for AP cores.
-- **`runtime/chan.go`**, **`runtime/gc_blocks.go`** (patched in
-  place) — per-CPU enqueue on channel wake, heap lock around
-  alloc/GC.
+  `runqueuePushTo`, `stealWork` round-robin peer scan,
+  `apScheduler()` entry for AP cores, push-site retargeting in
+  `scheduleTask` / `Gosched` / main scheduler loop.
+- **`runtime/gc_blocks.go`** (patched in place) — explicit
+  `heapLock` spinlock around alloc/GC, because upstream's
+  `gcLock task.PMutex` is a no-op under `tinygo.unicore`
+  (`scheduler=tasks`).
+- **`runtime/wait_other.go`** (patched in place) — adds
+  `&& !gooos` to the build tag so gooos builds use the
+  gooos-specific `wait_gooos.go` / `wait_gooos_user.go`.
 - **`internal/task/queue.go`**, **`task_stack.go`**,
-  **`task_stack_amd64.go`** (patched in place) — SMP-safe task
-  queues, per-CPU `currentTasks[17]` and `systemStacks[17]`, the
+  **`task_stack_amd64.go`**, **`task_stack_unicore.go`** (patched
+  in place — `task_stack_unicore.go` is new in TinyGo 0.40.x for
+  `scheduler=tasks`; the 0.33.0 gooos patch targeted
+  `task_stack.go` for those hunks) — SMP-safe task queues,
+  per-CPU `currentTasks[17]` and `systemStacks[17]`, the
   `stackTop` field + `gooosStackOverflow` hook, and the
   `gooosOnResume()` call that lets the gooos kernel update
   `TSS.RSP0` on every Ring-3 goroutine resume.
@@ -227,36 +239,38 @@ pristine TinyGo 0.33.0 tree). The patch installs:
 #### One-time setup after installing TinyGo
 
 ```bash
-# 1. Mirror the system TinyGo into a user-writable location.
-mkdir -p ~/.local/tinygo
-cp -a /usr/local/lib/tinygo/. ~/.local/tinygo/
+# 1. Mirror the system TinyGo 0.40.1 into a user-writable location.
+#    (Adjust the source path if your .deb installs TinyGo elsewhere.)
+mkdir -p ~/.local/tinygo0.40.1
+cp -a /usr/local/lib/tinygo0.40.1/. ~/.local/tinygo0.40.1/
 
 # 2. Apply scripts/tinygo_runtime.patch via the wrapper script.
-#    (Equivalent: patch -p1 -d ~/.local/tinygo < scripts/tinygo_runtime.patch)
+#    (Equivalent: patch -p1 -d ~/.local/tinygo0.40.1 < scripts/tinygo_runtime.patch)
 bash scripts/patch_tinygo_runtime.sh
 ```
 
-The Makefile exports `TINYGOROOT=$HOME/.local/tinygo` and
-invokes `~/.local/tinygo/bin/tinygo`, so `make build` picks up
-the patched tree automatically.
+The Makefile defaults to `TINYGOROOT=$HOME/.local/tinygo0.40.1`
+and invokes `~/.local/tinygo0.40.1/bin/tinygo`, so `make build`
+picks up the patched tree automatically.
 
 The wrapper is **idempotent**: it verifies the expected files are
 in place and carry the right build tags, and skips with an
 `already-applied:` message if so. Re-run any time after a TinyGo
-upgrade or after refreshing `~/.local/tinygo/`.
+upgrade or after refreshing `~/.local/tinygo0.40.1/`.
 
 #### Reverting
 
 ```bash
-# 1. Delete the four new files (patch -R leaves them empty, not gone).
-rm ~/.local/tinygo/src/runtime/runtime_gooos.go
-rm ~/.local/tinygo/src/runtime/runtime_gooos_user.go
-rm ~/.local/tinygo/src/runtime/interrupt/interrupt_gooos.go
-rm ~/.local/tinygo/src/runtime/interrupt/interrupt_gooos_user.go
-rm ~/.local/tinygo/src/runtime/wait_gooos.go
+# 1. Delete the six new files (patch -R leaves them empty, not gone).
+rm ~/.local/tinygo0.40.1/src/runtime/runtime_gooos.go
+rm ~/.local/tinygo0.40.1/src/runtime/runtime_gooos_user.go
+rm ~/.local/tinygo0.40.1/src/runtime/interrupt/interrupt_gooos.go
+rm ~/.local/tinygo0.40.1/src/runtime/interrupt/interrupt_gooos_user.go
+rm ~/.local/tinygo0.40.1/src/runtime/wait_gooos.go
+rm ~/.local/tinygo0.40.1/src/runtime/wait_gooos_user.go
 
 # 2. Reverse the in-place edits.
-patch -R -p1 -d ~/.local/tinygo < scripts/tinygo_runtime.patch
+patch -R -p1 -d ~/.local/tinygo0.40.1 < scripts/tinygo_runtime.patch
 ```
 
 Rationale: `impldoc/goroutine_design_scheduler.md §5.1` explains
@@ -384,7 +398,7 @@ Hello, World from gooos userspace!
   the PIT counter at 100 Hz, so any requested duration rounds
   up to the next 10 ms tick. No kernel goroutine currently
   needs sub-10-ms sleep; if a future caller does, retrofit
-  `~/.local/tinygo/src/runtime/runtime_gooos.go:sleepTicks`
+  `~/.local/tinygo0.40.1/src/runtime/runtime_gooos.go:sleepTicks`
   to use the LAPIC timer in one-shot mode (see
   `impldoc/deferred_hygiene.md §6` for the design sketch).
 - **Shell does not support job control.** No `&` background
