@@ -233,17 +233,25 @@ into Ring 3 and back through `tcpTCBDrainTX` to the wire.
 
 Guest-initiated active open (reach a host listener):
 
+**Important:** pick a host port that is **not** in
+`make run-net`'s hostfwd list (10080 / 10081 / 9999 / 19999 —
+all claimed by QEMU). Using one of those ports double-binds
+them: if `nc -l` runs first, QEMU fails to bring up the
+hostfwd; if QEMU runs first, `nc -l` can't bind. The example
+below uses `5555`, but any unused port above 1024 works.
+
 ```
-# On the host, start a listener first:
-$ nc -l 10080
+# On the host, start a listener on 5555 (not in the hostfwd list):
+$ nc -l 5555
 
 # In the gooos shell:
-$ tcpcli 10.0.2.2 10080 hi-from-gooos
+$ tcpcli 10.0.2.2 5555 hi-from-gooos
 tcpcli: <- hi-from-gooos
 ```
 
 Under QEMU slirp, `10.0.2.2` is the host's virtual gateway, so
-the guest's SYN reaches the listener on the host directly. This
+the guest's SYN reaches the listener on the host directly
+(slirp NATs the connection to `127.0.0.1:5555`). This
 exercises `tcpActiveConnect` → SYN_SENT → ESTABLISHED plus the
 `tcpcli.elf` FIN-from-our-side close.
 
