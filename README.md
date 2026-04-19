@@ -16,14 +16,14 @@ An experimental x86_64 operating system written in **Go (TinyGo) + GNU assembly*
 | PS/2 keyboard driver | Done | IRQ1 handler, scancode set 1 → ASCII, lock-free SPSC ring buffer drained by `keyboardPump` goroutine |
 | Virtual memory management | Done | Page fault handler, `mapPage`/`unmapPage` with 4 KiB granularity, bump + LIFO free stack with `allocPagesContig` for kernel stacks |
 | Scheduler | Done | **TinyGo native goroutines** (`scheduler=tasks`). Cooperative; PIT IRQ drives `sleepTicks`. TSS.RSP0 updated per-Ring-3-goroutine via the `gooosOnResume` hook in the patched TinyGo runtime |
-| Userspace | Done | Ring 3 execution via `iretq`, TSS for privilege transitions, `int 0x80` syscall interface (12 syscalls); each user process is a `ring3Wrapper` goroutine |
-| Filesystem | Done | In-memory flat filesystem: `Create`/`Write`/`Read`/`List`/`Delete` (32 entries, 96 KiB each); served by `fsTask` goroutine over native `chan *fsRequest` |
+| Userspace | Done | Ring 3 execution via `iretq`, TSS for privilege transitions, `int 0x80` syscall interface (34 syscalls — see the Syscall ABI row below and `current_impl_doc/syscalls.md`); each user process is a `ring3Wrapper` goroutine |
+| Filesystem | Done | In-memory flat filesystem: `Create`/`Write`/`Read`/`List`/`Delete` (32 entries, 256 KiB each); served by `fsTask` goroutine over native `chan *fsRequest` |
 | SMP | Done (v2, BSP-only scheduling) | **Multi-processor infrastructure.** Per-CPU storage (`IA32_GS_BASE`), per-CPU GDT/TSS, per-CPU runqueues with work stealing, LAPIC timer (BSP), IPI wakeup, spinlocks (page allocator, process maps, heap, Queue, sleep/timer queues), per-CPU `currentTask`. APs boot via INIT-SIPI-SIPI, enter the TinyGo scheduler after boot-phase gating (`bspBootDone`), and idle via `waitForEvents` (`sti; hlt; cli`). **Remaining issue:** Ring-3 user code triple-faults when stolen by an AP (`iretq` on AP per-CPU TSS — needs QEMU+GDB hardware-level debugging). All goroutines currently run on BSP (CPU 0). See `impldoc/smp_deferred_and_known_issues.md` for details |
 | Channel IPC + select | Done | **Native Go `chan` and `select`** in Ring 0. `fsReqCh`, `keyboardCh`, per-process `exitCh` are all `make(chan ...)` constructed by the TinyGo runtime |
-| Syscall ABI | Done | 18-syscall register-based dispatch (all numbered; see `impldoc/shell_io_fd_table.md §5.1` for the canonical table): `sys_exit`, `sys_write(fd,buf,len)`, `sys_read(fd,buf,max)`, `sys_exec`, `sys_fs_read/write/list`, `sys_yield`, `sys_sleep`, `sys_getargs`, `sys_sbrk`, `sys_vga_clear`, `sys_open`, `sys_close`, `sys_dup2`, `sys_spawn`, `sys_wait`, `sys_pipe` |
+| Syscall ABI | Done | 34-syscall register-based dispatch (all numbered; see `current_impl_doc/syscalls.md` for the canonical table). Base set: `sys_exit`, `sys_write`, `sys_read`, `sys_exec`, `sys_fs_read/write/list`, `sys_yield`, `sys_sleep`, `sys_getargs`, `sys_sbrk`, `sys_vga_clear`, `sys_open`, `sys_close`, `sys_dup2`, `sys_spawn`, `sys_wait`, `sys_pipe`, `sys_read_key`, `sys_vga_write_at`, `sys_vga_set_cursor`, `sys_getcpuid`. Net stack adds `sys_socket`/`sys_bind`/`sys_sendto`/`sys_recvfrom`/`sys_net_config`/`sys_sendto_bcast` (Phase 5) and `sys_listen`/`sys_accept`/`sys_connect`/`sys_tcp_send`/`sys_tcp_recv`/`sys_shutdown` (TCP phases). |
 | ELF64 loader | Done | Parse ELF64 headers, map PT_LOAD segments, per-process page tracking, parent page save/restore for exec |
-| BusyBox-style shell | Done | Interactive shell (`sh.elf`) with built-in commands (help, echo, clear, exit) and external ELF commands (ls, cat, wc, hello, fdprobe, goprobe, gochan, tinyc, edit) compiled with TinyGo; supports `<`/`>`/`>>` redirection and N-stage `\|` pipes |
-| File descriptor table | Done | Per-process `Process.fds [16]` of `FileDesc`; `consoleStdin` / `consoleStdout` / `fileFd` / `pipeReader` / `pipeWriter` impls; inheritance on exec; refcounted close on pipe ends |
+| BusyBox-style shell | Done | Interactive shell (`sh.elf`) with built-in commands (help, echo, clear, exit) and external ELF commands (ls, cat, wc, hello, fdprobe, goprobe, gochan, tinyc, edit, plus net-stack demos `udpecho`, `dhcp`, `tcpecho`, `tcpcli`, `smpprobe`) compiled with TinyGo; supports `<`/`>`/`>>` redirection and N-stage `\|` pipes |
+| File descriptor table | Done | Per-process `Process.fds [16]` of `FileDesc`; `consoleStdin` / `consoleStdout` / `fileFd` / `pipeReader` / `pipeWriter` / `socketFd` impls; inheritance on exec; refcounted close on pipe ends |
 | Shell redirection | Done | `cmd > file`, `cmd >> file`, `cmd < file` via shell-side `Open` + `Dup2` + `Close` dance; parser in `user/cmd/sh/parse.go` |
 | Concurrent pipes | Done | `cmd1 \| cmd2 \| ...` — N-stage pipelines; kernel `pipe` backed by a 4 KiB `chan byte`; writer-close → reader-EOF, reader-close → writer-EPIPE; stages run on their own per-process PML4s |
 | Multi-process | Done | Per-process PML4 sharing kernel PDP[0] with boot; CR3 swap on every goroutine resume via `gooosOnResume` (cached `gInfo.proc` for nosplit safety); `sys_spawn` + `sys_wait` for async exec; foreground-only stdin |
@@ -33,251 +33,38 @@ An experimental x86_64 operating system written in **Go (TinyGo) + GNU assembly*
 | Allocation-free fatal handlers | Done | `handlePageFault`/`handleDivisionError` format CR2/RIP/errcode into a `.bss` `panicHexBuf` via no-alloc `appendHex`/`appendStr` helpers (`src/panic.go`); `//go:nosplit` |
 | Stack-overflow diagnostic | Done | Patched `task.Pause()` calls `gooosStackOverflow(t)` on canary mismatch — prints task pointer + stack-top + canary address before halting, no allocation |
 | Boot stack-size audit | Done | `stackSizeAudit()` (gated by `const runStackAudit`) reports per-goroutine high-water-mark usage on serial; off in release builds |
-| `time.After` replacement | Done | `afterTicks(d uint64) <-chan struct{}` in `src/afterticks.go` — local stand-in because the TinyGo `time` package needs SSE we keep disabled |
+| `time.After` replacement | Done | `afterTicks(d uint64) <-chan struct{}` in `src/afterticks.go` — local stand-in because the TinyGo `time` package needs SSE we keep disabled. Backed by a **single-dispatcher timer wheel** (one long-lived goroutine draining a fixed-size `[256]timerEntry` list under lock-rank 12) so repeated callers no longer allocate per-call `Task` structs in the patched TinyGo runtime — see `current_impl_doc/known_issues.md` §"afterTicks single-dispatcher timer wheel" and `tcp_problem_review2/` for the bug this fixed. |
 | Raw keyboard input | Done | `sys_read_key` (syscall 18) delivers single keystrokes with modifier flags (Shift/Ctrl/Alt) and extended-key prefix (arrow keys, Home/End/Delete). Keyboard driver (`src/keyboard.go`) tracks Ctrl + Alt make/break and consumes 0xE0 prefix. Backward compatible with line-buffered `sys_read` |
 | VGA cell + cursor control | Done | `sys_vga_write_at` (19) writes a character with color attribute at (row, col); `sys_vga_set_cursor` (20) programs the hardware cursor via CRT controller. Enables full-screen editors and TUI programs |
 | Text editor (vi-like) | Done | `edit.elf` — modal text editor with Normal/Insert/Command modes. Navigate with h/j/k/l or arrow keys, insert text with `i`/`a`/`o`, save with `:w`, quit with `:q`. 5 Go source files under `user/cmd/edit/`. See `impldoc/editor_overview.md` |
 | Tiny C interpreter | Done | `tinyc.elf` — tree-walking interpreter for a C-subset language (int-only, 1D arrays, functions, if/else/while/for, println). Hand-written recursive-descent parser + AST evaluator, ~1000 lines of Go. Invoked from the shell as `$ tinyc program.tc`. See `impldoc/tinyc_interpreter.md` for the design |
 | Userspace goroutines & channels | Done | Ring-3 user binaries run on their own TinyGo `scheduler=tasks` runtime — native `go func()`, `chan`, `select`, and `time.Sleep` work inside a user process. Build-tag split (`kernelspace` on `src/target.json`) keeps the kernel and user runtime bodies disjoint; `user/gooos/runtime_hooks.go` supplies the Ring-3-safe `gooosOnResume` / `gooosStackOverflow`. `sys_sleep` routes through `afterTicks` on the kernel side so a sleeping user process no longer holds the CPU. Proven by `user/cmd/goprobe/main.go` (PASS/FAIL probe) + `tmp/test_goprobe.sh`, and demonstrated interactively by `user/cmd/gochan/main.go` — a shell-invokable 3-stage pipeline + `select` demo (`$ gochan`) with harness at `tmp/test_gochan.sh`. See `impldoc/userspace_goroutines_overview.md` for the design set |
 | Userspace conservative GC | Done | `user/target.json` now runs `gc=conservative` (was `leaking`). User binaries gain `_globals_start`/`_globals_end` brackets + synthetic `__ehdr_start` Elf64 header in `user/rt0.S` so TinyGo's `findGlobals()` can locate root-scan ranges at runtime; `tinygo_scanCurrentStack` ported into `user/runtime_asm_amd64.S` for stack scanning. Per-process 1 MiB fixed heap (`.heap @nobits` section, `user/linker_user.ld`) with `Process.HeapLimit` + `sysSbrkHandler` ceiling (`userHeapLimit = 2 MiB`) prevents runaway `sys_sbrk`. `maxFileData` bumped to 256 KiB to absorb ~13–17 KiB of per-binary GC overhead. `fib(10)` in Tiny C now works (177 recursive frames reclaim cleanly); long-running user programs no longer leak. See `impldoc/userspace_conservative_gc_*.md` |
-| Networking stack (e1000 + UDP/IP/Ethernet) | Done (Phases 1-4) | **Bare-metal TCP/IP stack over the Intel 82540EM NIC.** PCI bus scan + BAR0 MMIO mapping (`src/pci.go`, `src/e1000.go`); 64 RX / 32 TX legacy descriptors on contiguous DMA pages; static IP config (10.0.2.15/24, gw 10.0.2.2) matching QEMU slirp defaults. ARP cache 16 entries (LRU) with `arpResolve` 2-sec timeout via `afterTicks` (`src/arp.go`); IPv4 parse/build with ones-complement checksum (`src/ipv4.go`); ICMP echo reply (`src/icmp.go`); UDP with 8-entry bind table + pseudo-header checksum + kernel echo server on port 7 (`src/udp.go`). Interrupt-driven RX via `rxSignalCh` (ISR → goroutine). 128×2048-byte buffer pool (`src/netbuf.go`); 18-counter `NetStats` + `netDiag` auto-dump 5 s after boot (`src/netstats.go`, `src/net.go`). Verified end-to-end under `make run-net`: ICMP echo-reply self-test passes; host `nc -u 127.0.0.1 9999` round-trips through kernel echo server via hostfwd. Socket syscall API + userspace DHCP client deferred to Phase 5 (`impldoc/net_socket_api.md`, `impldoc/net_dhcp_client.md`). See `impldoc/net_overview.md` and `TODO_NET1.md` |
-| Socket API + DHCP client (Phase 5) | Done | **Ring-3 socket API over UDP + a from-scratch DHCP client.** Six new syscalls (22-27: `sys_socket`, `sys_bind`, `sys_sendto`, `sys_recvfrom`, `sys_net_config`, `sys_sendto_bcast`) in `src/netsock.go` — AF_INET + SOCK_DGRAM only; `socketFd` is a `FileDesc` backend owning a cap=16 receive channel that `udpBindWithChannel` hooks into the UDP dispatch. `sys_recvfrom` extends the design-doc ABI with `R8 = timeout_ticks` (0 = block forever) so clients can give up gracefully. User-space pointers are bounds-checked (`>= 0x40000000`) before every dereference. Ephemeral port ≡ 0 when the socket is unbound. `sys_sendto_bcast` routes through `udpSendRaw` with forced src 0.0.0.0 and broadcast MAC/IP — DHCP-specific path. Userspace SDK (`user/gooos/net.go`) exposes `Socket`/`Bind`/`UDPSendTo`/`UDPRecvFromTimeout`/`UDPSendBroadcast` + `GetIP`/`SetIP`/`GetNetmask`/`SetNetmask`/`GetGateway`/`SetGateway`/`GetDNS`/`SetDNS`/`GetMAC`/`ApplyNetConfig` + `IPv4`/`FormatIP`/`FormatMAC` helpers, with a 5-arg `syscall5` assembly stub in `user/rt0.S`. Two new userspace programs: `udpecho.elf` (20-line echo server on UDP 17 — smoke test) and `dhcp.elf` (RFC 2131 DORA client, ~330 LOC). Kernel `ipv4Handle` now accepts limited (255.255.255.255) and subnet-directed broadcast so DHCP can actually receive the OFFER. Verified under QEMU slirp: `dhcp` completes the full Discover→Offer→Request→Ack exchange against the built-in DHCP server, applies the lease (10.0.2.15 / 255.255.255.0 / gw 10.0.2.2 / DNS 10.0.2.3) via `sys_net_config`, and persists `/network.conf` readable via `cat network.conf`. See `impldoc/net_socket_api.md`, `impldoc/net_dhcp_client.md`, and `TODO_NET2.md` |
+| Networking stack (e1000 + UDP/IP/Ethernet) | Done (Phases 1-4) | **Bare-metal TCP/IP stack over the Intel 82540EM NIC.** PCI bus scan + BAR0 MMIO mapping (`src/pci.go`, `src/e1000.go`); 64 RX / 32 TX legacy descriptors on contiguous DMA pages; static IP config (10.0.2.15/24, gw 10.0.2.2) matching QEMU slirp defaults. ARP cache 16 entries (LRU) with `arpResolve` 2-sec timeout via `afterTicks` (`src/arp.go`); IPv4 parse/build with ones-complement checksum (`src/ipv4.go`); ICMP echo reply (`src/icmp.go`); UDP with 8-entry bind table + pseudo-header checksum + kernel echo server on port 7 (`src/udp.go`). RX path is a single long-lived `netRxLoop` goroutine (polling `drainRxRing` + `runtime.Gosched`); the `e1000` ISR sets `rxReadyFlag` and updates `lastICR` / `e1000IRQCount` counters. 128×2048-byte buffer pool (`src/netbuf.go`); 18-counter `NetStats` + `netDiag` dumps at boot+5 s and every ~10 s afterwards via the `afterTicks` timer wheel (`src/netstats.go`, `src/net.go`). Verified end-to-end under `make run-net`: ICMP echo-reply self-test passes; host `nc -u 127.0.0.1 9999` round-trips through kernel echo server via hostfwd. Socket syscall API + userspace DHCP client land in Phase 5 below (`impldoc/net_socket_api.md`, `impldoc/net_dhcp_client.md`). See `impldoc/net_overview.md` and `pasttodos/TODO_NET1.md` |
+| Socket API + DHCP client (Phase 5) | Done | **Ring-3 socket API over UDP + a from-scratch DHCP client.** Six new syscalls (22-27: `sys_socket`, `sys_bind`, `sys_sendto`, `sys_recvfrom`, `sys_net_config`, `sys_sendto_bcast`) in `src/netsock.go` — AF_INET + SOCK_DGRAM only; `socketFd` is a `FileDesc` backend owning a cap=16 receive channel that `udpBindWithChannel` hooks into the UDP dispatch. `sys_recvfrom` extends the design-doc ABI with `R8 = timeout_ticks` (0 = block forever) so clients can give up gracefully. User-space pointers are bounds-checked (`>= 0x40000000`) before every dereference. Ephemeral port ≡ 0 when the socket is unbound. `sys_sendto_bcast` routes through `udpSendRaw` with forced src 0.0.0.0 and broadcast MAC/IP — DHCP-specific path. Userspace SDK (`user/gooos/net.go`) exposes `Socket`/`Bind`/`UDPSendTo`/`UDPRecvFromTimeout`/`UDPSendBroadcast` + `GetIP`/`SetIP`/`GetNetmask`/`SetNetmask`/`GetGateway`/`SetGateway`/`GetDNS`/`SetDNS`/`GetMAC`/`ApplyNetConfig` + `IPv4`/`FormatIP`/`FormatMAC` helpers, with a 5-arg `syscall5` assembly stub in `user/rt0.S`. Two new userspace programs: `udpecho.elf` (20-line echo server on UDP 17 — smoke test) and `dhcp.elf` (RFC 2131 DORA client, ~330 LOC). Kernel `ipv4Handle` now accepts limited (255.255.255.255) and subnet-directed broadcast so DHCP can actually receive the OFFER. Verified under QEMU slirp: `dhcp` completes the full Discover→Offer→Request→Ack exchange against the built-in DHCP server, applies the lease (10.0.2.15 / 255.255.255.0 / gw 10.0.2.2 / DNS 10.0.2.3) via `sys_net_config`, and persists `/network.conf` readable via `cat network.conf`. See `impldoc/net_socket_api.md`, `impldoc/net_dhcp_client.md`, and `pasttodos/TODO_NET2.md` |
+| TCP stack (Phases TCP-1..TCP-5) | Done | **Full-duplex reliable byte-stream transport with RFC 5681 congestion control and a Ring-3 `SOCK_STREAM` socket API.** IP protocol 6 demux into `tcpHandle` (`src/ipv4.go`) feeds a fixed 16-entry Transmission Control Block pool (`src/tcp.go`) with 8 KiB×2 per-TCB ring buffers (`tcpRingBuf`); RFC 793 eleven-state machine (LISTEN / SYN_SENT / SYN_RECEIVED / ESTABLISHED / FIN_WAIT_1 / FIN_WAIT_2 / CLOSE_WAIT / CLOSING / LAST_ACK / TIME_WAIT / CLOSED) with in-any-state RST abort. Per-TCB retransmission queue (`src/tcp_retx.go`, 64-entry ring) driven by a single-goroutine kernel-wide scanner that polls every 50 ms for expired RTO / TIME_WAIT / persist / delayed-ACK deadlines. RFC 6298 SRTT / RTTVAR / RTO estimator (`src/tcp_rtt.go`, fixed-point ×8 / ×4 scaling) with Karn's rule; RFC 5681 slow start + congestion avoidance + 3-dup-ACK fast retransmit + RTO-triggered cwnd collapse (`src/tcp_cc.go`). RFC 1122 SWS avoidance + RFC 793 §3.9 snd-window update guard in a shared `tcpAckUpdate` helper (`src/tcp_flow.go`). Lock-ordering extended to ranks 9 (`tcbTableLock`) / 10 (`tcpListenLock`) / 11 (`tcpTimerLock`); rank 12 (`timerListLock` / `afterTicks` wheel) sits above them. Six new syscalls 28-33 (`sys_listen`, `sys_accept`, `sys_connect`, `sys_tcp_send`, `sys_tcp_recv`, `sys_shutdown`) in `src/netsock.go`; `socketFd` extended with a kind discriminant so UDP and TCP sockets share the `FileDesc` fd table; `userBufInRange` gates every user-memory pointer. Userspace SDK adds `TCPSocket`/`TCPListen`/`TCPAccept`/`TCPConnect`/`TCPSend`/`TCPSendAll`/`TCPRecv`/`TCPShutdown` to `user/gooos/net.go` (no new `syscallN` stubs needed). Two new demo binaries: `tcpecho.elf` (Ring-3 echo server on port 8081 with goroutine-per-connection) and `tcpcli.elf` (argv `ip port message` active-open client). Verified end-to-end under `make run-net`: host `nc 127.0.0.1 10080` round-trips through the kernel TCP echo server on guest port 8080 (3-way handshake + data + peer-FIN + LAST_ACK → CLOSED) at any idle duration (15 s / 30 s / 60 s / 120 s / 300 s all PASS via `scripts/test_tcp_longidle.sh`). Phase 1-5 regression (UDP echo + DHCP DORA) continues to pass. See `impldoc/net_tcp_*.md` (nine design docs), `pasttodos/TODO_NET3.md`, and `TODO_NET4.md` (the late-timing RX stall fix). |
 
-### Running the networking demos
+## Running the demos
 
-gooos talks UDP/IP/Ethernet to the host through the emulated Intel
-82540EM NIC. Three end-to-end paths are manually verifiable:
+Walkthroughs for the end-to-end user programs and networking
+paths live under `docs/`:
 
-| Path | Listener | Host-side port | What it exercises |
-|---|---|---|---|
-| A | Kernel-builtin UDP echo | `127.0.0.1:9999` (hostfwd → guest 7) | `e1000` RX → IRQ → `netRxLoop` → `ethernetDispatch` → `ipv4Handle` → `udpHandle` → kernel goroutine → `ipv4Send` → `e1000Transmit` TX |
-| B | Userspace `udpecho.elf` | `127.0.0.1:19999` (hostfwd → guest 17) | Path A's RX half + `socketFd.recvCh` → `sys_recvfrom` → Ring-3 `UDPRecvFrom` → `UDPSendTo` → `sys_sendto` → `udpSend` → TX |
-| C | Userspace `dhcp.elf` | Broadcast to `255.255.255.255:67` via `sys_sendto_bcast` / QEMU slirp's built-in DHCP server at `10.0.2.2` | Full DORA, `sys_net_config` lease apply, `/network.conf` persistence |
+- **[Networking demos (Paths A–E)](docs/networking_demos.md)** —
+  kernel-builtin UDP echo, userspace `udpecho`, DHCP client,
+  kernel TCP echo, userspace `tcpecho`/`tcpcli`. Includes the
+  ASCII flow diagram, the "shell-on-serial" gotcha explanation,
+  `netDiag` counter expectations, and the `scripts/test_tcp_*.sh`
+  harness list.
+- **[User programs (gochan / tinyc / edit)](docs/user_programs.md)**
+  — non-networking Ring-3 demos. Covers the gochan pipeline + select
+  demo, Tiny C interpreter fixtures, and the vi-like editor key
+  bindings.
 
-#### Communication flow (ASCII)
+For the no-networking quick tour, `make run` + `help` at the
+shell prompt is the fastest starting point — see the
+**Run in QEMU** section below.
 
-```
-  Host terminal                   QEMU process                    gooos guest (Ring 3 + Ring 0)
-  =============                   ============                    ============================
-
-  nc -u 127.0.0.1 9999  ──────►   ┌─────────────┐                 ┌───────────────────────────┐
-  (Path A: kernel echo)            │  slirp NAT  │                 │  Ring 3 userspace         │
-                                   │  hostfwd    │                 │  ┌─────────────────────┐  │
-  nc -u 127.0.0.1 19999 ──────►   │   9999 → 7  │                 │  │ udpecho.elf         │  │
-  (Path B: userland echo)          │ 19999 → 17  │                 │  │ dhcp.elf            │  │
-                                   └──────┬──────┘                 │  └──────┬──────────────┘  │
-  (Path C: dhcp broadcasts)               │                        │         │ syscall (int 0x80)
-       ▲                                  │ virtual Ethernet       │         ▼                 │
-       │                                  │ frames (L2)            │  ┌─────────────────────┐  │
-       │                                  ▼                        │  │ Ring 0 kernel       │  │
-       │                          ┌───────────────┐                │  │                     │  │
-       │                          │ QEMU e1000    │ ◄──MMIO BAR0─  │  │  netsock.go         │  │
-       │                          │ device model  │    PCI cfg     │  │  ├── socketFd +     │  │
-       │                          │ (DMA rings +  │    IRQ 11      │  │  │   udpBindings[]  │  │
-       │                          │  INTx# line)  │ ──────────────►│  │  ├── udp.go         │  │
-       │                          └───────┬───────┘                │  │  ├── ipv4.go        │  │
-       │                                  │                        │  │  ├── arp.go         │  │
-       │                                  │                        │  │  ├── ethernet.go    │  │
-       │                                  │                        │  │  └── e1000.go       │  │
-       │                                  │                        │  └─────────────────────┘  │
-       │                                  │                        │                           │
-       └──────────────────────────────────┴────────────────────────┴───────────────────────────┘
-                         (reply path takes the same wire in reverse)
-```
-
-Lock-ordering ranks consulted along the RX path are 5 (`netBufLock`)
-→ 6 (`arpLock`) → 7 (`udpLock`) → 8 (`statsLock`) — see
-`src/spinlock.go`.
-
-#### A. Kernel-builtin UDP echo (port 7)
-
-No shell commands needed — the kernel auto-starts `udpEchoServer` on
-port 7 during `netInit` at boot. From a second host terminal:
-
-```
-$ make run-net            # terminal 1: boots gooos, shell prompt on stdio
-
-$ echo -n 'hello-from-host' | nc -u -w 2 127.0.0.1 9999    # terminal 2
-hello-from-host
-```
-
-Success: `nc` prints the same bytes it sent. The guest's serial log
-records the RX packet and TX reply in the `netDiag` counter block
-(auto-dumped ~5 s after boot; counters increment live on subsequent
-traffic).
-
-#### B. Userspace UDP echo (port 17)
-
-In the gooos shell (terminal 1, `make run-net`):
-
-```
-$ udpecho
-udpecho: starting userspace echo on UDP port 17
-```
-
-This blocks — `udpecho.elf` is a Ring-3 program that loops
-`UDPRecvFrom` → `UDPSendTo`. From a second host terminal:
-
-```
-$ echo -n 'hello-from-userland' | nc -u -w 2 127.0.0.1 19999
-hello-from-userland
-```
-
-Round-trip exercises the complete stack from the slirp hostfwd
-through the kernel RX dispatcher, up through `sys_recvfrom` into
-Ring 3, back out through `sys_sendto`.
-
-#### C. DHCP (obtain IP / netmask / gateway / DNS)
-
-In the gooos shell:
-
-```
-$ dhcp
-dhcp: starting DHCP client
-dhcp: MAC = 52:54:00:12:34:56
-dhcp: DISCOVER sent, waiting for OFFER...
-dhcp: OFFER received: IP = 10.0.2.15
-dhcp: REQUEST sent, waiting for ACK...
-ARP: sent gratuitous announcement for 10.0.2.15
-
-dhcp: network configured:
-  IP      = 10.0.2.15
-  Netmask = 255.255.255.0
-  Gateway = 10.0.2.2
-  DNS     = 10.0.2.3
-  Lease   = 86400 seconds
-  Server  = 10.0.2.2
-```
-
-The client runs the full RFC 2131 DORA against QEMU slirp's built-in
-DHCP server (hard-wired at `10.0.2.2`), pushes the lease into the
-kernel stack via `sys_net_config`, sends a gratuitous ARP announcing
-the new `yiaddr`, and writes the result to `/network.conf`. Inspect
-it afterwards:
-
-```
-$ cat network.conf
-# Network configuration (DHCP)
-ip=10.0.2.15
-netmask=255.255.255.0
-gateway=10.0.2.2
-dns=10.0.2.3
-lease=86400
-server=10.0.2.2
-```
-
-A `netDiag` dump (boot-time or wire a user command) now shows
-`DNS: 10.0.2.3`, confirming the kernel global was updated by
-`sys_net_config(ncSetDNS, …)`.
-
-#### Packet capture (optional)
-
-Add `-object filter-dump,id=d,netdev=n0,file=tmp/net.pcap` to the
-QEMU invocation (edit the `run-net` Makefile target or run the
-command manually). Open the pcap in Wireshark to see the actual
-frames — useful when debugging a path A/B/C failure. The DORA
-exchange is especially readable this way.
-
-#### Automated smoke test
-
-`scripts/test_net.sh` (invokable via `make test-net`) exercises path
-A non-interactively — boots the ISO in headless QEMU, greps the
-boot-time markers, and round-trips a payload through the hostfwd
-9999→7. Phase-5 paths (B and C) are currently hand-verified only.
-
-### Running the gochan demo
-
-`gochan` is a shell-invokable user program that exercises native
-userspace goroutines + channels end-to-end: a three-stage pipeline
-(producer → squarer → printer, joined by unbuffered `chan int`)
-followed by a `select` race between two tickers that fire at 20 ms
-and 30 ms.
-
-Boot gooos (`make run` or `make iso` then QEMU) and at the shell
-prompt:
-
-```
-$ gochan
-```
-
-Expected serial / VGA output (`PF=0` throughout):
-
-```
-gochan: pipeline demo (5 items across 3 goroutines)
-gochan: squared=1
-gochan: squared=4
-gochan: squared=9
-gochan: squared=16
-gochan: squared=25
-gochan: select over two tickers (alpha/beta)
-gochan: got alpha
-gochan: got beta
-gochan: finished
-```
-
-- Source: `user/cmd/gochan/main.go`.
-- Automated harness: `tmp/test_gochan.sh` — boots the kernel ISO
-  in headless QEMU, sends `gochan` to the shell via monitor
-  sendkey, and asserts every squared value, both select
-  branches, the `finished` marker, and `PF=0`. Prints
-  `result: PASS` on success.
-
-### Running the tinyc interpreter
-
-`tinyc` interprets Tiny C source files — a C-subset with
-integer-only types, 1D arrays, user-defined functions, and
-`println` output. Several `.tc` test files are pre-loaded in the
-filesystem at boot:
-
-```
-$ tinyc sum.tc
-s = 45
-
-$ tinyc fib.tc
-13
-
-$ tinyc array.tc
-s = 45
-```
-
-- Source: `user/cmd/tinyc/` (6 files: token, lexer, AST, parser,
-  evaluator, main).
-- Design doc: `impldoc/tinyc_interpreter.md`.
-- Automated harness: `tmp/test_tinyc.sh` — runs all 4 fixtures,
-  asserts expected output + `PF=0`.
-
-### Using the text editor
-
-`edit` is a vi-like modal editor. Open a file from the shell:
-
-```
-$ edit hello.txt
-```
-
-The editor takes over the full 80x25 VGA screen. Key bindings:
-
-| Mode | Keys | Action |
-|---|---|---|
-| Normal | `h`/`j`/`k`/`l` or arrows | Move cursor |
-| Normal | `i` | Enter Insert mode |
-| Normal | `a` | Enter Insert mode after cursor |
-| Normal | `o` / `O` | Open line below / above |
-| Normal | `x` | Delete character |
-| Normal | `dd` | Delete line |
-| Normal | `:` | Enter Command mode |
-| Insert | any printable | Insert character |
-| Insert | `Escape` | Return to Normal mode |
-| Command | `:w` | Save file |
-| Command | `:q` | Quit (refuses if unsaved; use `:q!` to force) |
-| Command | `:wq` | Save and quit |
-
-- Source: `user/cmd/edit/` (5 files: main, buffer, screen, input,
-  keybinds).
-- Design docs: `impldoc/editor_overview.md`,
-  `impldoc/editor_raw_input.md`.
-- Automated harness: `tmp/test_edit.sh`.
-
-### Where assembly is used
+## Where assembly is used
 
 Go cannot express certain CPU-level operations. These remain in assembly:
 
@@ -290,7 +77,7 @@ Go cannot express certain CPU-level operations. These remain in assembly:
 - **Port I/O & CPU control** (`stubs.S`): `outb`/`inb`, `cli`/`sti`/`hlt`, `lidt`/`lgdt`/`ltr`, `invlpg`, CR2 read / CR3 read+write (`readCR3`, `writeCR3`), `memcpy`/`memmove`/`memset`, `jumpToRing3`, `readFlags`/`restoreFlags`, `tinygo_scanCurrentStack`
 - **Synthetic ELF header** (`stubs.S`): Fake `__ehdr_start` in `.rodata` for GC's `findGlobals()`
 - **Keyboard IRQ ring** (`isr.S`, `keyboard_irq.go`): `.bss` head/tail/slot storage is assembled as 32-bit naturally-aligned mov's; x86-TSO makes the writes visible to `keyboardPump` without fences
-- **User startup** (`user/rt0.S`): `_start`, syscall wrappers (`syscall0`-`syscall4`), TinyGo runtime stubs (`mmap`, `write`, `abort`, `memcpy`, `memset`)
+- **User startup** (`user/rt0.S`): `_start`, syscall wrappers (`syscall0`-`syscall5`), TinyGo runtime stubs (`mmap`, `write`, `abort`, `memcpy`, `memset`)
 - **User task context switch + longjmp** (`user/task_stack_amd64.S`, `user/runtime_asm_amd64.S`): `tinygo_startTask` / `tinygo_swapTask` / `tinygo_longjmp` — byte-equivalent imports of TinyGo runtime asm, needed once the user target flipped to `scheduler=tasks`. Same `tinygo build -o *.o` restriction as the kernel side
 
 ## Architecture
@@ -314,7 +101,7 @@ Go cannot express certain CPU-level operations. These remain in assembly:
                                                          |
                                                          v
                                 +------------------------------------------+
-                                |  TinyGo runtime main (runtime_unix.go)   |
+                                |  TinyGo runtime main (runtime_gooos.go)  |
                                 |  - preinit(): mmap stub → heap init      |
                                 |  - initAll(): package init               |
                                 |  - callMain() → user main()              |
@@ -324,6 +111,7 @@ Go cannot express certain CPU-level operations. These remain in assembly:
                               +----------------------------------------------+
                               |  main()  (main.go)                           |
                               |  - Serial, IDT, PIC, PIT, Keyboard, VM      |
+                              |  - afterTicksInit() — timer-wheel dispatcher|
                               |  - SMP: INIT-SIPI-SIPI multi-core boot      |
                               |  - GDT + TSS (per-task kernel stacks)       |
                               |  - Scheduler init, service tasks            |
@@ -341,81 +129,41 @@ Go cannot express certain CPU-level operations. These remain in assembly:
     ├──────────────────────┤        │  built-in: help, │          │   (cmd.elf)      │
     │ go keyboardPump()    │        │   echo, clear    │ <------- │  sys_exit → proc │
     │  ring → keyboardCh   │        │  external: ls,   │  exit    │  .exitCh delivers│
-    └──────────────────────┘        └──────────────────┘          └──────────────────┘
+    ├──────────────────────┤        └──────────────────┘          └──────────────────┘
+    │ go netRxLoop()       │
+    │  drain e1000 RX ring │
+    ├──────────────────────┤
+    │ go timerDispatcher() │
+    │  fire afterTicks()   │
+    │  matured channels    │
+    ├──────────────────────┤
+    │ go tcpRTOScannerLoop │
+    │  50 ms RTO/TIMEWAIT  │
+    ├──────────────────────┤
+    │ go udpEchoServer     │
+    │ go tcpEchoServer     │
+    └──────────────────────┘
 ```
 
 ## Repository layout
 
+Full tree in **[docs/repo_layout.md](docs/repo_layout.md)**.
+Top-level shape:
+
 ```
 gooos/
-├── CLAUDE.md                                       # project workflow guide
-├── Makefile                                        # three-phase build: user → embed → kernel
-├── README.md                                       # this file
-├── go.mod                                          # module github.com/ryogrid/gooos
-├── grub/
-│   └── grub.cfg                                    # GRUB Multiboot config for ISO boot
-├── scripts/
-│   └── embed_elfs.sh                               # convert user ELFs to Go byte arrays
-├── current_impl_doc/                               # implementation documentation
-│   ├── overview.md                                 # architecture, boot, memory layout
-│   ├── syscalls.md                                 # 12-syscall ABI reference
-│   ├── scheduler.md                                # task management, process lifecycle
-│   ├── memory.md                                   # page allocator, page tables
-│   ├── ipc.md                                      # channels, service tasks
-│   ├── userland.md                                 # SDK, build system, user programs
-│   └── known_issues.md                             # workarounds, limitations
-├── impldoc/                                        # design documents (English)
-│   ├── busybox_overview.md                         # BusyBox shell design
-│   ├── busybox_syscall_abi.md                      # syscall ABI design
-│   ├── busybox_kernel_changes.md                   # kernel modification design
-│   ├── busybox_userland_sdk.md                     # userland SDK design
-│   └── busybox_shell_spec.md                       # shell specification
-├── user/                                           # userland SDK and programs
-│   ├── Makefile                                    # build all user ELFs
-│   ├── target.json                                 # TinyGo target for userspace (gc=conservative, scheduler=tasks)
-│   ├── linker_user.ld                              # linker script (entry at 0x40100000)
-│   ├── rt0.S                                       # startup assembly + syscall stubs
-│   ├── go.mod                                      # user module
-│   ├── gooos/                                      # Go package for user programs
-│   │   ├── syscall.go                              # raw syscall wrappers
-│   │   ├── io.go                                   # Print, Println, ReadLine
-│   │   ├── fs.go                                   # ReadFile, ListDir
-│   │   └── proc.go                                 # Exec, Exit, Args, Yield, Sleep
-│   └── cmd/                                        # user programs
-│       ├── sh/main.go                              # interactive shell
-│       ├── hello/main.go                           # hello world
-│       ├── ls/main.go                              # list files
-│       ├── cat/main.go                             # display file contents
-│       └── wc/main.go                              # word/line/byte count
-└── src/                                            # kernel source
-    ├── boot.S                                      # Multiboot 1 header + 32→64 bootstrap
-    ├── isr.S                                       # 256 ISR entry stubs + gooos_in_interrupt_depth .bss
-    ├── switch.S                                    # taskReturnHalt + elfExecTrampoline address helpers
-    ├── task_stack_amd64.S                          # imported TinyGo tinygo_startTask / tinygo_swapTask
-    ├── runtime_asm_amd64.S                         # imported TinyGo tinygo_longjmp
-    ├── trampoline.S                                # AP trampoline (16-bit → 64-bit for SMP)
-    ├── stubs.S                                     # port I/O, CPU control, GC support
-    ├── linker.ld                                   # section layout, heap, .pagetables, _alloc_start
-    ├── target.json                                 # TinyGo target: gc=conservative, scheduler=tasks
-    ├── main.go                                     # kernel entry: init + go fsTask / go keyboardPump
-    ├── serial.go                                   # COM1 serial output (direct UART writes)
-    ├── idt.go                                      # IDT setup + lidt
-    ├── interrupt.go                                # table-driven interrupt dispatcher + syscall dispatch
-    ├── pic.go                                      # 8259A PIC remap + EOI
-    ├── pit.go                                      # PIT timer (100 Hz, IRQ0) — drives sleepTicks
-    ├── keyboard.go                                 # PS/2 keyboard IRQ handler (ISR-safe)
-    ├── keyboard_irq.go                             # SPSC ring buffer + keyboardPump goroutine
-    ├── goroutine_tss.go                            # TSS.RSP0 side-table + gooosOnResume hook
-    ├── goroutine_irq.go                            # Go-side handle for gooos_in_interrupt_depth
-    ├── vm.go                                       # virtual memory: mapPage, unmapPage, bump + LIFO free
-    ├── vga.go                                      # VGA console with cursor and scrolling
-    ├── elf.go                                      # ELF64 parser and loader
-    ├── process.go                                  # Process + ring3Wrapper + exitCh lifecycle
-    ├── gdt.go                                      # runtime GDT + TSS, tssSetRSP0
-    ├── userspace.go                                # Ring 3 setup, 12-syscall ABI dispatch
-    ├── fs.go                                       # in-memory FS + go fsTask() over native chan
-    ├── smp.go                                      # SMP: LAPIC, ACPI MADT, INIT-SIPI-SIPI, AP sti+hlt
-    └── user_binaries.go                            # generated: embedded user ELF byte arrays
+├── README.md / CLAUDE.md / Makefile / go.mod / LICENSE
+├── TODO_NET4.md                 # current-session fix checklist (prior ones in pasttodos/)
+├── docs/                        # README-companion walkthroughs (networking, user programs, layout)
+├── current_impl_doc/            # 8 as-built reference docs (overview, syscalls, scheduler, memory, ipc, userland, glossary, known_issues)
+├── impldoc/                     # ~55 design docs (English)
+├── pasttodos/                   # completed TODO checklists (NET1, NET2, NET3)
+├── tcp_problem/                 # handoff package for the late-timing RX stall (pre-fix)
+├── tcp_problem_review2/         # second-round bug review that motivated the afterTicks timer wheel
+├── grub/grub.cfg                # GRUB Multiboot config
+├── scripts/                     # build helpers, lint/verify scripts, TCP test harnesses, TinyGo runtime patch
+├── user/                        # userspace SDK (user/gooos/) and 15 user programs (user/cmd/*)
+└── src/                         # kernel source — 51 Go files + 7 .S files covering boot, scheduler, networking, TCP, SMP, GC hooks
 ```
 
 ## Prerequisites
@@ -439,8 +187,9 @@ sudo apt install -y build-essential grub-pc-bin grub-common xorriso mtools qemu-
 
 ### User-writable TinyGo copy + runtime patches (required)
 
-gooos needs four local changes to TinyGo's runtime for
-`scheduler=tasks` to work in Ring 0. The system TinyGo at
+gooos needs a set of local changes to TinyGo's runtime for
+`scheduler=tasks` to work in Ring 0, plus SMP v2 per-CPU
+runqueue support. The system TinyGo at
 `/usr/local/lib/tinygo/` is root-owned, so the build uses a
 user-writable copy at `$HOME/.local/tinygo/` (overridable via
 the `TINYGOROOT` environment variable the Makefile exports).
@@ -448,27 +197,32 @@ the `TINYGOROOT` environment variable the Makefile exports).
 The full edit is captured as a unified diff at
 `scripts/tinygo_runtime.patch` (reviewable with
 `git apply --stat scripts/tinygo_runtime.patch` against a
-pristine TinyGo 0.33.0 tree). It touches four files:
+pristine TinyGo 0.33.0 tree). The patch installs:
 
-1. **`runtime/runtime_gooos.go`** (new, `gooos && baremetal` build
-   tag) — provides `sleepTicks`, `ticks`, `ticksToNanoseconds`,
-   `nanosecondsToTicks`, `deadlock`, `putchar`, `preinit`, `exit`,
-   `abort`, and the bare-metal `main` entry point that `boot.S`
-   calls.
-2. **`runtime/interrupt/interrupt_gooos.go`** (new) — implements
-   `interrupt.Disable` / `Restore` / `In` + the `State` type,
-   backed by gooos's `cli` / `readFlags` / `restoreFlags` and the
-   `.bss` counter `gooos_in_interrupt_depth` (`src/isr.S`).
-3. **`internal/task/task_stack.go`** (patched in place) — adds a
-   `stackTop uintptr` field to the `state` struct and assigns it
-   to `canaryPtr + stackSize` in `initialize()`. Needed so
-   `src/goroutine_tss.go`'s side table can resolve each
-   goroutine's kernel-stack top for TSS.RSP0.
-4. **`internal/task/task_stack_amd64.go`** (patched in place) —
-   inserts a `gooosOnResume()` call before `swapTask` in the
-   `state.resume()` body. This hook is how the gooos kernel
-   updates `TSS.RSP0` every time TinyGo's scheduler resumes a
-   Ring-3 goroutine.
+- **`runtime/runtime_gooos.go`** (new, `gooos && baremetal && kernelspace`)
+  — kernel bodies for `sleepTicks`, `ticks`, `putchar`, `exit`,
+  `abort`, and the bare-metal `main` entry point that `boot.S`
+  calls.
+- **`runtime/runtime_gooos_user.go`** (new, `gooos && baremetal && !kernelspace`)
+  — userspace equivalents that route through syscalls.
+- **`runtime/interrupt/interrupt_gooos.go`** (new, kernel) and
+  **`runtime/interrupt/interrupt_gooos_user.go`** (new, userspace)
+  — `interrupt.Disable` / `Restore` / `In` implementations.
+- **`runtime/wait_gooos.go`** (new) — `waitForEvents` as an
+  `sti; hlt; cli` idle loop.
+- **`runtime/scheduler.go`** (patched in place) — per-CPU
+  `runqueues[17]`, `schedLock` spinlock over sleep/timer queues,
+  `runqueuePushTo`, work-stealing helpers, `apScheduler()` entry
+  for AP cores.
+- **`runtime/chan.go`**, **`runtime/gc_blocks.go`** (patched in
+  place) — per-CPU enqueue on channel wake, heap lock around
+  alloc/GC.
+- **`internal/task/queue.go`**, **`task_stack.go`**,
+  **`task_stack_amd64.go`** (patched in place) — SMP-safe task
+  queues, per-CPU `currentTasks[17]` and `systemStacks[17]`, the
+  `stackTop` field + `gooosStackOverflow` hook, and the
+  `gooosOnResume()` call that lets the gooos kernel update
+  `TSS.RSP0` on every Ring-3 goroutine resume.
 
 #### One-time setup after installing TinyGo
 
@@ -486,25 +240,29 @@ The Makefile exports `TINYGOROOT=$HOME/.local/tinygo` and
 invokes `~/.local/tinygo/bin/tinygo`, so `make build` picks up
 the patched tree automatically.
 
-The wrapper is **idempotent**: it uses a sentinel check on
-`runtime_gooos.go` and skips with an `already-applied:` message
-if the patch is already present. Re-run any time after a TinyGo
+The wrapper is **idempotent**: it verifies the expected files are
+in place and carry the right build tags, and skips with an
+`already-applied:` message if so. Re-run any time after a TinyGo
 upgrade or after refreshing `~/.local/tinygo/`.
 
 #### Reverting
 
 ```bash
-# 1. Delete the two new files (patch -R leaves them empty, not gone).
+# 1. Delete the four new files (patch -R leaves them empty, not gone).
 rm ~/.local/tinygo/src/runtime/runtime_gooos.go
+rm ~/.local/tinygo/src/runtime/runtime_gooos_user.go
 rm ~/.local/tinygo/src/runtime/interrupt/interrupt_gooos.go
+rm ~/.local/tinygo/src/runtime/interrupt/interrupt_gooos_user.go
+rm ~/.local/tinygo/src/runtime/wait_gooos.go
 
-# 2. Reverse the two in-place edits.
+# 2. Reverse the in-place edits.
 patch -R -p1 -d ~/.local/tinygo < scripts/tinygo_runtime.patch
 ```
 
 Rationale: `impldoc/goroutine_design_scheduler.md §5.1` explains
 why the runtime files are needed; `impldoc/phase_b_ring3_and_exec.md §4`
-explains `gooosOnResume` and the `stackTop` field.
+explains `gooosOnResume` and the `stackTop` field;
+`impldoc/smp_percpu_and_sync.md` covers the per-CPU queue story.
 
 ## Build
 
@@ -515,7 +273,7 @@ make build
 This runs five phases:
 
 1. **ISR-safety lint**: `scripts/lint_isr.go` walks every ISR-rooted call graph and rejects any string concat, channel op, `go` statement, or runtime allocation. Build fails on violation.
-2. **User programs**: `make -C user all` — compiles TinyGo user programs (`sh`, `hello`, `ls`, `cat`, `wc`) into ELF binaries.
+2. **User programs**: `make -C user all` — compiles all 15 TinyGo user programs under `user/cmd/*` into ELF binaries.
 3. **Embed**: `scripts/embed_elfs.sh` — converts user ELFs to Go byte arrays in `src/user_binaries.go`.
 4. **Kernel**: assembles `.S` files, compiles all Go with TinyGo, links with `ld.lld` into `tmp/kernel.bin`.
 5. **Global-layout verify**: `scripts/verify_globals.sh` asserts every TinyGo runtime queue (`runqueue`, `sleepQueue`, `timerQueue`) lies inside `_globals_start..end` so the conservative GC can scan it.
@@ -551,6 +309,15 @@ Multi-core (SMP):
 make run-smp        # -smp 4 for 4 cores
 ```
 
+With the e1000 NIC attached for networking demos:
+
+```bash
+make run-net        # adds -device e1000 + hostfwds for UDP/TCP demos
+```
+
+See `docs/networking_demos.md` for the 5 demo paths enabled by
+`make run-net`.
+
 **Expected output**: VGA shows kernel initialization, then an interactive shell prompt. Type `help` to see available commands:
 
 ```
@@ -575,7 +342,16 @@ Redirection:
   cmd > file       stdout to file (truncate)
   cmd >> file      stdout to file (append)
   cmd < file       stdin from file
+```
 
+(`sh.elf`'s `help` still advertises only the five original
+external commands; the full set of user binaries embedded in the
+kernel ISO — `ls`, `cat`, `wc`, `hello`, `fdprobe`, `goprobe`,
+`gochan`, `smpprobe`, `tinyc`, `edit`, `udpecho`, `dhcp`,
+`tcpecho`, `tcpcli` — is listed in `docs/user_programs.md` and
+in `docs/repo_layout.md`.)
+
+```
 $ ls
 hello.txt
 sh.elf
@@ -584,6 +360,7 @@ ls.elf
 cat.elf
 wc.elf
 fdprobe.elf
+... and more ELFs (goprobe, gochan, smpprobe, tinyc, edit, udpecho, dhcp, tcpecho, tcpcli)
 
 $ echo hello > out.txt
 $ cat out.txt
@@ -620,18 +397,39 @@ Hello, World from gooos userspace!
   are not parsed. Writing to fd 2 goes to serial only (no
   VGA mirror); programs have no way to redirect fd 2
   separately.
+- **SMP user-mode Ring-3 disabled.** APs boot and enter the
+  scheduler but only BSP (CPU 0) runs goroutines for now;
+  AP-side `iretq` into Ring 3 triple-faults under
+  investigation. See `impldoc/smp_deferred_and_known_issues.md`.
 
 ## Documentation
 
-See `current_impl_doc/` for detailed implementation documentation:
+Reference docs live under `current_impl_doc/` (as-built) and
+`impldoc/` (design). Companion walkthroughs under `docs/`.
+
+As-built reference (start here):
 
 - [Architecture Overview](current_impl_doc/overview.md) — boot flow, memory map, task model
-- [Syscall ABI](current_impl_doc/syscalls.md) — 12-syscall reference
+- [Syscall ABI](current_impl_doc/syscalls.md) — 34-syscall reference
 - [Scheduler](current_impl_doc/scheduler.md) — task states, context switch, process lifecycle
 - [Memory](current_impl_doc/memory.md) — page allocator, page tables, linker layout
-- [IPC](current_impl_doc/ipc.md) — channels, service tasks
+- [IPC](current_impl_doc/ipc.md) — channels, service tasks, `afterTicks` timer wheel
 - [Userland](current_impl_doc/userland.md) — SDK, build system, user programs
-- [Known Issues](current_impl_doc/known_issues.md) — workarounds and limitations
+- [Glossary](current_impl_doc/glossary.md) — terminology and goroutine kinds
+- [Known Issues](current_impl_doc/known_issues.md) — workarounds, limitations, resolved bugs
+
+Design docs (deeper dives — many superseded by as-builts; see
+`docs/repo_layout.md` for a staleness-aware map):
+
+- `impldoc/net_overview.md`, `impldoc/net_tcp_*.md` — networking stack design
+- `impldoc/smp_*.md` — SMP v1 / v2 design
+- `impldoc/userspace_*.md`, `impldoc/goroutine_design_*.md` — Phase B migration notes
+
+Walkthroughs:
+
+- [docs/networking_demos.md](docs/networking_demos.md) — 5 networking demo paths (A–E)
+- [docs/user_programs.md](docs/user_programs.md) — gochan / tinyc / edit + program roster
+- [docs/repo_layout.md](docs/repo_layout.md) — full repository tree
 
 ## License
 

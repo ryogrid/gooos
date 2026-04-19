@@ -167,6 +167,12 @@ func main() {
 	vgaWriteLine(5, "Interrupts: enabled")
 	serialPrintln("Interrupts: enabled")
 
+	// Start the afterTicks timer-wheel dispatcher. Must be after
+	// pitInit (dispatcher reads pitTicks) and before any caller of
+	// afterTicks (testAfterTicks, netInit spawns, Ring-3 wrappers).
+	afterTicksInit()
+	serialPrintln("Timer wheel: afterTicksInit")
+
 	// Phase 1: Allocate many objects that immediately become garbage.
 	const numAllocs = 500
 	for i := 0; i < numAllocs; i++ {
@@ -386,12 +392,19 @@ func main() {
 		netInit()
 		testNetBuf()
 		testICMPEchoReply()
-		// Dump a complete diagnostic snapshot ~5 s after boot so
-		// automated test scripts have a grep target and operators
-		// can eyeball link / counters without a shell command.
+		// Periodic netDiag: first dump ~5 s after boot for
+		// test-script grep targets, then every ~10 s forever.
+		// The loop is safe post-Ring-3 because afterTicks is
+		// backed by the single-dispatcher timer wheel
+		// (src/afterticks.go) instead of the per-call spawn
+		// that previously leaked Task structs.
 		go func() {
 			<-afterTicks(500)
 			netDiag()
+			for {
+				<-afterTicks(1000)
+				netDiag()
+			}
 		}()
 	}
 
@@ -480,6 +493,14 @@ func main() {
 	fsCreate("dhcp.elf")
 	fsWrite("dhcp.elf", userElf_dhcp[:])
 	serialPrintln("  dhcp.elf: " + utoa(uint64(len(userElf_dhcp))) + " bytes")
+
+	fsCreate("tcpecho.elf")
+	fsWrite("tcpecho.elf", userElf_tcpecho[:])
+	serialPrintln("  tcpecho.elf: " + utoa(uint64(len(userElf_tcpecho))) + " bytes")
+
+	fsCreate("tcpcli.elf")
+	fsWrite("tcpcli.elf", userElf_tcpcli[:])
+	serialPrintln("  tcpcli.elf: " + utoa(uint64(len(userElf_tcpcli))) + " bytes")
 
 	// Store a test file for cat/wc demos.
 	fsCreate("hello.txt")

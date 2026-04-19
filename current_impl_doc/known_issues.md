@@ -141,6 +141,25 @@ the default 256 KiB user heap doesn't.
 file > 64 KiB even though `maxFileData` is 128 KiB. Bumped to
 131072 as part of the editor work.
 
+### `afterTicks` single-dispatcher timer wheel
+
+`src/afterticks.go`. The naive `afterTicks` implementation —
+one goroutine spawn per call — accumulated unreclaimed Task
+structs because gooos's patched TinyGo `scheduler=tasks`
+runtime has no task free-list. Repeated hot-loop callers
+(TCP RTO scanner, kernel echo idle poll, netsock wait loops)
+produced a late-timing RX stall: kernel-goroutine scheduling
+collapsed ~12-16 s after Ring-3 startup and
+`scripts/test_tcp_latetiming.sh` FAILed. The fix replaces the
+per-call spawn with one long-lived `timerDispatcher` goroutine
+that walks a fixed-size `[256]timerEntry` list on every
+Gosched cycle and fires matured channels. Signature of
+`afterTicks(uint64) <-chan struct{}` unchanged so all call
+sites stay as-is. Lock-order rank 12 for the timer list.
+Overflow (>256 pending waiters) fires immediately rather than
+blocking. See `TODO_NET4.md` and
+`tcp_problem_review2/` for the investigation trail.
+
 ## Deferred Items (post-v1 features)
 
 Grouped by origin:

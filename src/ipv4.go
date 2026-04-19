@@ -17,6 +17,7 @@ const (
 	ipv4MaxPayload    = ipv4MTU - ipv4HeaderMinSize
 
 	ipProtoICMP = uint8(1)
+	ipProtoTCP  = uint8(6)
 	ipProtoUDP  = uint8(17)
 
 	ipv4FlagDF = uint16(0x4000) // Don't Fragment
@@ -205,6 +206,8 @@ func ipv4Handle(payload []byte) {
 	switch hdr.Protocol {
 	case ipProtoICMP:
 		icmpHandle(hdr, inner)
+	case ipProtoTCP:
+		tcpHandle(hdr, inner)
 	case ipProtoUDP:
 		udpHandle(hdr, inner)
 	default:

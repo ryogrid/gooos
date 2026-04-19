@@ -74,6 +74,14 @@ const (
 	sysRecvfrom    = 25
 	sysNetConfig   = 26
 	sysSendtoBcast = 27
+
+	// Phase TCP-5 — see impldoc/net_tcp_socket_api.md.
+	sysListen   = 28
+	sysAccept   = 29
+	sysConnect  = 30
+	sysTcpSend  = 31
+	sysTcpRecv  = 32
+	sysShutdown = 33
 )
 
 // jumpToRing3 transitions the CPU to Ring 3 user mode via iretq.
@@ -142,6 +150,18 @@ func syscallDispatch(frame *SyscallFrame) {
 		sysNetConfigHandler(frame)
 	case sysSendtoBcast:
 		sysSendtoBcastHandler(frame)
+	case sysListen:
+		sysListenHandler(frame)
+	case sysAccept:
+		sysAcceptHandler(frame)
+	case sysConnect:
+		sysConnectHandler(frame)
+	case sysTcpSend:
+		sysTcpSendHandler(frame)
+	case sysTcpRecv:
+		sysTcpRecvHandler(frame)
+	case sysShutdown:
+		sysShutdownHandler(frame)
 	default:
 		frame.RAX = 0xFFFFFFFFFFFFFFFF // -1 for invalid syscall
 	}
