@@ -219,10 +219,12 @@ pristine TinyGo 0.40.1 tree). The patch installs:
   `runqueuePushTo`, `stealWork` round-robin peer scan,
   `apScheduler()` entry for AP cores, push-site retargeting in
   `scheduleTask` / `Gosched` / main scheduler loop.
-- **`runtime/gc_blocks.go`** (patched in place) — explicit
-  `heapLock` spinlock around alloc/GC, because upstream's
-  `gcLock task.PMutex` is a no-op under `tinygo.unicore`
-  (`scheduler=tasks`).
+- **`runtime/gc_blocks.go`** (comment-only patch) — gooos annotation
+  near the globals documenting that upstream's `gcLock task.PMutex`
+  is a no-op under `tinygo.unicore` (`scheduler=tasks`), and that
+  cross-CPU correctness under gooos relies on the BSP-only-allocates
+  contract (APs park in `waitForEvents`) until the future M5
+  `gcPauseCore` IPI lands. No executable change.
 - **`runtime/wait_other.go`** (patched in place) — adds
   `&& !gooos` to the build tag so gooos builds use the
   gooos-specific `wait_gooos.go` / `wait_gooos_user.go`.

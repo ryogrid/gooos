@@ -144,15 +144,15 @@ Items from the original 19-item work plan
 
 ## 5. TinyGo Runtime SMP Gaps (Remaining)
 
-Despite the comprehensive patch (853 lines), the following
-TinyGo runtime areas remain problematic under multi-CPU
-execution:
+Despite the patch (post-0.40.1-migration size ~800 lines; was
+853 lines on 0.33.0 before the heapLock retirement), the
+following TinyGo runtime areas remain problematic under
+multi-CPU execution:
 
 | Gap | File | Description |
 |---|---|---|
 | Map concurrent access | `runtime/hashmap.go` | Go maps are not thread-safe; concurrent `hashmapSet` from multiple CPUs corrupts bucket metadata. gooos kernel maps are protected by spinlocks (`procLock`, `gInfoLock`), but any TinyGo-internal map use (string interning, etc.) is unprotected. |
-| GC stop-the-world | `runtime/gc_blocks.go` | GC mark phase scans all runqueues but cannot safely pause APs. `heapLock` protects alloc, but GC mark/sweep while APs allocate simultaneously may miss live roots. |
-| `schedulerDone` race | `runtime/scheduler.go:24` | Read by all CPUs without atomic ops. Harmless in practice (only written once at shutdown by BSP). |
+| GC stop-the-world | `runtime/gc_blocks.go` | GC mark phase scans the current CPU's runqueue via `schedulerRunQueue()` but cannot safely pause APs. Upstream 0.40.1's `gcLock task.PMutex` is a no-op under `tinygo.unicore` (`scheduler=tasks`); gooos relies on the BSP-only-allocates contract (APs idle in `waitForEvents`). Under `scheduler=cores`, `gcLock` becomes a real Mutex and the M5 `gcPauseCore` IPI closes the remaining concurrent-mutator window. |
 | Channel internals | `runtime/chan.go` | Channel struct mutations (blocked list, state transitions) use `interrupt.Disable` only — per-CPU, not cross-CPU safe. Currently safe because channels are goroutine-local and only one goroutine touches a channel end at a time. |
 
 ## 6. Priority Order for Remaining Work

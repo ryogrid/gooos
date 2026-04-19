@@ -181,14 +181,26 @@ sequenceDiagram
     BSP->>BSP: report "SMP: N cores online"
 ```
 
-**SMP v2**: APs now enter the TinyGo scheduler loop after
-per-CPU initialization (GS base, GDT/TSS, LAPIC timer). Each
-CPU has its own runqueue (`runqueues[cpuID()]`), systemStack,
-GDT, and TSS. When a CPU's local runqueue is empty, it steals
-work from peer CPUs' queues (round-robin `stealWork()`). LAPIC
-timer fires at 100 Hz on each CPU; IPI wakeup vector (0xFC)
-enables cross-CPU goroutine scheduling. See
-`impldoc/smp_*.md` for the full design set.
+**SMP v2 (current, post-TinyGo-0.40.1 migration)**: APs enter
+the TinyGo scheduler loop after per-CPU initialization (GS
+base, GDT/TSS). Each CPU has its own runqueue
+(`runqueues[cpuID()]`), systemStack, GDT, and TSS. However:
+
+- `stealWork()` exists in the patched runtime but is
+  **intentionally not called** from the scheduler's pop site.
+  Wiring it triggers the Ring-3 `iretq` triple-fault on APs
+  (see `impldoc/smp_deferred_and_known_issues.md §2.1`);
+  enabling it is tracked as `TODO_SMP3.md` milestone M3.
+- Only BSP runs a LAPIC timer (100 Hz). Enabling per-AP LAPIC
+  timers hits a separate ISR-depth race captured as M2 in
+  `TODO_SMP3.md` and `impldoc/smp_deferred_and_known_issues.md §2.2`.
+- IPI wakeup vector 0xFC is wired but only used for boot-phase
+  signalling in current code.
+
+Net effect: all goroutines currently execute on BSP (CPU 0).
+APs idle in `waitForEvents` (`sti; hlt; cli`). See
+`impldoc/smp_*.md` and `impldoc/smp_migration_overview.md` for
+the full design set and forward plan.
 
 ## Boot-Time Checks
 

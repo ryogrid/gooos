@@ -246,7 +246,7 @@ index b4425de3..4bfe5af9 100644
 +	currentTasks[idx] = nil
  }
 diff --git a/src/runtime/gc_blocks.go b/src/runtime/gc_blocks.go
-index a95edbfd..39758646 100644
+index a95edbfd..6cd49059 100644
 --- a/src/runtime/gc_blocks.go
 +++ b/src/runtime/gc_blocks.go
 @@ -58,6 +58,15 @@ var (
@@ -269,13 +269,13 @@ index a95edbfd..39758646 100644
  }
  
  // GC performs a garbage collection cycle.
-+// gooos SMP: do NOT wrap runGC() with heapLock here. runGC's
-+// runqueue-scan path calls into the Queue/Task code which can
-+// indirectly trigger paths that re-acquire heapLock under some
-+// conditions, causing self-deadlock on the non-reentrant spinlock.
-+// Concurrent alloc() from another CPU still takes heapLock, so
-+// explicit GC() + concurrent alloc can observe a partial mark;
-+// that race is covered by the M5 gcPauseCore IPI design.
++// gooos SMP: relies on upstream gcLock (task.PMutex). Under
++// scheduler=tasks / tinygo.unicore, gcLock is a no-op; cross-CPU
++// safety comes from the BSP-only-allocates contract (APs idle in
++// waitForEvents). Under scheduler=cores, gcLock becomes a real
++// Mutex routing through atomicsLock. The M5 gcPauseCore IPI
++// closes the remaining concurrent-mutator window under
++// scheduler=cores.
  func GC() {
  	gcLock.Lock()
  	runGC()

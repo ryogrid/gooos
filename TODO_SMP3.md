@@ -122,16 +122,16 @@ Deferred transitively.
 
 ## Closing: README Wave 2 + doc updates + reviewer pass + final audit
 
-- [ ] **C-1. README Wave 2 edits (scheduler + SMP progress rows + known-limitations)**
+- [x] **C-1. README Wave 2 edits (scheduler + SMP progress rows + known-limitations)**
   - Per `impldoc/readme_update_plan.md §Wave 2`: project tagline scheduler mention, Scheduler row, SMP progress row (reflect milestones actually landed), Known limitations updates, SMP verification section
   - Commit: `docs(README): SMP multi-core scheduling status`
 
-- [ ] **C-2. `current_impl_doc/` updates**
+- [x] **C-2. `current_impl_doc/` updates**
   - `current_impl_doc/scheduler.md` — document cores-mode scheduler, per-CPU runqueues, work stealing
   - `current_impl_doc/known_issues.md` — remove resolved items; update status of deferred
   - Commit: `docs(impl): update as-built docs for SMP migration`
 
-- [ ] **C-3. `impldoc/smp_deferred_and_known_issues.md` update**
+- [x] **C-3. `impldoc/smp_deferred_and_known_issues.md` update**
   - Mark resolved items (per milestones landed); retain deferred items with current status
   - Commit: `docs(smp): update deferred/known issues post-migration`
 
@@ -184,4 +184,58 @@ Deferred transitively.
 
 ## Reviewer findings
 
-(Filled after the reviewer pass.)
+`general-purpose` reviewer subagent ran against this branch on
+2026-04-20 and executed the full verification matrix (patch apply ×2,
+make build/lint/verify-globals, test_net.sh, test_tcp_phase1..5.sh,
+`-smp 4` boot capture). All automated checks PASSed. Classification:
+
+### CRITICAL
+
+none.
+
+### MAJOR (all resolved inline)
+
+1. **Stale `heapLock` bullet in `README.md` toolchain-setup section.**
+   Patch dropped heapLock at commit `b350d02`; README text lagged.
+   Fixed: README now describes the current comment-only annotation
+   near `gc_blocks.go` globals (documents BSP-only-allocates contract
+   + M5 `gcPauseCore` plan).
+2. **Stale SMP-v2 paragraph in `current_impl_doc/scheduler.md`**
+   claimed live work-stealing + per-AP LAPIC timer, contradicting
+   Wave 1's actual state (stealWork dormant, AP LAPIC timer disabled
+   per M2 deferral). Fixed: paragraph rewritten to describe actual
+   state with cross-links to `TODO_SMP3.md` M2/M3 and
+   `impldoc/smp_deferred_and_known_issues.md §2.1/§2.2`.
+3. **Stale `heapLock` comments inside the gc_blocks.go patch hunk.**
+   Fixed: comment block rewritten to describe upstream `gcLock`
+   (`task.PMutex`, no-op under `tinygo.unicore`) + BSP-only-allocates
+   contract + M5 IPI plan; patch file regenerated.
+
+### MINOR (resolved or accepted)
+
+1. `impldoc/smp_deferred_and_known_issues.md §5` "GC stop-the-world"
+   row cited `heapLock protects alloc` — rewrote to describe
+   upstream `gcLock task.PMutex` + BSP-only-allocates contract.
+2. `impldoc/smp_deferred_and_known_issues.md §5` "schedulerDone race"
+   row cited a symbol that doesn't exist in 0.40.1 (`grep
+   schedulerDone .../tinygo0.40.1/src/` → 0 matches). Removed the
+   row.
+3. Off-by-one line citations in `impldoc/tinygo_0_40_1_assessment.md`
+   (scheduler_cores.go:13/22/281 vs. actual 12/21/281-291; §5.1 291
+   vs. 292; `scheduler_cooperative.go:38-42` vs. 37-41) — accepted
+   as "close enough" (reviewer notes they don't affect correctness);
+   future lockstep sync if/when the assessment is re-verified.
+4. `impldoc/smp_scheduler_design.md §4.4` `runtime_rp2.go:293-299`
+   vs. actual 294-299 — accepted (off-by-one).
+5. `current_impl_doc/scheduler.md:199` `goroutine_tss.go:77` vs.
+   actual 80 — accepted (off-by-one).
+6. Stale comment in `runtime_gooos.go:96-97` ("waitForEvents
+   provided by wait_other.go (fallback)") — wait_other.go now
+   excludes `&& !gooos`; comment kept as harmless historical note.
+7. `queue.go Append` lock-rank on `q` then `other` — unreachable
+   in current code; latent AB/BA concern deferred to M3 when any
+   stealWork-like batch move lands.
+8. `current_impl_doc/known_issues.md:256` historical `~/.local/tinygo/`
+   reference kept as "Reviewer MINOR notes / Fixed:" context.
+9. No new TODO/FIXME/XXX markers introduced by the session (verified
+   via diff).
