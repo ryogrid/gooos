@@ -502,6 +502,10 @@ func main() {
 	fsWrite("tcpcli.elf", userElf_tcpcli[:])
 	serialPrintln("  tcpcli.elf: " + utoa(uint64(len(userElf_tcpcli))) + " bytes")
 
+	fsCreate("ps.elf")
+	fsWrite("ps.elf", userElf_ps[:])
+	serialPrintln("  ps.elf: " + utoa(uint64(len(userElf_ps))) + " bytes")
+
 	// Store a test file for cat/wc demos.
 	fsCreate("hello.txt")
 	fsWrite("hello.txt", []byte("Hello from the gooos filesystem!\nThis is a test file.\n"))
