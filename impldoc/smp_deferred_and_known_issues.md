@@ -98,9 +98,28 @@ deferred). APs wake via the IPI path
 (`runtime.schedulerWake → gooosWakeupCPU` broadcast landed
 in M3-6, commit `aa5bb91`), which is sufficient for
 work-stealing to function — every `scheduleTask` push pokes
-idle APs. The consequence is that APs cannot preempt
-long-running CPU-bound goroutines; cooperative yield points
-or channel ops are required for migration.
+idle APs.
+
+#### Update (2026-04-20): feature 2.1 preemption landed on the BSP+IPI path
+
+Feature 2.1 (`impldoc/preempt_kernel_goroutines.md`) explicitly chose
+**BSP-timer + preempt-IPI broadcast** over re-enabling the AP LAPIC
+timer. On every BSP 100 Hz tick, `handleLAPICTimer` broadcasts vector
+0xFB (`ipiPreemptVector`) to every online AP; each AP's
+`handlePreemptIPI` checks safe-points and calls `runtime.Gosched()`
+to force a reschedule. This gives a hostile compute-bound kernel
+goroutine a 10 ms quantum without needing per-CPU timers. Feature
+2.2 extends the same path to Ring 3 via kernel-delivered SIGALRM —
+`maybeDeliverSignal` rewrites the iretq frame in-place from the
+preempt ISR (or from the BSP timer handler, for BSP-self-delivery).
+
+Commits: `55dd682` (ISR + broadcast), `22ac72a` (enable),
+`63f63b0` (user SIGALRM syscalls), `3d8f9bc` (user harness + enable).
+
+The AP LAPIC timer per-CPU tick remains deferred as a `## Future`
+item in `impldoc/preempt_kernel_goroutines.md` — 2.1's coarser
+IPI-latency quantum is acceptable and avoids the second-order hang
+above.
 
 ### 2.3 IOAPIC IRQ0 Redirection Failure
 
