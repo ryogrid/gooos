@@ -183,55 +183,122 @@ sequenceDiagram
     BSP->>BSP: report "SMP: N cores online"
 ```
 
-**SMP v2 (current, post-M3 unblock landing, 2026-04-20)**:
-APs enter the TinyGo scheduler loop (`runtime.apScheduler` →
-`scheduler(false)`) after per-CPU initialization (GS base,
-GDT/TSS, IDT). Each CPU has its own runqueue
-(`runqueues[cpuID()]`), systemStack via
-`runtime.systemStackPtr`, GDT, TSS, and IDT. The configuration
-flip from `scheduler=tasks` to `scheduler=cores` landed in
-`src/target.json` (commit `68f6835`).
+### SMP v2 (current, post-M3 unblock landing, 2026-04-20)
 
-Live features:
+**In one line**: goroutines and the Ring-3 processes that
+wrap them actually run on multiple CPU cores in parallel.
+Work-stealing is live under `scheduler=cores`; the one
+remaining limitation is that a compute-bound goroutine on
+an AP cannot be preempted from outside, so cooperative
+yield points (channel ops, `sys_sleep`, syscalls,
+`runtime.Gosched()`) are what distribute work in practice.
 
-- **Per-CPU runqueues**: every `scheduleTask` push targets
-  `runqueues[gooosCpuID()]`. `schedulerRunQueue()` returns the
-  caller's per-CPU queue for GC to scan.
-- **Work-stealing**: when the local queue is empty,
-  `scheduler()` calls `stealWork()` which round-robin scans
-  peer queues and pops one task (commit `aa5bb91`). Verified:
-  `ring3Wrapper: cpuID=N` with N != 0 is routinely observed
-  under `-smp 4`.
-- **Cross-CPU wakeup**: `schedulerWake()` in
-  `runtime_gooos.go` broadcasts an IPI to every online AP via
-  `gooosWakeupCPU(i)` for `i` in `[0, main.numCoresOnline)`.
-  The IPI handler (`handleWakeupIPI`) is a plain EOI; the
-  wake happens naturally by returning from `hlt` in
-  `schedulerUnlockAndWait()`.
-- **GC**: `gcLock` is a real `task.PMutex` under
-  `scheduler=cores`. `runtime.alloc` acquires it and cannot be
-  reentered from inside `runGC()` — which previously
-  deadlocked because `var markedTaskQueue task.Queue` inside
-  upstream `gc_blocks.go` was escape-analyzed to the heap.
-  Fix: `//go:noescape` on `gooos_spinlockAcquire` /
-  `gooos_spinlockRelease` in
-  `internal/task/queue.go` and `runtime/runtime_gooos.go`
-  keeps `markedTaskQueue` on the stack (commit `68f6835`).
-- **BSP remains the sole clock**: `hasSleepingCore()` returns
-  false, and only BSP runs the 100 Hz LAPIC timer. AP LAPIC
-  timer is deferred (see
-  `impldoc/smp_deferred_and_known_issues.md §2.2`); APs rely
-  entirely on the IPI wake path above, which means an AP
-  running a compute-bound goroutine cannot be preempted from
-  outside. Cooperative yield points and channel ops are
-  sufficient for the current workload.
+#### How it works
 
-Net effect: goroutines genuinely migrate across cores. The
-shell goroutine (Ring-3 launcher) is routinely observed
-running on AP 1 or AP 3. See
-`impldoc/smp_unblock_overview.md` and sibling docs for the
-M2/M3/M4 design set and the M5 roadmap
-(`gcPauseCore` IPI + AP LAPIC timer).
+1. **Per-CPU runqueues.** Every `scheduleTask` push targets
+   `runqueues[gooosCpuID()]` — the queue of the CPU that
+   called `go func()` or wrote to the channel. There is no
+   shared global runqueue. `schedulerRunQueue()` returns the
+   caller's per-CPU queue so GC's mark phase scans only the
+   local one.
+
+2. **AP bring-up into the TinyGo scheduler.** After
+   per-CPU init (GS base, GDT/TSS, IDT — the IDT load was
+   the M4 fix for the Ring-3 triple-fault), an AP enters
+   `runtime.apScheduler` → `scheduler(false)`. The scheduler
+   is the same function BSP runs; each CPU loops over its
+   own runqueue, resumes tasks, handles its own sleep/timer
+   accounting.
+
+3. **Work-stealing.** When the local runqueue is empty,
+   `scheduler()` calls `stealWork()`, which round-robin
+   scans peer queues (`(me+1) … (me+numCPU-1)` mod numCPU)
+   and pops one task from the first non-empty peer. The
+   stolen task is then `Resume()`'d on the stealer's CPU
+   like any local task — no special migration dance
+   (TinyGo tasks already store their own stack + register
+   state, so they run on whichever CPU resumes them).
+
+4. **Cross-CPU wakeup over IPI.** When a push wakes an AP
+   that is halted in `schedulerUnlockAndWait()` (i.e. `hlt`
+   waiting for an interrupt), `scheduleTask` calls
+   `schedulerWake()`. That broadcasts an IPI to vector 0xFC
+   on every online AP via `gooosWakeupCPU(i)` for `i` in
+   `[0, main.numCoresOnline)`. The IPI handler
+   (`handleWakeupIPI` in `src/ipi.go`) is a one-line EOI;
+   the wake happens naturally by returning from `hlt` back
+   to the scheduler loop, which then calls `stealWork` and
+   finds the freshly-pushed task.
+
+5. **GC under `scheduler=cores`.** `gcLock` (the lock
+   serialising `runtime.alloc` and `runGC`) is a real
+   `task.PMutex` (upstream `tinygo.unicore`-gated no-op is
+   gone). To prevent deadlock inside `runGC`, a companion
+   fix disables escape-analysis on the gooos-specific
+   `gooos_spinlockAcquire` / `gooos_spinlockRelease`
+   externs (both `internal/task/queue.go` and
+   `runtime/runtime_gooos.go` carry `//go:noescape`). Without
+   it, `var markedTaskQueue task.Queue` in upstream
+   `gc_blocks.go` would escape to the heap, reach
+   `runtime.alloc`, re-enter `gcLock`, and Pause forever.
+
+#### How to verify
+
+- `bash scripts/test_smp_basic.sh` — boots `-smp 4`, waits
+  for a kernel goroutine (`smpBasicProbe`) to report
+  `smp_basic_cpu=N` with `N != 0`, and separately for the
+  shell goroutine to print `ring3Wrapper: cpuID=N` with
+  `N != 0`. Either signal is enough for PASS; both are
+  routinely observed.
+- `bash scripts/test_net.sh` and
+  `bash scripts/test_tcp_phase{1..5}.sh` — regression
+  suite under `-smp 4`, all PASS.
+
+#### The remaining constraint: AP preemption
+
+BSP is the sole clock. `hasSleepingCore()` returns false,
+and only BSP runs the 100 Hz LAPIC timer; re-enabling
+`lapicTimerInit()` on APs currently hangs boot after
+"Scheduler: TinyGo goroutines active" (second-order issue
+that was not the original racy global counter — the race
+is fixed; the remaining hang is in the AP timer ISR
+dispatch path and still under investigation). See
+`impldoc/smp_deferred_and_known_issues.md §2.2` and
+`TODO_SMP4.md` for the deferred work under M2-4.
+
+The practical consequence is that **APs have no
+independent preemption source**. An AP currently running
+a goroutine cannot be interrupted to run a different one
+until the running goroutine yields. Yield happens at:
+
+- channel operations (`ch <- x`, `<-ch`);
+- `time.Sleep` / `sys_sleep` / `<-afterTicks(n)`;
+- syscalls from Ring-3 (the `int 0x80` path goes through
+  the scheduler);
+- explicit `runtime.Gosched()`;
+- the return of `go func() { ... }()` bodies.
+
+Every goroutine gooos actually spawns today — service
+loops, Ring-3 wrappers, TCP/UDP dispatchers, timer-wheel
+drainers — yields often enough that work migrates across
+cores in practice. A pathological CPU-bound goroutine
+without yields would pin whichever AP it lands on.
+
+#### Related docs
+
+- `impldoc/smp_unblock_overview.md` — design write-up for
+  the M2/M3/M4 unblock work. Start here for the "why" of
+  each commit.
+- `impldoc/smp_m3_cores_promotion.md` — the step-by-step
+  `scheduler=tasks` → `scheduler=cores` promotion plan.
+- `impldoc/smp_m4_ring3_fault.md` — the QEMU-only
+  investigation playbook that nailed the M4 IDT-not-loaded
+  root cause.
+- `impldoc/smp_deferred_and_known_issues.md` — current
+  status of every known gap (§2.1 RESOLVED, §2.2 PARTIAL,
+  §5 remaining GC stop-the-world work).
+- `impldoc/smp_migration_overview.md` — 0.33.0 → 0.40.1
+  migration background.
 
 ## Boot-Time Checks
 
