@@ -17,3 +17,8 @@
 package main
 
 const preemptEnabled = false
+
+// runPreemptProbe gates the kpHog + kpMarker goroutines spawned in
+// src/main.go. Off in release builds; flip to true alongside
+// preemptEnabled when running scripts/test_preempt_kernel.sh.
+const runPreemptProbe = false

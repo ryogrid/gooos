@@ -548,8 +548,47 @@ func main() {
 	// log. scripts/test_smp_basic.sh greps for that.
 	go smpBasicProbe()
 
+	// Feature 2.1 kernel-preemption probe. Gated by preemptEnabled
+	// (src/preempt_config.go). Spawns a pair of goroutines under
+	// -smp 4: `kpHog` runs a tight counter loop with NO cooperative
+	// yield, `kpMarker` prints a marker line and sleeps briefly.
+	// With preemption live, the BSP LAPIC tick broadcasts vector
+	// 0xFB to the AP where kpHog lands, the AP's handlePreemptIPI
+	// runs Gosched, and kpMarker gets its turn. Serial log greps
+	// for `preempt_probe_marker=N` in scripts/test_preempt_kernel.sh.
+	if preemptEnabled && runPreemptProbe {
+		go kpHog()
+		go kpMarker()
+	}
+
 	// Load shell and jump to Ring 3. Does not return.
 	setupUserspace()
+}
+
+// kpHog is a tight compute loop with zero cooperative-yield points.
+// Under preemptEnabled, AP preempt IPIs must force it off the CPU
+// periodically so kpMarker can run on the same core.
+//
+//go:noinline
+func kpHog() {
+	var x uint64
+	for {
+		x++
+		if x == 0 {
+			serialPrintln("kpHog: wrapped (should never print)")
+		}
+	}
+}
+
+// kpMarker prints a marker line every ~50 ms. Under preemption, it
+// makes forward progress even while kpHog is hogging a core. Without
+// preemption, and if kpMarker and kpHog happen to land on the same
+// runqueue, kpMarker starves.
+func kpMarker() {
+	for iter := 0; iter < 20; iter++ {
+		serialPrintln("preempt_probe_marker=" + utoa(uint64(iter)))
+		<-afterTicks(5)
+	}
 }
 
 // smpBasicProbe yields between iterations; each yield re-queues
