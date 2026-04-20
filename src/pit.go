@@ -37,6 +37,18 @@ func pitInit() {
 // goroutines yield cooperatively via Gosched / channel ops, and
 // Ring-3 preemption happens naturally through iretq return paths.
 //
+// Under -smp > 1 it additionally broadcasts a wakeup IPI to every
+// online AP. Reason: PIC-pass-through routes external IRQs (incl.
+// IRQ1 keyboard) to the BSP only, and APs have LVT0 masked. Without
+// an explicit wakeup signal, a kernel goroutine like keyboardPump
+// parked on sti+hlt on an AP waits for the next preempt-IPI
+// broadcast from handleLAPICTimer (~10 ms) which is sufficient in
+// theory but empirically too unreliable for interactive typing.
+// Broadcasting from this handler — every PIT tick, 100 Hz — gives
+// APs a guaranteed 10 ms wake cadence and restores -smp 1 parity
+// for keyboard latency. schedulerWake is a no-op in -smp 1 since it
+// self-skips; cost is one LAPIC ICR write per AP per tick.
+//
 //go:nosplit
 func handleTimer(vector uint64) {
 	pitTicks++
@@ -44,5 +56,29 @@ func handleTimer(vector uint64) {
 		lapicSendEOI()
 	} else {
 		picSendEOI(0)
+	}
+	if numCoresOnline > 1 {
+		pitWakeAPs()
+	}
+}
+
+// pitWakeAPs broadcasts a wakeup IPI (vector 0xFC) to every online
+// AP. Called from handleTimer 100 times per second. Split from the
+// hot ISR path so the nosplit body stays minimal.
+//
+//go:nosplit
+func pitWakeAPs() {
+	n := numCoresOnline
+	me := cpuID()
+	meAPIC := perCPUBlocks[me].APICID
+	for i := uint32(0); i < n; i++ {
+		if i == me {
+			continue
+		}
+		apicID := perCPUBlocks[i].APICID
+		if apicID == meAPIC {
+			continue
+		}
+		lapicSendIPI(uint8(apicID), ipiWakeupVector)
 	}
 }
