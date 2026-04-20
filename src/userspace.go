@@ -799,7 +799,7 @@ func sysWaitpidHandler(frame *SyscallFrame) {
 	select {
 	case exitCode := <-child.exitCh:
 		if statusVaddr != 0 {
-			writeU32Through(parent.pml4, statusVaddr, uint32(exitCode))
+			writeU32Through(activePML4ForProc(parent), statusVaddr, uint32(exitCode))
 		}
 		fl := procLock.Acquire()
 		if procByPID[child.pid] == child {
@@ -812,6 +812,20 @@ func sysWaitpidHandler(frame *SyscallFrame) {
 	default:
 		frame.RAX = 0 // still running
 	}
+}
+
+// activePML4ForProc returns a valid PML4 address for walking user
+// vaddrs owned by proc. Child processes from elfSpawn have their
+// own per-process PML4 (proc.pml4 != 0). The boot shell, launched
+// via elfLoad, has pml4 == 0 but runs in the boot PML4; readCR3
+// during its syscall context returns the boot PML4 (with low bits).
+//
+//go:nosplit
+func activePML4ForProc(proc *Process) uintptr {
+	if proc.pml4 != 0 {
+		return proc.pml4
+	}
+	return readCR3() &^ 0xFFF
 }
 
 // writeU32Through writes a u32 through the process's PML4. Used by
