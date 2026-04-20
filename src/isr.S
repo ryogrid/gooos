@@ -108,13 +108,19 @@ isr_common:
      * has been retired per M2 (impldoc/smp_m2_ap_lapic_timer.md) —
      * it was racy on SMP and is no longer referenced.
      *
-     * For vector 0x80 (syscall), additionally bump the per-CPU
-     * syscall-dispatch depth (%gs:44) so runtime interrupt.In()
-     * returns false during syscall handlers and task.Pause() is
-     * allowed there. Any other vector leaves %gs:44 at 0. */
+     * For vector 0x80 (syscall) AND vector 0xFB (preempt IPI, feature
+     * 2.1), additionally bump the per-CPU syscall-dispatch depth
+     * (%gs:44) so runtime interrupt.In() returns false during these
+     * handlers and task.Pause() is allowed there. Any other vector
+     * leaves %gs:44 at 0. The preempt handler needs this because it
+     * explicitly calls runtime.Gosched() to force a reschedule — per
+     * impldoc/preempt_kernel_goroutines.md §2.3 (revised). */
     incl    %gs:4
-    cmpq    $0x80, 120(%rsp)        /* vector == 0x80? */
+    cmpq    $0x80, 120(%rsp)        /* vector == 0x80? (syscall) */
+    je      .Lbump_sysdepth
+    cmpq    $0xFB, 120(%rsp)        /* vector == 0xFB? (preempt IPI) */
     jne     1f
+.Lbump_sysdepth:
     incl    %gs:44                  /* syscall depth */
 1:
 
@@ -134,9 +140,13 @@ isr_common:
     movq    %rbx, %rsp              /* restore original RSP */
 
     /* Leave ISR context — mirror the prologue's conditional syscall-
-     * depth decrement before decrementing the plain ISR depth. */
+     * depth decrement before decrementing the plain ISR depth.
+     * Both syscall (0x80) and preempt IPI (0xFB) bumped it on entry. */
     cmpq    $0x80, 120(%rsp)
+    je      .Ldec_sysdepth
+    cmpq    $0xFB, 120(%rsp)
     jne     2f
+.Ldec_sysdepth:
     decl    %gs:44                  /* syscall depth */
 2:
     decl    %gs:4

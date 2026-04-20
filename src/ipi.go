@@ -10,7 +10,8 @@ package main
 
 // IPI vector assignments.
 const (
-	ipiWakeupVector = 0xFC // wake AP from hlt for scheduling
+	ipiWakeupVector  = 0xFC // wake AP from hlt for scheduling
+	ipiPreemptVector = 0xFB // force reschedule on target core (feature 2.1)
 )
 
 // lapicSendIPI sends an IPI to the specified APIC ID with the
@@ -52,4 +53,30 @@ func gooosWakeupCPU(cpuIdx uint32) {
 		return // don't IPI self
 	}
 	lapicSendIPI(uint8(apicID), ipiWakeupVector)
+}
+
+// broadcastPreemptIPI sends the preempt IPI (vector 0xFB) to every
+// online core other than the caller. Called from handleLAPICTimer on
+// the BSP's 100 Hz tick when preemptEnabled == true (feature 2.1).
+// Each AP's handlePreemptIPI then decides per-CPU whether to
+// Gosched() based on PreemptDisable / InterruptDepth / SyscallDepth.
+//
+//go:nosplit
+func broadcastPreemptIPI() {
+	n := uint32(numCoresOnline)
+	if n == 0 {
+		n = 1
+	}
+	me := cpuID()
+	meAPIC := perCPUBlocks[me].APICID
+	for i := uint32(0); i < n; i++ {
+		if i == me {
+			continue
+		}
+		apicID := perCPUBlocks[i].APICID
+		if apicID == meAPIC {
+			continue
+		}
+		lapicSendIPI(uint8(apicID), ipiPreemptVector)
+	}
 }

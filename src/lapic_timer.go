@@ -76,5 +76,14 @@ func lapicTimerInit() {
 func handleLAPICTimer(vector uint64) {
 	idx := cpuID()
 	perCPUBlocks[idx].WantReschedule = 1
+	if preemptEnabled {
+		// Feature 2.1: broadcast preempt IPI (vector 0xFB) to every
+		// online AP. Each AP's handlePreemptIPI decides per-CPU
+		// whether to Gosched based on its own PreemptDisable /
+		// InterruptDepth / SyscallDepth state. BSP itself is not
+		// preempted by this tick (known limitation; BSP-pinned long-
+		// running goroutines must cooperatively yield).
+		broadcastPreemptIPI()
+	}
 	lapicSendEOI()
 }

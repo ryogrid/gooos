@@ -412,6 +412,8 @@ func main() {
 	// delivery to APs).
 	registerHandler(ipiWakeupVector, handleWakeupIPI)
 	serialPrintln("IPI: wakeup handler registered at vector 0xFC")
+	registerHandler(ipiPreemptVector, handlePreemptIPI)
+	serialPrintln("IPI: preempt handler registered at vector 0xFB")
 
 	// IOAPIC initialization disabled: QEMU's IOAPIC IRQ0
 	// redirection does not deliver PIT timer interrupts correctly
