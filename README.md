@@ -403,21 +403,18 @@ Hello, World from gooos userspace!
   `~/.local/tinygo0.40.1/src/runtime/runtime_gooos.go:sleepTicks`
   to use the LAPIC timer in one-shot mode (see
   `impldoc/deferred_hygiene.md §6` for the design sketch).
-- **Shell does not support job control.** No `&` background
-  jobs, no `jobs` / `fg` / `bg` built-ins, no signals
-  (SIGINT, SIGPIPE). Foreground process is always the most
-  recently-spawned non-pipe-driven stage (or the shell
-  itself at the prompt). See
-  `impldoc/shell_io_overview.md §7` for the scope fences.
+- **Shell job control is minimal.** `&` background execution is
+  supported via a 16-slot jobs table (feature 2.4, see
+  `impldoc/shell_background_jobs.md`) with a non-blocking
+  `sys_waitpid` (#34) for reaping. `jobs` / `fg` / `bg` built-ins,
+  Ctrl-C, and signal handling are still deferred. Foreground
+  process is always the most recently-spawned non-backgrounded
+  non-pipe-driven stage (or the shell itself at the prompt).
+  See `impldoc/shell_io_overview.md §7` for the scope fences.
 - **No shell-level stderr redirection.** `2>` / `&>` / `>&`
   are not parsed. Writing to fd 2 goes to serial only (no
   VGA mirror); programs have no way to redirect fd 2
   separately.
-- **SMP user-mode Ring-3 disabled.** APs boot and enter the
-  scheduler but only BSP (CPU 0) runs goroutines for now;
-  AP-side `iretq` into Ring 3 triple-faults under
-  investigation. See `impldoc/smp_deferred_and_known_issues.md`.
-
 ## Documentation
 
 Reference docs live under `current_impl_doc/` (as-built) and

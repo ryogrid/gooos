@@ -57,8 +57,7 @@ mindmap
 
 | Limitation | Impact | Tracking |
 |---|---|---|
-| SMP v1: APs halt after boot | BSP runs every goroutine; no true parallelism | `impldoc/deferred_smp_v2.md` |
-| No preemption | CPU-bound goroutine starves the scheduler | mitigated by channel-driven design |
+| No preemption | CPU-bound goroutine starves the scheduler | mitigated by channel-driven design; preempt design at `impldoc/preempt_kernel_goroutines.md` (deferred) |
 | Keyboard is PS/2 scancode set 1 only | No USB HID support; depends on QEMU/BIOS providing PS/2 | N/A — v1 target is QEMU only |
 | `time` package broken (SSE dependency) | Can't use `time.After`, `time.Sleep` is parking-unsafe in handlers | worked around by `afterTicks` (`src/afterticks.go`) |
 | No mouse input | Editor is keyboard-only | intentional |
@@ -80,7 +79,7 @@ mindmap
 | Line-buffered stdin | No `Ctrl-C` to kill, no arrow-key history recall |
 | No shell history / tab completion / job control | interactive UX is minimal |
 | No signals of any kind | `sys_sleep` cannot be interrupted; `sys_wait` always completes |
-| No `&` / `fg` / `bg` | every pipeline stage is blocking-waited |
+| No `fg` / `bg` builtins | `&` background works (feature 2.4); foreground/background job switching and `jobs` listing are deferred |
 
 ### Security
 
