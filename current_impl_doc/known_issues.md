@@ -57,7 +57,7 @@ mindmap
 
 | Limitation | Impact | Tracking |
 |---|---|---|
-| No preemption | CPU-bound goroutine starves the scheduler | mitigated by channel-driven design; preempt design at `impldoc/preempt_kernel_goroutines.md` (deferred) |
+| BSP-pinned kernel goroutine preempt gap | A kernel goroutine pinned to BSP with no cooperative yield can still starve siblings; BSP doesn't self-broadcast preempt IPI. Ring-3 on BSP IS preempted via inline self-delivery. | `impldoc/preempt_kernel_goroutines.md §Future: per-CPU AP timer` |
 | Keyboard is PS/2 scancode set 1 only | No USB HID support; depends on QEMU/BIOS providing PS/2 | N/A — v1 target is QEMU only |
 | `time` package broken (SSE dependency) | Can't use `time.After`, `time.Sleep` is parking-unsafe in handlers | worked around by `afterTicks` (`src/afterticks.go`) |
 | No mouse input | Editor is keyboard-only | intentional |
