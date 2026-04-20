@@ -211,8 +211,6 @@ func maybeSignalUserPreempt(cpuIdx uint32) {
 	if poolIdx < 0 {
 		return // no ring3 process active on this CPU
 	}
-	// procByPool is maintained by ring3StackAcquire / ring3StackRelease;
-	// look up the process owning this pool slot.
 	proc := procByPoolIdx(int(poolIdx))
 	if proc == nil || proc.SigAlrmHandler == 0 {
 		return
@@ -226,22 +224,17 @@ func maybeSignalUserPreempt(cpuIdx uint32) {
 }
 
 // procByPoolIdx returns the Process owning the given ring3 pool
-// slot, or nil if no process occupies that slot. Caller need not
-// hold procLock — the poolIdx field on Process is immutable for
-// the lifetime of the slot.
-//
-// Linear scan of procByPID (bounded by maxRing3Procs=32).
+// slot, or nil if no process occupies that slot. Nosplit-safe —
+// direct array access, no lock, no defer, no map iteration. The
+// side-table procByPoolSlot is maintained by ring3Wrapper /
+// processExit (see src/ring3_pool.go).
 //
 //go:nosplit
 func procByPoolIdx(idx int) *Process {
-	fl := procLock.Acquire()
-	defer procLock.Release(fl)
-	for _, p := range procByPID {
-		if p.poolIdx == idx {
-			return p
-		}
+	if idx < 0 || idx >= maxRing3Procs {
+		return nil
 	}
-	return nil
+	return procByPoolSlot[idx]
 }
 
 // --- iretq-frame rewrite for SIGALRM delivery ---
@@ -258,10 +251,16 @@ func procByPoolIdx(idx int) *Process {
 //go:nosplit
 func maybeDeliverSignal(frame *SyscallFrame) {
 	proc := currentProc()
-	if proc == nil || proc.SigAlrmHandler == 0 {
+	if proc == nil {
 		return
 	}
-	if proc.UserPreemptPending == 0 || proc.SigInProgress != 0 {
+	if proc.SigAlrmHandler == 0 {
+		return
+	}
+	if proc.UserPreemptPending == 0 {
+		return
+	}
+	if proc.SigInProgress != 0 {
 		return
 	}
 

@@ -8,6 +8,8 @@
 
 package main
 
+import "unsafe"
+
 // lapicTimerVector is the interrupt vector for the per-CPU LAPIC timer.
 const lapicTimerVector = 0xFE
 
@@ -68,28 +70,34 @@ func lapicTimerInit() {
 
 // handleLAPICTimer is the per-CPU LAPIC timer handler (vector 0xFE).
 // Sets the wantReschedule flag so the scheduler yields on the next
-// opportunity, and sends LAPIC EOI. The actual preemption happens
-// when the CPU returns from hlt — the scheduler loop checks the
-// local runqueue and steals from peers.
+// opportunity, and sends LAPIC EOI. When preemptEnabled, additionally
+// drives feature 2.1 (preempt IPI broadcast to APs for kernel-
+// goroutine preemption) and feature 2.2 (user-process SIGALRM
+// delivery — BSP self-delivery via iretq-frame rewrite when a Ring-3
+// user goroutine is on BSP, plus quantum-counter accounting for
+// every online CPU).
 //
 //go:nosplit
 func handleLAPICTimer(vector uint64) {
 	idx := cpuID()
 	perCPUBlocks[idx].WantReschedule = 1
 	if preemptEnabled {
-		// Feature 2.2: tick-driven user-preempt accounting for
-		// whichever ring3 process is currently running on any CPU.
-		// Sets UserPreemptPending when the quantum expires.
 		for i := uint32(0); i < uint32(numCoresOnline); i++ {
 			maybeSignalUserPreempt(i)
 		}
-		// Feature 2.1: broadcast preempt IPI (vector 0xFB) to every
-		// online AP. Each AP's handlePreemptIPI decides per-CPU
-		// whether to Gosched based on its own PreemptDisable /
-		// InterruptDepth / SyscallDepth state. BSP itself is not
-		// preempted by this tick (known limitation; BSP-pinned long-
-		// running goroutines must cooperatively yield).
 		broadcastPreemptIPI()
+		// BSP self-delivery: broadcastPreemptIPI skips the sending
+		// CPU, so if a Ring-3 user goroutine is running on BSP right
+		// now we rewrite its iretq frame in place from inside this
+		// timer ISR — otherwise a tight-loop user goroutine on BSP
+		// can never be preempted.
+		framePtr := lastFramePtrs[idx]
+		if framePtr != 0 {
+			frame := (*SyscallFrame)(unsafe.Pointer(framePtr))
+			if frame.CS&3 == 3 {
+				maybeDeliverSignal(frame)
+			}
+		}
 	}
 	lapicSendEOI()
 }

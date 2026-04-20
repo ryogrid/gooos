@@ -235,6 +235,8 @@ func ring3Wrapper(proc *Process) {
 	idx, kernelStackTop := ring3StackAcquire()
 	serialPrintln("ring3Wrapper: stackAcquired")
 	proc.poolIdx = idx
+	setProcByPoolSlot(idx, proc)                      // feature 2.2 ISR-safe lookup
+	perCPUBlocks[cpuID()].CurrentPoolIdx = int32(idx) // feature 2.2 tick accounting
 	setCurrentProc(proc)
 	registerRing3GWithStack(kernelStackTop, proc)
 	tssSetRSP0ForCurrentG()
@@ -307,13 +309,21 @@ func elfSpawn(filename, args string, parent *Process) (*Process, bool) {
 	// udpUnbind and pull the binding out from under the other.
 	// See impldoc/net_socket_api.md §12.4 and the Phase-5
 	// reviewer pass. The child gets an empty slot instead.
-	for i := 0; i < procMaxFDs; i++ {
-		if _, isSock := parent.fds[i].(*socketFd); isSock {
-			child.fds[i] = nil
-			continue
+	// Parent may be nil when an auto-launch hook (e.g. feature 2.2's
+	// runUserPreemptProbe) spawns a child before any Ring-3 process
+	// exists. In that case the child gets a fresh console-stdio set
+	// instead of inheriting.
+	if parent != nil {
+		for i := 0; i < procMaxFDs; i++ {
+			if _, isSock := parent.fds[i].(*socketFd); isSock {
+				child.fds[i] = nil
+				continue
+			}
+			child.fds[i] = parent.fds[i]
+			fdAddRef(parent.fds[i])
 		}
-		child.fds[i] = parent.fds[i]
-		fdAddRef(parent.fds[i])
+	} else {
+		procInitStdio(child)
 	}
 
 	// Copy arguments into the Process struct (not user vaddrs
@@ -476,6 +486,7 @@ func processExit(exitCode uintptr) {
 	clearCurrentProc()
 	procCloseAll(proc)
 	if proc.poolIdx >= 0 {
+		clearProcByPoolSlot(proc.poolIdx) // feature 2.2
 		ring3StackRelease(proc.poolIdx)
 		proc.poolIdx = -1
 	}

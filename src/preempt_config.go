@@ -24,3 +24,9 @@ const preemptEnabled = true
 // etc.) fail. scripts/test_preempt_kernel.sh flips this to true via
 // sed before building, runs the harness, and reverts the flip.
 const runPreemptProbe = false
+
+// runUserPreemptProbe gates auto-loading of userpreempt.elf from
+// bspBootDone — bypasses the shell so scripts/test_preempt_user.sh
+// doesn't need HMP sendkey (which is flaky under -smp > 1). Flipped
+// by that harness via the same sed pattern as runPreemptProbe.
+const runUserPreemptProbe = true

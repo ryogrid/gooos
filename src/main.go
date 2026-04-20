@@ -516,6 +516,10 @@ func main() {
 	fsWrite("markerprint.elf", userElf_markerprint[:])
 	serialPrintln("  markerprint.elf: " + utoa(uint64(len(userElf_markerprint))) + " bytes")
 
+	fsCreate("userpreempt.elf")
+	fsWrite("userpreempt.elf", userElf_userpreempt[:])
+	serialPrintln("  userpreempt.elf: " + utoa(uint64(len(userElf_userpreempt))) + " bytes")
+
 	// Store a test file for cat/wc demos.
 	fsCreate("hello.txt")
 	fsWrite("hello.txt", []byte("Hello from the gooos filesystem!\nThis is a test file.\n"))
@@ -556,6 +560,15 @@ func main() {
 	// 0xFB to the AP where kpHog lands, the AP's handlePreemptIPI
 	// runs Gosched, and kpMarker gets its turn. Serial log greps
 	// for `preempt_probe_marker=N` in scripts/test_preempt_kernel.sh.
+	if preemptEnabled && runUserPreemptProbe {
+		// Feature 2.2 harness auto-launch — spawn userpreempt.elf
+		// as a child of the boot shell. Runs alongside the shell.
+		serialPrintln("preempt_probe: auto-launching userpreempt.elf")
+		go func() {
+			_, _ = elfSpawn("userpreempt.elf", "", nil)
+		}()
+	}
+
 	if preemptEnabled && runPreemptProbe {
 		serialPrintln("preempt_probe: spawning kpMarker + kpHog")
 		// Spawn kpMarker FIRST so it sits ahead of kpHog in BSP's

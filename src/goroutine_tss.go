@@ -210,6 +210,11 @@ func gooosOnResume() {
 		if pml4 != 0 {
 			writeCR3(pml4)
 		}
-		gi.proc.LastCpuID = cpuID()
+		cpu := cpuID()
+		gi.proc.LastCpuID = cpu
+		perCPUBlocks[cpu].CurrentPoolIdx = int32(gi.proc.poolIdx)
+	} else {
+		// Kernel-only goroutine — clear per-CPU ring3 pool marker.
+		perCPUBlocks[cpuID()].CurrentPoolIdx = -1
 	}
 }
