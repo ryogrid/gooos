@@ -212,7 +212,10 @@ func maybeSignalUserPreempt(cpuIdx uint32) {
 		return // no ring3 process active on this CPU
 	}
 	proc := procByPoolIdx(int(poolIdx))
-	if proc == nil || proc.SigAlrmHandler == 0 {
+	if proc == nil {
+		return
+	}
+	if proc.SigAlrmHandler == 0 {
 		return
 	}
 	proc.UserQuantumCounter++
@@ -220,6 +223,9 @@ func maybeSignalUserPreempt(cpuIdx uint32) {
 		return
 	}
 	proc.UserQuantumCounter = 0
+	if proc.UserPreemptPending == 0 {
+		serialPrint("sigalrm:quantum\r\n")
+	}
 	proc.UserPreemptPending = 1
 }
 
@@ -252,6 +258,7 @@ func procByPoolIdx(idx int) *Process {
 func maybeDeliverSignal(frame *SyscallFrame) {
 	proc := currentProc()
 	if proc == nil {
+		serialPrint("sig:nil-proc\r\n")
 		return
 	}
 	if proc.SigAlrmHandler == 0 {
@@ -261,8 +268,10 @@ func maybeDeliverSignal(frame *SyscallFrame) {
 		return
 	}
 	if proc.SigInProgress != 0 {
+		serialPrint("sig:in-progress\r\n")
 		return
 	}
+	serialPrint("sig:deliver\r\n")
 
 	pml4 := activePML4ForProc(proc)
 	userRSP := uintptr(frame.RSP)
