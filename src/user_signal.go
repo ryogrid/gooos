@@ -122,8 +122,10 @@ func sysSigactionHandler(frame *SyscallFrame) {
 // the syscall iretq lands at the RESTORED RIP.
 
 func sysSigreturnHandler(frame *SyscallFrame) {
+	serialPrint("sigreturn:enter\r\n")
 	proc := currentProc()
 	if proc == nil {
+		serialPrint("sigreturn:nil-proc\r\n")
 		frame.RAX = sysFail(fdErrBad)
 		return
 	}
@@ -146,10 +148,12 @@ func sysSigreturnHandler(frame *SyscallFrame) {
 	origRIP, ok13 := readU64Through(pml4, userRSP+96)
 	if !(ok1 && ok2 && ok3 && ok4 && ok5 && ok6 && ok7 && ok8 &&
 		ok9 && ok10 && ok11 && ok12 && ok13) || magic != sigMagic {
+		serialPrint("sigreturn:bad-magic\r\n")
 		// Corrupted / tampered sigFrame — kill the process.
 		processExit(^uintptr(0))
 		return
 	}
+	serialPrint("sigreturn:ok\r\n")
 
 	frame.R11 = uintptr(r11)
 	frame.R10 = uintptr(r10)
