@@ -77,6 +77,7 @@ const sigFrameSize = 104
 func sysSigactionHandler(frame *SyscallFrame) {
 	proc := currentProc()
 	if proc == nil {
+		serialPrint("sigaction:nil-proc\r\n")
 		frame.RAX = sysFail(fdErrBad)
 		return
 	}
@@ -84,6 +85,7 @@ func sysSigactionHandler(frame *SyscallFrame) {
 	handler := uintptr(frame.RSI)
 	flags := uint32(frame.RDX)
 	if signum != sigAlrmNumber || flags != 0 {
+		serialPrint("sigaction:bad-arg\r\n")
 		frame.RAX = sysFail(fdErrBad)
 		return
 	}
@@ -96,6 +98,18 @@ func sysSigactionHandler(frame *SyscallFrame) {
 	proc.SigInProgress = 0
 	proc.UserPreemptPending = 0
 	procLock.Release(fl)
+	serialPrint("sigaction:ok pool=")
+	switch proc.poolIdx {
+	case 0:
+		serialPrint("0")
+	case 1:
+		serialPrint("1")
+	case 2:
+		serialPrint("2")
+	default:
+		serialPrint("other")
+	}
+	serialPrint("\r\n")
 	frame.RAX = 0
 }
 
@@ -223,9 +237,6 @@ func maybeSignalUserPreempt(cpuIdx uint32) {
 		return
 	}
 	proc.UserQuantumCounter = 0
-	if proc.UserPreemptPending == 0 {
-		serialPrint("sigalrm:quantum\r\n")
-	}
 	proc.UserPreemptPending = 1
 }
 

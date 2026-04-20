@@ -28,10 +28,17 @@ const (
 func Sigaction(signum uint32, handler func()) int {
 	var h uintptr
 	if handler != nil {
-		// A plain `func()` is a fat pointer: (code_ptr, data_ptr).
-		// What we want for the kernel to jump to is the code_ptr.
-		// *(*uintptr)(&handler) reads the first word.
-		h = *(*uintptr)(unsafe.Pointer(&handler))
+		// TinyGo represents a `func()` value as {context, code}
+		// (context first, code pointer at +8). For a package-level
+		// function the context is 0, so reading the FIRST word
+		// yields zero — which installs a null handler. Read the
+		// code pointer at +8 instead.
+		p := (*[2]uintptr)(unsafe.Pointer(&handler))
+		h = p[1]
+		if h == 0 {
+			// Safety fallback if this build uses the reversed layout.
+			h = p[0]
+		}
 	}
 	r := syscall3(sysSigaction, uintptr(signum), h, 0)
 	return int(int64(r))

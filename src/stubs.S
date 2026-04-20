@@ -344,7 +344,13 @@ jumpToRing3:
     /* Build iretq frame (pushed in reverse order). */
     pushq   $0x23               /* SS  = user data selector */
     pushq   %rsi                /* RSP = user stack pointer */
-    pushfq                      /* RFLAGS (IF=1 from current state) */
+    pushfq                      /* RFLAGS snapshot */
+    /* Force RFLAGS.IF=1 (bit 9) so Ring 3 is interruptible. Kernel
+     * callers may arrive here with IF=0 (e.g. mid-scheduler-swap), and
+     * a Ring 3 context with IF=0 blocks the LAPIC timer — feature 2.2
+     * preemption requires periodic timer interrupts in user mode.
+     * Unused-bit 2 is always 1 per Intel SDM. */
+    orq     $0x202, 0(%rsp)
     pushq   $0x1B               /* CS  = user code selector (0x18 | RPL=3) */
     pushq   %rdi                /* RIP = user entry point */
     iretq

@@ -29,4 +29,4 @@ const runPreemptProbe = false
 // bspBootDone — bypasses the shell so scripts/test_preempt_user.sh
 // doesn't need HMP sendkey (which is flaky under -smp > 1). Flipped
 // by that harness via the same sed pattern as runPreemptProbe.
-const runUserPreemptProbe = true
+const runUserPreemptProbe = false
