@@ -171,6 +171,8 @@ func syscallDispatch(frame *SyscallFrame) {
 		sysShutdownHandler(frame)
 	case sysListprocs:
 		sysListprocsHandler(frame)
+	case sysWaitpid:
+		sysWaitpidHandler(frame)
 	default:
 		frame.RAX = 0xFFFFFFFFFFFFFFFF // -1 for invalid syscall
 	}
@@ -757,6 +759,75 @@ func sysWaitHandler(frame *SyscallFrame) {
 		return
 	}
 	frame.RAX = processWait(child)
+}
+
+// --- Syscall 34: sys_waitpid (WNOHANG-only) ---
+// RDI = pid, RSI = options (must include WNOHANG), RDX = status vaddr (may be 0).
+// Returns pid on reap, 0 on still-running, negative on error.
+// BLOCKING waits are NOT supported; callers who want blocking use sys_wait #16.
+//
+// Critically: this handler does NOT call setForegroundProc. That
+// preserves the foreground-transfer invariant for background jobs
+// spawned via `sh &`; the parent shell retains the keyboard even
+// while polling this syscall between prompts.
+//
+// See impldoc/shell_background_jobs.md §3.3.
+
+const WNOHANG = 1
+
+func sysWaitpidHandler(frame *SyscallFrame) {
+	parent := currentProc()
+	if parent == nil {
+		frame.RAX = sysFail(fdErrBad)
+		return
+	}
+	pid := int32(frame.RDI)
+	options := uint32(frame.RSI)
+	statusVaddr := uintptr(frame.RDX)
+	if pid < 1 || options&^WNOHANG != 0 || options&WNOHANG == 0 {
+		frame.RAX = sysFail(fdErrBad)
+		return
+	}
+	fl := procLock.Acquire()
+	child := procByPID[uint32(pid)]
+	procLock.Release(fl)
+	// child.parent is immutable post-spawn; safe to read without re-locking.
+	if child == nil || child.parent != parent {
+		frame.RAX = sysFail(fdErrBad)
+		return
+	}
+	select {
+	case exitCode := <-child.exitCh:
+		if statusVaddr != 0 {
+			writeU32Through(parent.pml4, statusVaddr, uint32(exitCode))
+		}
+		fl := procLock.Acquire()
+		if procByPID[child.pid] == child {
+			delete(procByPID, child.pid)
+			clearProcName(child.pid)
+			delete(processStartTick, child.pid)
+		}
+		procLock.Release(fl)
+		frame.RAX = uintptr(pid)
+	default:
+		frame.RAX = 0 // still running
+	}
+}
+
+// writeU32Through writes a u32 through the process's PML4. Used by
+// sys_waitpid to deliver the exit status to the caller's buffer.
+// Silent no-op if the vaddr is not mapped (caller ignores).
+//
+//go:nosplit
+func writeU32Through(pml4, vaddr uintptr, val uint32) {
+	for i := uintptr(0); i < 4; i++ {
+		paddr := walkAndGetPaddrIn(pml4, vaddr+i)
+		if paddr == 0 {
+			return
+		}
+		off := paddr + ((vaddr + i) & (pageSize - 1))
+		*(*byte)(unsafe.Pointer(off)) = byte(val >> (8 * i))
+	}
 }
 
 // --- Shell bootstrap ---
