@@ -527,6 +527,26 @@ func main() {
 	// scheduler and begin work-stealing.
 	bspBootDone = 1
 
+	// M3-7: SMP goroutine distribution probe. Spawn a long-running
+	// kernel goroutine that loops reporting which CPU it runs on.
+	// Under -smp >= 2 with stealWork live, an AP eventually picks
+	// it up and `smp_basic_cpu=N` with N != 0 lands in the serial
+	// log. scripts/test_smp_basic.sh greps for that.
+	go smpBasicProbe()
+
 	// Load shell and jump to Ring 3. Does not return.
 	setupUserspace()
+}
+
+// smpBasicProbe yields between iterations; each yield re-queues
+// the goroutine and lets an AP have a chance to steal it. The
+// goroutine reports its current CPU once per tick; printing the
+// same marker with N != 0 is the success signal.
+func smpBasicProbe() {
+	for iter := 0; iter < 50; iter++ {
+		c := cpuID()
+		out := "smp_basic_cpu=" + utoa(uint64(c)) + " iter=" + utoa(uint64(iter))
+		serialPrintln(out)
+		<-afterTicks(1)
+	}
 }

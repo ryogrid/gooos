@@ -62,6 +62,13 @@ var gdtReady uint32
 // APs spin on this before entering the scheduler.
 var bspBootDone uint32
 
+// numCoresOnline is the count of CPUs that successfully booted.
+// Set by smpInit after the AP wait loop completes. Referenced by
+// the patched TinyGo runtime (runtime_gooos.go) via
+// `//go:extern main.numCoresOnline` so schedulerWake's IPI
+// broadcast knows how many APs exist.
+var numCoresOnline uint32 = 1
+
 // apStacks holds per-AP stack top pointers. The trampoline indexes
 // into this array using the atomically claimed AP index.
 var apStacks [smpMaxAPs]uintptr
@@ -206,6 +213,7 @@ func smpInit() {
 
 	apCount := *(*uint32)(unsafe.Pointer(trampPhys + trampOffCounter))
 	totalCores := uint64(apCount) + 1 // +1 for BSP
+	numCoresOnline = uint32(totalCores)
 
 	msg := "SMP: " + utoa(totalCores) + " cores online"
 	vgaWriteLine(19, msg)

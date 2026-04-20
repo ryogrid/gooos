@@ -385,10 +385,10 @@ index 00000000..8d645459
 +func In() bool            { return false }
 diff --git a/src/runtime/runtime_gooos.go b/src/runtime/runtime_gooos.go
 new file mode 100644
-index 00000000..fc917ecc
+index 00000000..3cadea13
 --- /dev/null
 +++ b/src/runtime/runtime_gooos.go
-@@ -0,0 +1,272 @@
+@@ -0,0 +1,286 @@
 +//go:build gooos && baremetal && kernelspace
 +
 +// gooos-local runtime bodies for bare-metal x86_64 Ring 0.
@@ -616,13 +616,27 @@ index 00000000..fc917ecc
 +	schedulerLock.Lock()
 +}
 +
++//go:linkname gooosWakeupCPU gooosWakeupCPU
++func gooosWakeupCPU(cpuIdx uint32)
++
++//go:extern main.numCoresOnline
++var numCoresOnline uint32
++
 +//go:nosplit
 +func schedulerWake() {
-+	// gooos cross-CPU wake is via IPI (src/ipi.go gooosWakeupCPU),
-+	// which chan.go / scheduleTask do NOT currently invoke because
-+	// stealWork is still gated (M3-6 wires it). This function is
-+	// called from scheduleTask's RunStatePaused branch; at M3 it
-+	// can be a no-op.
++	// gooos SMP v2: broadcast a wakeup IPI to every online AP so
++	// any idle core picks up the newly-pushed task via stealWork.
++	// The per-CPU runqueue push has already happened upstream;
++	// we just need to ensure an idle AP is not stuck in hlt.
++	// gooosWakeupCPU is self-skipping, so iterating every index
++	// is safe.
++	n := numCoresOnline
++	if n == 0 {
++		n = 1
++	}
++	for i := uint32(0); i < n; i++ {
++		gooosWakeupCPU(i)
++	}
 +}
 +
 +//go:nosplit
@@ -959,7 +973,7 @@ index 2c2bf099..c94723b0 100644
  			if schedulerDebug {
  				println("  sleeping...", sleepQueue, uint(timeLeft))
 diff --git a/src/runtime/scheduler_cores.go b/src/runtime/scheduler_cores.go
-index e45eaf39..297ec954 100644
+index e45eaf39..aecf6568 100644
 --- a/src/runtime/scheduler_cores.go
 +++ b/src/runtime/scheduler_cores.go
 @@ -24,8 +24,16 @@ var cpuTasks [numCPU]*task.Task
@@ -1011,7 +1025,7 @@ index e45eaf39..297ec954 100644
 +// stealWork scans peer per-CPU runqueues (round-robin starting at
 +// self+1) and pops one task from the first non-empty peer. Returns
 +// nil if every peer queue is empty. Called from scheduler() when
-+// the local queue has nothing. Gated by M3-6 (not yet active).
++// the local queue has nothing.
 +//
 +//go:nosplit
 +func stealWork() *task.Task {
@@ -1057,17 +1071,21 @@ index e45eaf39..297ec954 100644
  
  		// Run main.main.
  		callMain()
-@@ -162,8 +210,11 @@ func run() {
+@@ -162,8 +210,15 @@ func run() {
  
  func scheduler(_ bool) {
  	for mainExited.Load() == 0 {
 -		// Check for ready-to-run tasks.
 -		if runnable := runqueue.Pop(); runnable != nil {
-+		// gooos SMP v2: pop from local per-CPU queue first. stealWork
-+		// from peers is intentionally NOT called here yet — M3-6 will
-+		// wire it in; leaving dormant at M3-3 keeps this commit
-+		// bisectable against the stealWork wire-up.
-+		if runnable := runqueues[gooosCpuID()].Pop(); runnable != nil {
++		// gooos SMP v2 (M3-6): pop from local per-CPU queue first;
++		// fall back to stealing from a peer when the local queue is
++		// empty. Work-stealing gives idle cores something to do and
++		// makes goroutines migrate across cores in practice.
++		runnable := runqueues[gooosCpuID()].Pop()
++		if runnable == nil {
++			runnable = stealWork()
++		}
++		if runnable != nil {
  			// Resume it now.
  			setCurrentTask(runnable)
  			runnable.RunState = task.RunStateRunning
