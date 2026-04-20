@@ -434,8 +434,14 @@ cpuID:
     /* ---- spinlockAcquire: xchg-based spinlock acquire ----------------- */
     /* spinlockAcquire(lock *uint32)                                     */
     /* SysV ABI: rdi = pointer to lock word. Spins until acquired.       */
+    /* Preempt integration (feature 2.1 Option A): bump %gs:48           */
+    /* PreemptDisable on entry. The preempt ISR early-returns when this  */
+    /* counter is > 0, so every spinlock holder (kernel and TinyGo       */
+    /* runtime alike) is automatically preempt-safe without per-callsite */
+    /* Go-level bumps. Must pair with the decrement in spinlockRelease.  */
     .global spinlockAcquire
 spinlockAcquire:
+    incl    %gs:48              /* PreemptDisable++ */
     movl    $1, %eax
 .Lspin_retry:
     xchgl   %eax, (%rdi)
@@ -456,6 +462,7 @@ spinlockAcquire:
 spinlockRelease:
     movl    $0, (%rdi)
     mfence
+    decl    %gs:48              /* PreemptDisable-- (feature 2.1) */
     ret
 
     /* ---- readInterruptDepth: per-CPU interrupt depth counter --------- */
@@ -476,6 +483,16 @@ readInterruptDepth:
     .global readSyscallDepth
 readSyscallDepth:
     movl    %gs:44, %eax
+    ret
+
+    /* ---- readPreemptDisable: per-CPU preempt-nesting counter ---------- */
+    /* readPreemptDisable() uint32                                        */
+    /* Reads %gs:48 (pcpuOffPreemptDisable). Incremented by               */
+    /* spinlockAcquire, decremented by spinlockRelease. The preempt ISR   */
+    /* (feature 2.1) early-returns when this counter is > 0.              */
+    .global readPreemptDisable
+readPreemptDisable:
+    movl    %gs:48, %eax
     ret
 
     /* ---- pause: x86 spin-wait hint ----------------------------------- */
