@@ -98,6 +98,14 @@ type Process struct {
 	// Cleared by sys_sigreturn. maybeDeliverSignal early-returns when
 	// this is set (no nested signal delivery).
 	SigInProgress uint32
+
+	// SigSavedRSP is the user RSP at the moment the kernel pushed the
+	// sigFrame and redirected RIP to the SIGALRM handler. sys_sigreturn
+	// uses THIS — not the user's current RSP — to locate the sigFrame,
+	// because the Go-coded handler pushes its own locals/call-frames on
+	// top during execution and cannot reliably restore RSP to the
+	// sigFrame position before issuing the Sigreturn syscall.
+	SigSavedRSP uintptr
 }
 
 // procLock protects procByTask, procByPID, nextPID, and

@@ -77,7 +77,6 @@ const sigFrameSize = 104
 func sysSigactionHandler(frame *SyscallFrame) {
 	proc := currentProc()
 	if proc == nil {
-		serialPrint("sigaction:nil-proc\r\n")
 		frame.RAX = sysFail(fdErrBad)
 		return
 	}
@@ -85,7 +84,6 @@ func sysSigactionHandler(frame *SyscallFrame) {
 	handler := uintptr(frame.RSI)
 	flags := uint32(frame.RDX)
 	if signum != sigAlrmNumber || flags != 0 {
-		serialPrint("sigaction:bad-arg\r\n")
 		frame.RAX = sysFail(fdErrBad)
 		return
 	}
@@ -98,38 +96,35 @@ func sysSigactionHandler(frame *SyscallFrame) {
 	proc.SigInProgress = 0
 	proc.UserPreemptPending = 0
 	procLock.Release(fl)
-	serialPrint("sigaction:ok pool=")
-	switch proc.poolIdx {
-	case 0:
-		serialPrint("0")
-	case 1:
-		serialPrint("1")
-	case 2:
-		serialPrint("2")
-	default:
-		serialPrint("other")
-	}
-	serialPrint("\r\n")
 	frame.RAX = 0
 }
 
 // --- Syscall 36: sys_sigreturn ---
-// No args. Reads the sigFrame at the current user RSP (the kernel
-// pushed it there before redirecting RIP to the user handler); the
-// handler's epilogue has adjusted user RSP back to point at sigFrame
-// top. Restores RIP/RSP/RFLAGS/caller-saved GPRs, clears SigInProgress.
-// Does not return to the calling sys_sigreturn invocation — instead
-// the syscall iretq lands at the RESTORED RIP.
+// No args. Reads the sigFrame at proc.SigSavedRSP (kernel-tracked
+// pointer set by maybeDeliverSignal). We can't use the caller's
+// current user RSP because the Go-coded handler pushes its own
+// locals / call-frames on top during execution and cannot reliably
+// restore RSP before the syscall. Restores RIP/RSP/RFLAGS/caller-
+// saved GPRs, clears SigInProgress. Does not return to the calling
+// sys_sigreturn invocation — instead the syscall iretq lands at the
+// RESTORED RIP.
 
 func sysSigreturnHandler(frame *SyscallFrame) {
-	serialPrint("sigreturn:enter\r\n")
 	proc := currentProc()
 	if proc == nil {
-		serialPrint("sigreturn:nil-proc\r\n")
 		frame.RAX = sysFail(fdErrBad)
 		return
 	}
-	userRSP := uintptr(frame.RSP)
+	// Use the kernel-tracked sigFrame pointer, NOT the current user
+	// RSP: the Go-coded handler has pushed its own locals and call
+	// frames on top of the sigFrame during execution and cannot
+	// restore RSP before issuing this syscall.
+	userRSP := proc.SigSavedRSP
+	if userRSP == 0 {
+		// Stale / no handler ever entered — treat as bad state.
+		frame.RAX = sysFail(fdErrBad)
+		return
+	}
 	pml4 := activePML4ForProc(proc)
 
 	// Read 13 u64 fields off user stack.
@@ -148,12 +143,10 @@ func sysSigreturnHandler(frame *SyscallFrame) {
 	origRIP, ok13 := readU64Through(pml4, userRSP+96)
 	if !(ok1 && ok2 && ok3 && ok4 && ok5 && ok6 && ok7 && ok8 &&
 		ok9 && ok10 && ok11 && ok12 && ok13) || magic != sigMagic {
-		serialPrint("sigreturn:bad-magic\r\n")
 		// Corrupted / tampered sigFrame — kill the process.
 		processExit(^uintptr(0))
 		return
 	}
-	serialPrint("sigreturn:ok\r\n")
 
 	frame.R11 = uintptr(r11)
 	frame.R10 = uintptr(r10)
@@ -273,7 +266,6 @@ func procByPoolIdx(idx int) *Process {
 func maybeDeliverSignal(frame *SyscallFrame) {
 	proc := currentProc()
 	if proc == nil {
-		serialPrint("sig:nil-proc\r\n")
 		return
 	}
 	if proc.SigAlrmHandler == 0 {
@@ -283,10 +275,8 @@ func maybeDeliverSignal(frame *SyscallFrame) {
 		return
 	}
 	if proc.SigInProgress != 0 {
-		serialPrint("sig:in-progress\r\n")
 		return
 	}
-	serialPrint("sig:deliver\r\n")
 
 	pml4 := activePML4ForProc(proc)
 	userRSP := uintptr(frame.RSP)
@@ -337,6 +327,7 @@ func maybeDeliverSignal(frame *SyscallFrame) {
 	frame.RIP = proc.SigAlrmHandler
 	frame.RSP = userRSP
 
+	proc.SigSavedRSP = userRSP
 	proc.SigInProgress = 1
 	proc.UserPreemptPending = 0
 }

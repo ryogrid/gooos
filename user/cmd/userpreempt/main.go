@@ -25,7 +25,6 @@ import (
 
 const (
 	numMarkers = 20
-	sleepMs    = 100
 )
 
 // done is signaled by marker when it finishes. main waits on it then
@@ -81,9 +80,15 @@ func hog() {
 }
 
 func marker() {
+	// No Sleep between prints — Sleep would park the host
+	// ring3Wrapper kernel goroutine, and if the SIGALRM handler on
+	// hog's goroutine is mid-Gosched when marker sleeps, hog and
+	// marker both stall. Yield via runtime.Gosched instead: both
+	// user goroutines stay runnable, so the kernel-side preempt can
+	// fire again and drive another marker line.
 	for i := 0; i < numMarkers; i++ {
 		gooos.Println("userpreempt_marker=" + strconv.Itoa(i))
-		gooos.Sleep(sleepMs)
+		runtime.Gosched()
 	}
 	done <- 1
 }
