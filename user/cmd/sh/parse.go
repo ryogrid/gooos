@@ -11,15 +11,29 @@ type cmdLine struct {
 
 // pipeline is one or more cmdLines connected by '|'. A line
 // with no '|' parses to a one-element pipeline.
+//
+// background is set when the pipeline ends with a bare '&' token.
+// POSIX semantics: the whole pipeline is backgrounded (not just
+// the tail stage). See impldoc/shell_background_jobs.md §2.2.
 type pipeline struct {
-	stages []cmdLine
+	stages     []cmdLine
+	background bool
 }
 
 // parsePipeline tokenises and splits the line on '|' into
 // per-stage cmdLines. Returns ok=false on syntax error.
+//
+// A trailing '&' token (not preceded by another '&') sets
+// p.background. Internal '&' tokens, '&&' lookahead tokens, and
+// bare '&' with no stages are syntax errors.
 func parsePipeline(line string) (pipeline, bool) {
 	toks := tokenize(line)
 	var p pipeline
+	// Strip a trailing '&' token and record background.
+	if len(toks) > 0 && toks[len(toks)-1] == "&" {
+		toks = toks[:len(toks)-1]
+		p.background = true
+	}
 	var stageToks []string
 	flushStage := func() bool {
 		if len(stageToks) == 0 {
@@ -39,6 +53,12 @@ func parsePipeline(line string) (pipeline, bool) {
 				return p, false
 			}
 			continue
+		}
+		// Any residual '&' or '&&' past the trailing-strip is a
+		// syntax error — no mid-pipeline backgrounding, and &&
+		// (logical-and) is reserved for a future feature.
+		if t == "&" || t == "&&" {
+			return p, false
 		}
 		stageToks = append(stageToks, t)
 	}
@@ -115,6 +135,15 @@ func tokenize(line string) []string {
 				i++
 			} else {
 				toks = append(toks, ">")
+			}
+		case '&':
+			flush()
+			// Look ahead for '&&' — rejected at parseStage / parsePipeline.
+			if i+1 < len(line) && line[i+1] == '&' {
+				toks = append(toks, "&&")
+				i++
+			} else {
+				toks = append(toks, "&")
 			}
 		default:
 			cur = append(cur, ch)
