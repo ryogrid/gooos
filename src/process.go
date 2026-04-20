@@ -67,6 +67,37 @@ type Process struct {
 	// aligned u32 store). Consumed by sys_listprocs (feature 2.5,
 	// impldoc/shell_ps_command.md §2.3).
 	LastCpuID uint32
+
+	// --- Signal-delivery state (feature 2.2 user preemption) -----------
+	// Populated by sys_sigaction #35; consumed by maybeDeliverSignal
+	// called from handlePreemptIPI when the interrupted context is
+	// Ring 3 (CS.RPL == 3). See impldoc/preempt_user_goroutines.md.
+
+	// SigAlrmHandler is the user-space address of the SIGALRM handler
+	// registered by sys_sigaction(SIGALRM, handler). Zero = no handler
+	// installed (no signal delivered even when UserPreemptPending is
+	// set).
+	SigAlrmHandler uintptr
+
+	// UserPreemptPending is set to 1 by maybeSignalUserPreempt on the
+	// BSP LAPIC timer tick when this process has accumulated
+	// UserQuantumTicks ticks as the currently-running process. Cleared
+	// when the kernel delivers the signal via maybeDeliverSignal.
+	UserPreemptPending uint32
+
+	// UserQuantumTicks is the number of BSP ticks between preempt
+	// deliveries for this process. Default 10 (100ms at 100Hz).
+	UserQuantumTicks uint32
+
+	// UserQuantumCounter accumulates BSP ticks while this process is
+	// the currently-running ring3 process on any CPU. Reset on
+	// delivery.
+	UserQuantumCounter uint32
+
+	// SigInProgress is 1 while the user's SIGALRM handler is running.
+	// Cleared by sys_sigreturn. maybeDeliverSignal early-returns when
+	// this is set (no nested signal delivery).
+	SigInProgress uint32
 }
 
 // procLock protects procByTask, procByPID, nextPID, and
