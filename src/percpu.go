@@ -29,7 +29,8 @@ type PerCPU struct {
 	CurrentPML4    uintptr // offset 32: CR3 of current goroutine
 	CurrentPoolIdx int32   // offset 40: ring3 pool slot (-1 if kernel)
 	SyscallDepth   uint32  // offset 44: syscall-dispatch depth (%gs:44)
-	_pad           [16]byte // pad to 64-byte cache line boundary
+	PreemptDisable uint32  // offset 48: spinlock-held / no-preempt nesting depth (%gs:48)
+	_pad           [12]byte // pad to 64-byte cache line boundary
 }
 
 // Assembly-visible byte offsets (must match struct layout above).
@@ -43,6 +44,7 @@ const (
 	pcpuOffCurrentPML4    = 32
 	pcpuOffCurrentPoolIdx = 40
 	pcpuOffSyscallDepth   = 44
+	pcpuOffPreemptDisable = 48
 )
 
 // perCPUBlocks is the .bss-resident array. Each entry is padded to
