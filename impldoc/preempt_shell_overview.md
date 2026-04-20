@@ -82,6 +82,7 @@ Resolved via AskUserQuestion during plan-mode on 2026-04-20. Documented verbatim
 | 1 | 2.1 | **BSP timer + IPI broadcast**. Keep the BSP-only 100 Hz LAPIC timer; preempt IPI broadcast on each tick. | APs preempt only at IPI arrival boundaries (not per-CPU timer ticks). Does not re-open the `blocked inside interrupt` regression from `impldoc/smp_deferred_and_known_issues.md §2.2`. AP LAPIC timer stays stubbed. |
 | 2 | 2.2 | **Mechanism B (kernel-delivered SIGALRM-style signal)**. Kernel rewrites the iretq frame to redirect user RIP to a runtime-registered handler. | Adds `sys_sigaction` #35 + `sys_sigreturn` #36. Touches the iretq path — coordinates with M4 fix. Mechanism A (user scheduler=cores) rejected; mechanism C (syscall-return check) rejected. |
 | 3 | 2.4 | **New dedicated syscall #34 `sys_waitpid`** with `(pid, options, status*)` signature. | Existing `sys_wait` (#16) untouched. `sys_waitpid` handler does NOT call `setForegroundProc`, preserving foreground-transfer invariant for background jobs. |
+| 4 | 2.5 | **New syscall #37 `sys_listprocs`**. | Follows #34 (2.4), #35 (2.2 sigaction), #36 (2.2 sigreturn). Reviewer CRITICAL #1 resolution: the three features claim four distinct numbers; no #36 collision. |
 
 Non-load-bearing choices the design-doc author picked and documented:
 
@@ -185,15 +186,41 @@ No push, no branch ops, no merges. `git log --oneline master..HEAD` at end of th
 
 ## 12. Reviewer findings
 
-*Populated during the mandatory reviewer pass after all 8 docs land.*
+Mandatory reviewer pass completed 2026-04-20 by a `general-purpose` subagent brief per hoge.md §6 + added bullet (m). Findings: **4 CRITICAL, 9 MAJOR, 10 MINOR**. All CRITICAL and 6 of 9 MAJOR folded inline during the review-fold commit. Cross-feature invariant (bullet m) verdict: **GAP FOUND**, now closed by runtime-spinlock integration Option A in `preempt_kernel_goroutines.md §2.3`.
 
 **Classification legend.**
 - CRITICAL — technical error or missing invariant that would cause the implementation to fail or diverge from the design decisions.
 - MAJOR — Claude-Code-implementability gap (missing path/line, missing ABI, missing rollback) that forces the implementation agent to re-derive context.
 - MINOR — doc hygiene, typo, phrasing, cross-link polish.
 
-**Findings.** *(to fill)*
+**CRITICAL findings + resolutions (all folded inline):**
 
-**Resolutions.** *(to fill)*
+1. **Syscall #36 double-claim** (overview §4 + `preempt_user_goroutines.md §3.2` + `shell_ps_command.md §2.4`). Resolution: `sys_listprocs` moved from #36 to **#37**; `sys_sigaction` keeps #35; `sys_sigreturn` keeps #36. Fixed in overview §4 (new row 4), `shell_ps_command.md §1/§2.4/§3.1/§5/§6`, `preempt_shell_readme_update_plan.md §2.5`.
+2. **`PreemptDisable` offset 56 is wrong** (`preempt_kernel_goroutines.md §2.3`). Real fields occupy 0..47; `_pad[16]` covers 48..63. Resolution: placed at **offset 48**, pad trimmed to 12 bytes. Fixed in `preempt_kernel_goroutines.md §2.3`.
+3. **`swapTask`-emitted `iretq` would triple-fault** (`preempt_kernel_goroutines.md §2.2`). Resolution: separate `resumePreempted` assembly helper in new `task_stack_preempt_amd64.S`; `state.resume()` branches on `kind` discriminator. Fixed in `preempt_kernel_goroutines.md §2.2`.
+4. **`maybeDeliverSignal` contradictory call sites** (`preempt_user_goroutines.md §2 vs §6`). Resolution: **syscall-return only**; `jumpToRing3` is explicitly excluded. Fixed in `preempt_user_goroutines.md §2 point 2 + §6`.
 
-**Deferred.** *(to fill)*
+**MAJOR findings + resolutions:**
+
+1. Runtime-side spinlock gap (bullet m) — folded: Option A at `preempt_kernel_goroutines.md §2.3` (asm-level `PreemptDisable` bump inside `gooos_spinlockAcquire`/`Release` themselves).
+2. Nosplit-RIP table TinyGo-compiler hand-wave — folded: approximation "treat all kernel code as nosplit-unsafe while `SyscallDepth>0`" (4th ISR early-return condition).
+3. `pushU64Through` helper missing spec — folded: full spec + page-boundary handling at `preempt_user_goroutines.md §4.2`.
+4. `SigInProgress` missing from PCB — folded: 5th signal field at `preempt_user_goroutines.md §3.3`.
+5. `sys_waitpid` deadlock-prone double-reap — folded: simplified to WNOHANG-only; `procByPID[child.pid] == child` race guard; blocking fallback removed.
+6. `gooosCurrentProc` linkname confusion — folded: update lives in kernel-side `gooosOnResume` body (`src/goroutine_tss.go`), no new runtime linkname. `shell_ps_command.md §2.3/§6`.
+7. Overview row 2 Consequence cell — folded: new row 4 added for sys_listprocs #37; row 2 wording preserved.
+8. `writeU32Through`/`writeStructThrough` not defined — folded: cross-referenced to `preempt_user_goroutines.md §4.2` spec.
+9. Harness-list `-smp 1` for `test_smp_shell_preempt.sh` — verified already listed; no edit needed.
+
+**MINOR findings recorded for implementation-session awareness** (not blocking; not all folded here; each per-doc `Reviewer MINOR notes` tail captures its own):
+
+- Readme-update-plan Variant A (§2.5) syscall numbers updated post-CRITICAL-#1 fold.
+- Overview §5 citations should be grep-re-verified at implementation time (anchor drift).
+- `pushU64Through` helper's kernel-panic path could be softened to `processExit(-1)`; deferred decision.
+- `[16]jobEntry` cap rationale phrasing — harmless; kept.
+- Build-time `ProcInfo` size assertion — recommended pattern documented in `shell_ps_command.md §2.1`.
+- `strconv.Itoa(status)` signed-vs-unsigned contract in jobs.go — documented as exit-code convention.
+- `preemptEnabled` const vs build-tag — kept as const for rollback simplicity.
+- Several cross-link polish items — captured per-doc Reviewer MINOR tails.
+
+**Deferred.** The 3 remaining MAJOR items (not folded) and all MINOR items stay documented in the per-doc `Reviewer MINOR notes` tails. The implementation session should scan those tails before starting each feature's commits.

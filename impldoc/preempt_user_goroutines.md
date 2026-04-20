@@ -31,7 +31,7 @@ Mechanism B is the load-bearing design decision for this doc. Approved by user i
 Three participants:
 
 1. **Kernel tick path**. On every 100 Hz BSP LAPIC timer (`src/lapic_timer.go:76 handleLAPICTimer`), after setting `WantReschedule`, examine the current process (`currentProc()` in `src/userspace.go`). If the process has registered a SIGALRM-style handler AND has accumulated `userQuantumTicks` (e.g. 10, = 100 ms) since last delivery, set its per-process `UserPreemptPending = 1` and record that the next Ring-3 return must detour through the handler.
-2. **Ring-3 return path**. Whenever the kernel would `iretq` back to user space (`src/userspace.go` syscall-return path, `src/stubs.S jumpToRing3`), check `UserPreemptPending`. If set and the user has a handler registered, rewrite the CS/SS/RSP/RFLAGS/RIP slots on the kernel stack so that `iretq` lands at the handler rather than the original user RIP. Push the original RIP/RSP onto the user stack in a fixed layout the handler knows how to read. Clear `UserPreemptPending`.
+2. **Ring-3 return path** — **syscall-return only**, NOT initial `jumpToRing3`. At the end of `syscallDispatch` (just before the ISR epilogue executes `iretq`), check `UserPreemptPending`. If set AND the user has a handler registered AND the PCB flag `SigInProgress == 0`, rewrite the CS/SS/RSP/RFLAGS/RIP slots on the kernel stack so that `iretq` lands at the handler rather than the original user RIP. Push the original RIP/RSP onto the user stack in a fixed layout the handler knows how to read. Set `SigInProgress = 1` and clear `UserPreemptPending`. Reviewer CRITICAL #4 resolution: initial `jumpToRing3` is excluded because at that point no Ring-3 context has existed yet for the process — there is no saved user RIP to restore via `sys_sigreturn`, and the handler address is not yet registered by the user's `init` (which runs *after* the first Ring-3 entry).
 3. **User runtime handler**. The TinyGo user-runtime patch installs a handler on startup via `sys_sigaction(SIGALRM, handler, 0)`. The handler calls `runtime.Gosched()`, then executes a trampoline that reads the saved RIP/RSP off the top of its stack and `sys_sigreturn`s — a new syscall #36 that restores the saved context and returns to the original user code.
 
 Every user goroutine inside a process therefore preempts at ~100 ms granularity regardless of whether it ever makes a syscall, at a cost of two extra kernel trips per quantum (sigaction on startup, sigreturn on resume).
@@ -92,9 +92,10 @@ SigAlrmHandler     uintptr // user-space fn pointer; 0 = unregistered
 UserPreemptPending uint32  // set by kernel tick; cleared on delivery
 UserQuantumTicks   uint32  // default 10 (100 ms @ 100 Hz)
 UserQuantumCounter uint32  // incremented per BSP tick while this proc is the active ring3Wrapper
+SigInProgress      uint32  // 1 while the SIGALRM handler is running; cleared on sys_sigreturn
 ```
 
-All four fields are protected by `procLock` for writes from the tick path; reads from the Ring-3 return path are the *same CPU* that runs the ring3Wrapper, so no lock needed on the read side.
+All five fields are protected by `procLock` for writes from the tick path; reads from the Ring-3 return path are the *same CPU* that runs the ring3Wrapper, so no lock needed on the read side. Reviewer MAJOR resolution: `SigInProgress` was previously only mentioned in §12 Risks as a mitigation — it is now a first-class PCB field without which the nested-delivery safety cannot be implemented.
 
 ### 3.4 Signal-delivery frame layout (on user stack)
 
@@ -165,7 +166,31 @@ func maybeDeliverSignal(frame *SyscallFrame) {
 }
 ```
 
-`pushU64` writes through the same paddr mechanism as `elfSpawn` uses for argument-page population (`src/process.go:317-323`): walk the user's PML4 to find the paddr for `userRSP-8`, write through the identity-mapped kernel half. No new VM plumbing required.
+`pushU64Through` is a new kernel helper spec'd here (reviewer MAJOR fold):
+
+```go
+// pushU64Through decrements *userRSP by 8 and writes val to the user
+// vaddr at the new *userRSP, through the process's PML4. Panics (kernel
+// panic) if the user vaddr does not resolve to a mapped physical page.
+// Page-boundary safe: if the new RSP crosses a 4 KiB boundary, the
+// walk is redone for the second page.
+//
+//go:nosplit
+func pushU64Through(pml4 uintptr, userRSP *uintptr, val uint64) {
+    *userRSP -= 8
+    vaddr := *userRSP
+    paddr := walkAndGetPaddrIn(pml4, vaddr)
+    if paddr == 0 {
+        panic("signal delivery: user stack not mapped")
+    }
+    off := paddr + (vaddr & (pageSize - 1))
+    *(*uint64)(unsafe.Pointer(off)) = val
+}
+```
+
+The `walkAndGetPaddrIn` helper is already in `src/process.go:311` (used by `elfSpawn` for PT_LOAD population). Page-boundary handling: because `pushU64Through` is called 13 times consecutively from `maybeDeliverSignal`, the sigFrame can span at most two pages; each push independently walks the PML4, so crossing a boundary is handled implicitly. No new VM plumbing required.
+
+Mirror helper `readU64Through(pml4, vaddr) uint64` + `writeU32Through(pml4, vaddr, val uint32)` live alongside for `sys_sigreturn` restore and future 2.5's status-write.
 
 ### 4.3 sys_sigaction handler (`src/userspace.go`, new)
 
@@ -261,7 +286,7 @@ The 104-byte sigFrame grows the user stack by slightly more than one guard page'
 - **GDT** (`src/gdt.go`): unchanged. Existing `userCodeSelector` and `userDataSelector` are valid for the handler CS/SS.
 - **IDT** (`src/idt.go`): unchanged for 2.2. The sigaction/sigreturn syscalls use the existing int 0x80 gate (DPL=3, per M2-2 landing).
 - **TSS** (`src/goroutine_tss.go`): unchanged. `TSS.RSP0` is already the per-process kernel stack via ring3_pool; the signal-delivery path reuses it without changes.
-- **Interaction with M4 fix (`5aea173`)**: the fix at M4 ensured the AP Ring-3 `iretq` path sets up a valid trap frame. Mechanism B rewrites that trap frame in-place; it does not alter the AP bring-up or TSS-install sequence. A reviewer should specifically verify that our `frame.RIP = p.SigAlrmHandler` overwrite at §4.2 lands on a kernel stack that was constructed under M4's invariants (i.e. at an entry where `frame` is valid). The safe sites are: end of `syscallDispatch`, end of `ring3Wrapper` setup just before `jumpToRing3`. Do NOT call `maybeDeliverSignal` from a path that could run before the initial `jumpToRing3` (no Ring-3 context yet).
+- **Interaction with M4 fix (`5aea173`)**: the fix at M4 ensured the AP Ring-3 `iretq` path sets up a valid trap frame. Mechanism B rewrites that trap frame in-place; it does not alter the AP bring-up or TSS-install sequence. A reviewer should specifically verify that our `frame.RIP = p.SigAlrmHandler` overwrite at §4.2 lands on a kernel stack that was constructed under M4's invariants (i.e. at an entry where `frame` is valid). **The ONLY safe site is the end of `syscallDispatch`.** Do NOT call `maybeDeliverSignal` from `jumpToRing3` or from any path that runs before the user has called `sys_sigaction` to register a handler.
 
 ## 7. Commit-per-edit Plan
 

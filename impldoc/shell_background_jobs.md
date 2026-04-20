@@ -150,12 +150,15 @@ Register ABI:
 
 ### 3.3 Handler pseudocode (`src/userspace.go` tail)
 
+Reviewer MAJOR fold: simplified to WNOHANG-only (the blocking fallback is redundant — callers who want blocking semantics use `sys_wait` #16). Removes the deadlock-prone double-reap race.
+
 ```go
 const WNOHANG = 1
 
 // --- Syscall 34: sys_waitpid ---
-// RDI = pid, RSI = options, RDX = status vaddr (may be 0).
-// Returns pid on reap, 0 on still-running (WNOHANG), negative on error.
+// RDI = pid, RSI = options (must include WNOHANG), RDX = status vaddr (may be 0).
+// Returns pid on reap, 0 on still-running, negative on error.
+// BLOCKING waits are NOT supported; use sys_wait #16 for that.
 func sysWaitpidHandler(frame *SyscallFrame) {
     parent := currentProc()
     if parent == nil {
@@ -165,50 +168,49 @@ func sysWaitpidHandler(frame *SyscallFrame) {
     pid := int32(frame.RDI)
     options := uint32(frame.RSI)
     statusVaddr := uintptr(frame.RDX)
-    if pid < 1 || options&^WNOHANG != 0 {
-        frame.RAX = sysFail(fdErrBad)
+    if pid < 1 || options&^WNOHANG != 0 || options&WNOHANG == 0 {
+        frame.RAX = sysFail(fdErrBad) // non-blocking-only: WNOHANG required
         return
     }
     fl := procLock.Acquire()
     child := procByPID[uint32(pid)]
-    procLock.Release(fl)
+    // child.parent is immutable post-spawn; safe to read without extra lock.
     if child == nil || child.parent != parent {
+        procLock.Release(fl)
         frame.RAX = sysFail(fdErrBad)
         return
     }
-    // Non-blocking probe: try to receive the exit code without blocking.
+    procLock.Release(fl)
+    // Non-blocking receive.
     select {
     case exitCode := <-child.exitCh:
         if statusVaddr != 0 {
-            writeU32Through(child.parent.pml4, statusVaddr, uint32(exitCode))
+            writeU32Through(parent.pml4, statusVaddr, uint32(exitCode))
         }
-        // Reap: remove from procByPID so future sys_waitpid/sys_wait can't see it.
+        // Reap: double-check child is still in procByPID (a concurrent
+        // waitpid racer could have reaped already; not an error, we just
+        // skip the delete).
         fl := procLock.Acquire()
-        delete(procByPID, child.pid)
+        if procByPID[child.pid] == child {
+            delete(procByPID, child.pid)
+        }
         procLock.Release(fl)
         frame.RAX = uintptr(pid) // positive = reaped
     default:
-        if options&WNOHANG != 0 {
-            frame.RAX = 0
-            return
-        }
-        // Blocking wait — equivalent to sys_wait but preserves the
-        // status-pointer contract.
-        exitCode := <-child.exitCh
-        if statusVaddr != 0 {
-            writeU32Through(child.parent.pml4, statusVaddr, uint32(exitCode))
-        }
-        fl := procLock.Acquire()
-        delete(procByPID, child.pid)
-        procLock.Release(fl)
-        frame.RAX = uintptr(pid)
+        frame.RAX = 0 // still running
     }
 }
 ```
 
-Note: this path does NOT call `processWait` — the foreground-transfer side effect is deliberately excluded. Reviewer check (g) must confirm.
+Key invariants:
+- **Foreground-transfer invariant** — this handler does NOT call `setForegroundProc`. Confirmed by reviewer check (g).
+- **Reap race** — the `procByPID[child.pid] == child` check before delete is the MAJOR-fold resolution for the concurrent-reaper race.
+- **`child.parent` immutability** — documented. `Process.parent` is set once in `elfSpawn:249` and never reassigned.
+- **Blocking waits** — callers who want blocking semantics use `sys_wait` #16 (existing). This decision eliminates the double-reap deadlock path reviewer flagged as MAJOR.
 
 The `select { case ... default: }` pattern is the TinyGo-supported non-blocking channel-receive idiom, already used elsewhere in the kernel (e.g. the net stack). No new primitive.
+
+`writeU32Through` is spec'd in `preempt_user_goroutines.md §4.2`: walks the user's PML4 via `walkAndGetPaddrIn` (at `src/process.go:311`) and writes a u32 through the identity-mapped kernel half.
 
 ### 3.4 SDK wrapper (`user/gooos/proc.go`)
 

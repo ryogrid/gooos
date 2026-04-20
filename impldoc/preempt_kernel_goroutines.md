@@ -65,12 +65,26 @@ type preemptedFrame struct {
 }
 ```
 
-`swapTask` (assembly in `task_stack_amd64.S`) must branch on `kind`:
+Resume paths are **separate**, not branched inside `swapTask`. Reviewer CRITICAL #3 resolution: `iretq` cannot be emitted from within `swapTask` because `swapTask` runs on the system stack with no CPU-stacked interrupt frame above it; `iretq` reads RIP/CS/RFLAGS/RSP/SS from the top of the current stack in a hardware-fixed order and would triple-fault if those words are not laid out as a true IRQ return frame.
 
-- `kind == 0` — existing cooperative path; pop the 6 callee-saved GPRs + ret via `pc`.
-- `kind == 1` — new preempted path; pop all 15 GPRs, then `iretq` consuming RIP/CS/RFLAGS/RSP/SS from the frame.
+Two distinct resume assembly helpers:
 
-The preempt ISR writes `kind = 1` and fills `preemptedFrame` from the stacked ISR context (`src/isr.S:90-128` already has all 15 GPRs + vector/error on the kernel stack; the CPU-stacked 5-word interrupt frame sits just above). The ISR then calls a new runtime entry (see §2.3) which *does not return* — it calls the scheduler, which picks a runnable task and resumes it via the discriminator branch.
+- `swapTask` — existing cooperative path, unchanged. Pop the 6 callee-saved GPRs + `ret` via `pc`.
+- `resumePreempted` (new) — takes `*preemptedFrame` as its first argument. Prologue: switch to a scratch kernel stack region belonging to the target task; push the 5-word iretq frame in the exact hardware-expected layout (SS at the top, then RSP, RFLAGS, CS, RIP at the bottom of the 5-word group); below that, push the 15 GPRs as a restore-ordered block. Finally, `pop` the 15 GPRs and `iretq`. Implemented in a new `task_stack_preempt_amd64.S` file alongside `task_stack_amd64.S` so the two resume paths do not alias each other.
+
+`state.resume()` (in `task_stack_amd64.go:59-62`) grows a discriminator check:
+
+```go
+func (s *state) resume() {
+    gooosOnResume()
+    if s.ctx.kind == 1 {
+        resumePreempted(&s.ctx.pre)   // does not return
+    }
+    swapTask(s.sp, runtime_systemStackPtr()) // existing cooperative
+}
+```
+
+The preempt ISR writes `kind = 1` and fills `preemptedFrame` from the stacked ISR context (`src/isr.S:90-128` already has all 15 GPRs + vector/error on the kernel stack; the CPU-stacked 5-word interrupt frame sits just above). The ISR then calls a new runtime entry `runtime.gooosPreempt(frame)` which enqueues the task and **does not return to the ISR epilogue** — instead it jumps to `scheduler()`, which picks a runnable task and resumes it via `state.resume()` (which branches on `kind`). The original ISR prologue's 15-GPR push is therefore NOT balanced by the epilogue pop on the preempt path; the runtime is responsible for reclaiming the kernel-side ISR stack by discarding it and switching to the system stack before entering `scheduler()`.
 
 The cooperative path is unchanged, so existing goroutines that `Gosched()` / `task.Pause()` voluntarily pay zero extra cost.
 
@@ -86,15 +100,21 @@ Preemption is inhibited ("preempt-disabled") in any of the following regions:
 | ISR prologue/epilogue (`src/isr.S:88-149`) | `InterruptDepth > 0` is the signal; the new preempt ISR returns without scheduling when it would re-enter itself. |
 | Any `//go:nosplit` function boundary | The compiler guarantees no stack growth; preempt-disable is enforced at the caller boundary, not inside. |
 
-New per-CPU field `PreemptDisable uint32` added to `PerCPU` (`src/percpu.go:22-33`) at offset **56** (after current `_pad [16]byte`; struct grows to 64-byte boundary naturally because the original pad was oversized). Assembly-visible offset constant `pcpuOffPreemptDisable = 56` appended to the const block at `src/percpu.go:36-46`.
+New per-CPU field `PreemptDisable uint32` added to `PerCPU` (`src/percpu.go:22-33`) at offset **48** — reusing the first 4 bytes of the existing `_pad [16]byte` region. Real fields occupy offsets 0..47 (CPUIndex, InterruptDepth, SystemStack, TSSPtr, APICID, WantReschedule, CurrentPML4, CurrentPoolIdx, SyscallDepth); the pad covers 48..63. New layout: `PreemptDisable uint32` at 48, `_pad [12]byte` at 52..63, preserving the 64-byte cache-line boundary. Assembly-visible offset constant `pcpuOffPreemptDisable = 48` appended to the const block at `src/percpu.go:36-46`. (Reviewer CRITICAL #2 resolution: the original "offset 56" claim would have skipped 8 bytes and left dead pad.)
 
-The preempt ISR checks three conditions and returns early (no reschedule) if any is true:
+The preempt ISR checks **four** conditions and returns early (no reschedule) if any is true:
 
 1. `gs:InterruptDepth > 1` — nested interrupt; let the outer frame decide.
-2. `gs:PreemptDisable > 0` — critical section; set `WantReschedule` and let the critical-section exit path observe it (see `Spinlock.Release` below).
-3. current task is currently running an `//go:nosplit` frame — detected by the Go compiler emitting a `preemptFrame` symbol range; if saved RIP falls inside any such range, return early. (Ranges exported by TinyGo; requires a runtime linkname additions `runtime.gooosIsNosplitRIP(rip uintptr) bool` backed by a pre-built sorted table.)
+2. `gs:PreemptDisable > 0` — critical section; set `WantReschedule` and let the critical-section exit path observe it (see spinlock integration below).
+3. `gs:SyscallDepth > 0` — the CPU is inside a kernel syscall handler; treat the entire kernel as nosplit-unsafe. Reviewer MAJOR resolution: avoids the compiler-level nosplit-RIP range table (which would require forking the TinyGo compiler's emit pass). Cost: preemption is inhibited while any kernel goroutine is handling a syscall, which is the common case for service goroutines. Tolerable because the goroutines of concern for this milestone are the compute-bound workers, not syscall handlers.
+4. The currently-held runtime-side spinlock count > 0 (see "Runtime-spinlock integration" below) — resolves reviewer CRITICAL gap on bullet (m).
 
-`Spinlock.Acquire`/`Release` in `src/spinlock.go` gain `preemptDisable` bump/drop; `Release` additionally checks the flag and, if `WantReschedule == 1 && PreemptDisable == 0`, calls `runtime.Gosched()` (voluntary hand-off — the preempt trap frame representation is not needed on this path because the caller is at a natural Go-level boundary).
+**Runtime-spinlock integration (bullet m).** `internal/task/queue.go` and `runtime/runtime_gooos.go` both call the kernel's `gooos_spinlockAcquire`/`Release` via `//go:linkname`. Those call-site paths must **also** bump `PreemptDisable`. Two implementation options:
+
+- **Option A (preferred)** — patch `gooos_spinlockAcquire`/`Release` in `src/stubs.S:437-459` to `incl %gs:pcpuOffPreemptDisable` / `decl %gs:pcpuOffPreemptDisable` unconditionally. Every caller (kernel + runtime) gets protection automatically. One-line asm change; no per-callsite audit.
+- **Option B** — add `preemptDisable` bump/drop explicitly in `Spinlock.Acquire`/`Release` in `src/spinlock.go` AND in the runtime wrappers. Two-site maintenance; risk of drift. Rejected.
+
+Per Option A: `Spinlock.Acquire`/`Release` in `src/spinlock.go` delegate to the asm primitives; no Go-level counter management needed. The voluntary-yield check `if WantReschedule == 1 && PreemptDisable == 0 { runtime.Gosched() }` lives in `Spinlock.Release` (after the asm returns), gated on `PreemptDisable == 0` to ensure nested spinlock releases don't accidentally yield partway.
 
 ### 2.4 Fairness + interaction with `stealWork`
 

@@ -72,7 +72,9 @@ The row currently describes live work-stealing + the AP LAPIC timer deferral. Ed
 
 **Anchor**: `34-syscall register-based dispatch`.
 
-- **Variant A — 2.4 + 2.2 + 2.5 all land (adds #34, #35, #36)**: update "34-syscall" to "37-syscall". In the base-set enumeration, append `, sys_waitpid, sys_sigaction, sys_sigreturn, sys_listprocs` (in the order they land by commit timestamp). Also update the **Userspace row** anchor `"34 syscalls"` to `"37 syscalls"` (the number appears twice in the README — once in each row).
+Updated post-reviewer-CRITICAL-#1 resolution: syscall numbers are 34 (sys_waitpid), 35 (sys_sigaction), 36 (sys_sigreturn), 37 (sys_listprocs). Four new syscalls if all features land.
+
+- **Variant A — 2.4 + 2.2 + 2.5 all land (adds #34, #35, #36, #37)**: update "34-syscall" to "38-syscall". In the base-set enumeration, append `, sys_waitpid, sys_sigaction, sys_sigreturn, sys_listprocs`. Also update the **Userspace row** anchor `"34 syscalls"` to `"38 syscalls"` (the number appears twice in the README — once in each row).
 - **Variant B — only 2.4 lands (+1 syscall)**: `"34-syscall"` → `"35-syscall"`; append `sys_waitpid`.
 - **Variant C — only 2.2 lands (+2 syscalls)**: `"34-syscall"` → `"36-syscall"`; append `sys_sigaction, sys_sigreturn`.
 - **Variant D — only 2.5 lands (+1 syscall)**: `"34-syscall"` → `"35-syscall"`; append `sys_listprocs`.

@@ -2,14 +2,14 @@
 
 ## Scope
 
-Add a `ps` user-space command to gooos that enumerates running processes. Backed by a new kernel syscall `sys_listprocs` (#36) that snapshots the process table into a user-supplied buffer of `ProcInfo` structs.
+Add a `ps` user-space command to gooos that enumerates running processes. Backed by a new kernel syscall `sys_listprocs` (#37) that snapshots the process table into a user-supplied buffer of `ProcInfo` structs.
 
 Out of scope: process filtering flags (`-e`, `-u`, etc.), tree view (`-f`), per-user/-tty columns. The 2.5 `ps` is a 4-column minimalist that parallels its Unix ancestor's first version.
 
 ## Cross-links
 
-- `preempt_shell_overview.md` — Design Decisions; syscall-number allocation table (36 for `sys_listprocs`).
-- `shell_background_jobs.md` — 2.4 claims #34; 2.2 claims #35; 2.5 claims #36.
+- `preempt_shell_overview.md` — Design Decisions; syscall-number allocation table (37 for `sys_listprocs`).
+- `shell_background_jobs.md` — 2.4 claims #34; 2.2 claims #35 and #36; 2.5 claims #37.
 - `preempt_shell_milestones_and_verification.md` — Entry/Exit gates.
 - `preempt_shell_readme_update_plan.md` — README Progress-table Shell row gains a `ps` mention.
 - `impldoc/shell_io_fd_table.md` — existing syscall-allocation convention.
@@ -23,7 +23,7 @@ Out of scope: process filtering flags (`-e`, `-u`, etc.), tree view (`-f`), per-
 - `Process` struct at `src/process.go:32-64` holds per-process state. No existing `LastCpuID`, no existing "ticks since spawn". 2.5 extends the struct.
 - No process-enumeration code exists today — confirmed by agent exploration of the tree.
 - Per-CPU block at `src/percpu.go:22-33` has `CurrentPoolIdx int32` at offset 40 (the ring3 pool slot currently active on this CPU, -1 for kernel-only).
-- Syscall numbers 0..33 used; 34/35 claimed by 2.4/2.2 in this batch; **36 is the first free for 2.5**.
+- Syscall numbers 0..33 used; **34 claimed by 2.4 (sys_waitpid), 35 claimed by 2.2 (sys_sigaction), 36 claimed by 2.2 (sys_sigreturn); 37 is the first free for 2.5** (resolves reviewer CRITICAL #1).
 
 ## 2. Design
 
@@ -96,23 +96,30 @@ type Process struct {
 }
 ```
 
-Updated in the `gooosOnResume` hook in the patched runtime (`~/.local/tinygo0.40.1/src/runtime/runtime_gooos.go`). The hook is already called per-resume (see `task_stack_amd64.go:59-62`). Addition:
+Updated in `gooosOnResume` — but the hook body lives in the **kernel** at `src/goroutine_tss.go` (per `current_impl_doc/scheduler.md §gooosOnResume — The Critical Hook`), not in the TinyGo runtime. The TinyGo runtime only declares `gooosOnResume` as an extern and calls it; the body is gooos kernel code. Reviewer MAJOR resolution: the `LastCpuID` update goes in the kernel-side `gooosOnResume` body, not the runtime.
+
+Addition (in `src/goroutine_tss.go` near the existing cached-`gi.proc` lookup):
 
 ```go
-// existing gooosOnResume body (TSS.RSP0 update) ...
-if p := gooosCurrentProc(); p != nil {
-    p.LastCpuID = gooosCpuID()
+//go:nosplit
+func gooosOnResume() {
+    gi := gInfoForCurrent()
+    if gi == nil || gi.proc == nil {
+        return
+    }
+    // existing CR3-swap + TSS.RSP0 update ...
+    gi.proc.LastCpuID = cpuID() // new: feature 2.5
 }
 ```
 
-`gooosCurrentProc()` is a new linkname that walks `procByTask` keyed by `task.Current()`. Candidate for inlining.
+Reads the existing `gi.proc` cached pointer (no map lookup, nosplit-safe). `cpuID()` is the `%gs:0` reader already in use. No new runtime-side linkname is required; no new TinyGo patch surface either. (The earlier authoring's claim that `gooosCurrentProc` was a new linkname was incorrect — `gooosOnResume` itself already has per-proc context.)
 
 ### 2.4 `sys_listprocs` — kernel ABI
 
 Signature: `sys_listprocs(buf *ProcInfo, max uint32) → int32`.
 
 Register ABI:
-- `RAX = 36`
+- `RAX = 37`
 - `RDI = buf` (user vaddr; must be writable; NULL invalid)
 - `RSI = max` (max number of entries to fill; capped at `maxRing3Procs = 32`)
 - Returns in `RAX`:
@@ -122,7 +129,7 @@ Register ABI:
 Handler pseudocode (`src/userspace.go` tail; or new `src/ps.go`):
 
 ```go
-// --- Syscall 36: sys_listprocs ---
+// --- Syscall 37: sys_listprocs ---
 // RDI = buf vaddr, RSI = max entries. Returns number of entries
 // filled. Buffer fields: see impldoc/shell_ps_command.md §2.1.
 func sysListprocsHandler(frame *SyscallFrame) {
@@ -218,7 +225,7 @@ func Listprocs(buf []ProcInfo) (int, int) {
 }
 ```
 
-New syscall-number const `sysListprocs = 36` in `user/gooos/syscall.go`.
+New syscall-number const `sysListprocs = 37` in `user/gooos/syscall.go`.
 
 Helper methods on `ProcInfo` for readable State:
 
@@ -287,7 +294,7 @@ Register in `user/Makefile:21 CMDS`: append `ps`.
 ## 5. Commit-per-edit Plan
 
 1. `feat(proc): add Process.LastCpuID field + update in gooosOnResume` — `src/process.go` struct extension; patched runtime update. Build-only; no syscall yet.
-2. `feat(syscall): sys_listprocs #36 handler + dispatch` — `src/userspace.go` number const and handler; `user/gooos/syscall.go` number const; `user/gooos/ps.go` (new) with `ProcInfo` + `Listprocs` wrapper. Kernel side copies through PML4.
+2. `feat(syscall): sys_listprocs #37 handler + dispatch` — `src/userspace.go` number const and handler; `user/gooos/syscall.go` number const; `user/gooos/ps.go` (new) with `ProcInfo` + `Listprocs` wrapper. Kernel side copies through PML4.
 3. `feat(user): ps command` — `user/cmd/ps/main.go` (new). Register in `user/Makefile:21 CMDS`.
 4. `test(user): harness for ps` — `scripts/test_ps.sh` boots shell, runs `ps`, verifies at least the shell itself shows up in the output.
 
@@ -296,16 +303,13 @@ Register in `user/Makefile:21 CMDS`: append `ps`.
 Kernel (`/home/ryo/work/gooos/src/`):
 - `process.go:32-64 Process` — append `LastCpuID uint32` field.
 - `ps.go` (NEW) — `ProcInfo` struct, `fillProcInfo`, `sysListprocsHandler`, `writeStructThrough` helper (or reuse an existing through-PML4 writer from `src/process.go:313`).
-- `userspace.go:47-85` — add `sysListprocs = 36`.
+- `userspace.go:47-85` — add `sysListprocs = 37`.
 - `userspace.go:95 syscallDispatch` — add `case sysListprocs: sysListprocsHandler(frame)`.
 
-Patched TinyGo (`~/.local/tinygo0.40.1/src/runtime/`):
-- `runtime_gooos.go` — update `gooosOnResume` to populate `p.LastCpuID = gooosCpuID()`. Requires a new linkname `gooosCurrentProc`.
-- `scripts/tinygo_runtime.patch` regen.
-- `scripts/patch_tinygo_runtime.sh` — add post-condition grep: `grep -q 'gooosCurrentProc' runtime_gooos.go`.
+Patched TinyGo — **no changes needed for 2.5**. The `LastCpuID` update lives in kernel-side `src/goroutine_tss.go`, not in the TinyGo runtime. No new linkname. No patch regen.
 
 User SDK (`/home/ryo/work/gooos/user/gooos/`):
-- `syscall.go:47-54` — add `sysListprocs = 36`.
+- `syscall.go:47-54` — add `sysListprocs = 37`.
 - `ps.go` (NEW) — `ProcInfo` struct, `Listprocs` wrapper, `StateString` helper.
 
 Shell (`/home/ryo/work/gooos/user/cmd/`):
