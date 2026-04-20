@@ -24,11 +24,26 @@
 set -u
 
 OUT="tmp/serial_preempt_kernel.log"
-rm -f "$OUT"
+CONF="src/preempt_config.go"
+BACKUP="tmp/preempt_config.go.bak"
+rm -f "$OUT" "$BACKUP"
 
-if [ ! -f tmp/kernel.iso ]; then
-    make iso >/dev/null 2>&1 || { echo "FAIL: make iso"; exit 1; }
-fi
+# runPreemptProbe is OFF in release because kpHog breaks other
+# regression harnesses. Flip it to true for this run, rebuild, run,
+# revert on exit.
+cp "$CONF" "$BACKUP"
+restore_config() {
+    if [ -f "$BACKUP" ]; then
+        mv "$BACKUP" "$CONF"
+        make iso >/dev/null 2>&1 || true
+    fi
+}
+trap restore_config EXIT
+
+sed -i 's/const runPreemptProbe = false/const runPreemptProbe = true/' "$CONF"
+
+rm -f tmp/kernel.iso
+make iso >/dev/null 2>&1 || { echo "FAIL: make iso"; exit 1; }
 
 qemu-system-x86_64 \
     -cdrom tmp/kernel.iso \
@@ -38,15 +53,17 @@ qemu-system-x86_64 \
     -smp 4 &
 PID=$!
 
-cleanup() {
+qemu_cleanup() {
     kill "$PID" 2>/dev/null
     wait "$PID" 2>/dev/null
 }
-trap cleanup EXIT
+# Stacked trap: qemu_cleanup runs first, then restore_config.
+trap 'qemu_cleanup; restore_config' EXIT
 
 # Wait up to 15 s for ≥ 5 marker lines.
 for _ in $(seq 1 30); do
-    COUNT=$(grep -cE 'preempt_probe_marker=[0-9]+' "$OUT" 2>/dev/null || echo 0)
+    COUNT=$(grep -cE 'preempt_probe_marker=[0-9]+' "$OUT" 2>/dev/null)
+    COUNT=${COUNT:-0}
     if [ "$COUNT" -ge 5 ]; then
         break
     fi

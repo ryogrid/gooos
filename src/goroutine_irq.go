@@ -81,6 +81,13 @@ func handlePreemptIPI(vector uint64) {
 	if readSyscallDepth() > 1 {
 		return
 	}
+	// If the CPU is currently in its scheduler loop (between tasks
+	// or hlt-idling), taskCurrent() is 0 and task.Pause() would
+	// dereference nil. Bail in that case — preemption only applies
+	// to a running task.
+	if taskCurrent() == 0 {
+		return
+	}
 
 	// Reset the reschedule hint; we're about to act on it.
 	perCPUBlocks[cpuID()].WantReschedule = 0

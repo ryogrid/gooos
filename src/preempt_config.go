@@ -16,9 +16,11 @@
 
 package main
 
-const preemptEnabled = false
+const preemptEnabled = true
 
 // runPreemptProbe gates the kpHog + kpMarker goroutines spawned in
-// src/main.go. Off in release builds; flip to true alongside
-// preemptEnabled when running scripts/test_preempt_kernel.sh.
+// src/main.go. OFF by default because kpHog monopolizes BSP and
+// makes the standard regression harnesses (test_net.sh, test_ps.sh,
+// etc.) fail. scripts/test_preempt_kernel.sh flips this to true via
+// sed before building, runs the harness, and reverts the flip.
 const runPreemptProbe = false

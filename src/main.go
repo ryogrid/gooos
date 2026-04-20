@@ -557,8 +557,20 @@ func main() {
 	// runs Gosched, and kpMarker gets its turn. Serial log greps
 	// for `preempt_probe_marker=N` in scripts/test_preempt_kernel.sh.
 	if preemptEnabled && runPreemptProbe {
-		go kpHog()
+		serialPrintln("preempt_probe: spawning kpMarker + kpHog")
+		// Spawn kpMarker FIRST so it sits ahead of kpHog in BSP's
+		// runqueue. The BSP scheduler picks kpMarker first, it prints
+		// marker=0 then parks on afterTicks; BSP then picks kpHog
+		// which enters the tight loop. Every 50 ms afterTicks wakes
+		// kpMarker (enqueued to the timer wheel's CPU — not BSP),
+		// an AP picks it up via work-stealing, kpMarker prints
+		// another marker, parks again.
+		//
+		// Preemption kicks in when kpMarker and kpHog end up on
+		// the same AP's runqueue (after migration). Then the BSP
+		// timer's preempt IPI to that AP is what frees kpMarker.
 		go kpMarker()
+		go kpHog()
 	}
 
 	// Load shell and jump to Ring 3. Does not return.
@@ -571,6 +583,7 @@ func main() {
 //
 //go:noinline
 func kpHog() {
+	serialPrintln("kpHog: started on cpu=" + utoa(uint64(cpuID())))
 	var x uint64
 	for {
 		x++
@@ -585,10 +598,13 @@ func kpHog() {
 // preemption, and if kpMarker and kpHog happen to land on the same
 // runqueue, kpMarker starves.
 func kpMarker() {
+	serialPrintln("kpMarker: started on cpu=" + utoa(uint64(cpuID())))
 	for iter := 0; iter < 20; iter++ {
-		serialPrintln("preempt_probe_marker=" + utoa(uint64(iter)))
+		serialPrintln("preempt_probe_marker=" + utoa(uint64(iter)) +
+			" cpu=" + utoa(uint64(cpuID())))
 		<-afterTicks(5)
 	}
+	serialPrintln("kpMarker: done")
 }
 
 // smpBasicProbe yields between iterations; each yield re-queues
