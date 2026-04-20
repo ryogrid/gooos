@@ -17,6 +17,7 @@ func main() {
 	gooos.Println("")
 
 	for {
+		reapBackgroundJobs()
 		gooos.Print("$ ")
 		line := gooos.ReadLine()
 		if len(line) == 0 {
