@@ -506,6 +506,14 @@ func main() {
 	fsWrite("ps.elf", userElf_ps[:])
 	serialPrintln("  ps.elf: " + utoa(uint64(len(userElf_ps))) + " bytes")
 
+	fsCreate("cpuhog.elf")
+	fsWrite("cpuhog.elf", userElf_cpuhog[:])
+	serialPrintln("  cpuhog.elf: " + utoa(uint64(len(userElf_cpuhog))) + " bytes")
+
+	fsCreate("markerprint.elf")
+	fsWrite("markerprint.elf", userElf_markerprint[:])
+	serialPrintln("  markerprint.elf: " + utoa(uint64(len(userElf_markerprint))) + " bytes")
+
 	// Store a test file for cat/wc demos.
 	fsCreate("hello.txt")
 	fsWrite("hello.txt", []byte("Hello from the gooos filesystem!\nThis is a test file.\n"))
