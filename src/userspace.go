@@ -173,6 +173,10 @@ func syscallDispatch(frame *SyscallFrame) {
 		sysListprocsHandler(frame)
 	case sysWaitpid:
 		sysWaitpidHandler(frame)
+	case sysSigaction:
+		sysSigactionHandler(frame)
+	case sysSigreturn:
+		sysSigreturnHandler(frame)
 	default:
 		frame.RAX = 0xFFFFFFFFFFFFFFFF // -1 for invalid syscall
 	}

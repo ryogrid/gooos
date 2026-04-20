@@ -77,6 +77,12 @@ func handleLAPICTimer(vector uint64) {
 	idx := cpuID()
 	perCPUBlocks[idx].WantReschedule = 1
 	if preemptEnabled {
+		// Feature 2.2: tick-driven user-preempt accounting for
+		// whichever ring3 process is currently running on any CPU.
+		// Sets UserPreemptPending when the quantum expires.
+		for i := uint32(0); i < uint32(numCoresOnline); i++ {
+			maybeSignalUserPreempt(i)
+		}
 		// Feature 2.1: broadcast preempt IPI (vector 0xFB) to every
 		// online AP. Each AP's handlePreemptIPI decides per-CPU
 		// whether to Gosched based on its own PreemptDisable /

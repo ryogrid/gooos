@@ -9,6 +9,8 @@
 
 package main
 
+import "unsafe"
+
 // readInterruptDepth reads the per-CPU ISR-depth counter from %gs:4.
 // Implemented in src/stubs.S.
 //
@@ -81,25 +83,40 @@ func handlePreemptIPI(vector uint64) {
 	if readSyscallDepth() > 1 {
 		return
 	}
-	// If the CPU is currently in its scheduler loop (between tasks
-	// or hlt-idling), taskCurrent() is 0 and task.Pause() would
-	// dereference nil. Bail in that case — preemption only applies
-	// to a running task.
+
+	// Recover the trap frame captured by isr.S. `lastFramePtrs` is
+	// the per-CPU slot populated by go_interrupt_handler before
+	// dispatching to this handler. Interpreting the bytes as a
+	// SyscallFrame lets us read the interrupted RIP/CS/RSP/SS and,
+	// for Ring 3 preemption (feature 2.2), rewrite them in place
+	// before the ISR epilogue's iretq.
+	cpu := cpuID()
+	framePtr := lastFramePtrs[cpu]
+	if framePtr != 0 {
+		frame := (*SyscallFrame)(unsafe.Pointer(framePtr))
+		// Low 2 bits of CS = RPL. RPL==3 → interrupted Ring 3.
+		if frame.CS&3 == 3 {
+			// Ring 3: deliver SIGALRM if a handler is registered.
+			// maybeDeliverSignal rewrites frame.RIP / frame.RSP in
+			// place; on iretq the user process jumps to its
+			// SIGALRM handler instead of the interrupted RIP.
+			maybeDeliverSignal(frame)
+			// Do NOT Gosched — returning from this handler lets the
+			// ISR epilogue iretq directly back to Ring 3, either
+			// at the handler (if we rewrote) or at the interrupted
+			// RIP (if we didn't).
+			return
+		}
+	}
+
+	// Ring 0: kernel goroutine preemption via cooperative swap.
 	if taskCurrent() == 0 {
 		return
 	}
-
-	// Reset the reschedule hint; we're about to act on it.
-	perCPUBlocks[cpuID()].WantReschedule = 0
-
-	// task.Pause() inside Gosched() swaps to the scheduler stack,
-	// picks another task, and eventually returns here when our task
-	// is resumed. The 15 GPRs and hardware-iretq-frame pushed by
-	// isr.S sit untouched at the top of our kernel stack — they are
-	// correctly popped + iretq-ed by the normal ISR epilogue when we
-	// return.
+	perCPUBlocks[cpu].WantReschedule = 0
 	gooosSchedulerYield()
 }
+
 
 // gooosSchedulerYield is a //go:linkname wrapper around
 // runtime.Gosched(). Calling runtime.Gosched directly from this file
