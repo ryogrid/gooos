@@ -261,6 +261,8 @@ func elfSpawn(filename, args string, parent *Process) (*Process, bool) {
 		fl := procLock.Acquire()
 		child.pid = allocPID()
 		procByPID[child.pid] = child
+		setProcName(child.pid, filename) // feature 2.5: ps-command name column
+		processStartTick[child.pid] = pitTicks
 		procLock.Release(fl)
 	}
 
@@ -365,6 +367,8 @@ func processWait(proc *Process) uintptr {
 	{
 		fl := procLock.Acquire()
 		delete(procByPID, proc.pid)
+		clearProcName(proc.pid) // feature 2.5: ps-command name table cleanup
+		delete(processStartTick, proc.pid)
 		procLock.Release(fl)
 	}
 	if !firstExecAudited {

@@ -82,6 +82,13 @@ const (
 	sysTcpSend  = 31
 	sysTcpRecv  = 32
 	sysShutdown = 33
+
+	// Preempt + Shell enhancement batch (feature 2.4 / 2.2 / 2.5)
+	// — see impldoc/preempt_shell_overview.md §4 for the allocation.
+	sysWaitpid   = 34 // 2.4: POSIX-style non-blocking waitpid (WNOHANG-only)
+	sysSigaction = 35 // 2.2: install SIGALRM handler for user preempt
+	sysSigreturn = 36 // 2.2: restore user context after SIGALRM handler
+	sysListprocs = 37 // 2.5: enumerate process table (backs ps)
 )
 
 // jumpToRing3 transitions the CPU to Ring 3 user mode via iretq.
@@ -162,6 +169,8 @@ func syscallDispatch(frame *SyscallFrame) {
 		sysTcpRecvHandler(frame)
 	case sysShutdown:
 		sysShutdownHandler(frame)
+	case sysListprocs:
+		sysListprocsHandler(frame)
 	default:
 		frame.RAX = 0xFFFFFFFFFFFFFFFF // -1 for invalid syscall
 	}
