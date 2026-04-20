@@ -210,5 +210,6 @@ func gooosOnResume() {
 		if pml4 != 0 {
 			writeCR3(pml4)
 		}
+		gi.proc.LastCpuID = cpuID()
 	}
 }

@@ -61,6 +61,12 @@ type Process struct {
 	// sys_spawn. Zero for the boot shell (which is launched
 	// via elfLoad rather than elfSpawn).
 	pid uint32
+
+	// LastCpuID is the CPU index this process was most recently
+	// resumed on. Updated from gooosOnResume (nosplit, unlocked
+	// aligned u32 store). Consumed by sys_listprocs (feature 2.5,
+	// impldoc/shell_ps_command.md §2.3).
+	LastCpuID uint32
 }
 
 // procLock protects procByTask, procByPID, nextPID, and
