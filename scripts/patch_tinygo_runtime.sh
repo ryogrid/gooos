@@ -78,6 +78,7 @@ TSU="$TINYGO_SRC/internal/task/task_stack_unicore.go"
 # scheduler hunks landed on scheduler_cooperative.go (0.40.1 split
 # from the 0.33.0 monolithic scheduler.go).
 SCHED="$TINYGO_SRC/runtime/scheduler_cooperative.go"
+SCHEDC="$TINYGO_SRC/runtime/scheduler_cores.go"
 
 if [[ -f "$RG" && -f "$RGU" && -f "$IG" && -f "$IGU" && -f "$WG" && -f "$WGU" ]] \
     && grep -q '&& kernelspace' "$RG" \
@@ -88,10 +89,17 @@ if [[ -f "$RG" && -f "$RGU" && -f "$IG" && -f "$IGU" && -f "$WG" && -f "$WGU" ]]
     && grep -q 'runqueues' "$SCHED" \
     && grep -q 'stealWork' "$SCHED" \
     && grep -q 'apScheduler' "$SCHED" \
-    && grep -q 'systemStacks' "$TS64" \
+    && grep -q 'runqueues' "$SCHEDC" \
+    && grep -q 'stealWork' "$SCHEDC" \
+    && grep -q 'apScheduler' "$SCHEDC" \
+    && grep -q 'runtime_systemStackPtr' "$TS64" \
     && grep -q 'currentTasks' "$TSU" \
+    && grep -q 'numCPU = 17' "$RG" \
+    && grep -q 'atomicsLock' "$RG" \
+    && grep -q 'futexLock' "$RG" \
     && grep -q 'gooos_readInterruptDepth' "$IG" \
     && grep -q 'gooos_readSyscallDepth' "$IG" \
+    && grep -q 'go:noescape' "$TINYGO_SRC/internal/task/queue.go" \
     && grep -q 'gooos_spinlockAcquire' "$TINYGO_SRC/internal/task/queue.go"; then
     echo "already-applied: tinygo runtime patch (SMP v2 on 0.40.1) present at $TINYGO_SRC"
     echo "(delete the gooos* runtime files and the in-place changes to re-run)"
@@ -121,8 +129,10 @@ fi
 rm -f "$TINYGO_SRC/internal/task/task_stack.go.rej" \
       "$TINYGO_SRC/internal/task/task_stack_amd64.go.rej" \
       "$TINYGO_SRC/internal/task/task_stack_unicore.go.rej" \
+      "$TINYGO_SRC/internal/task/task_stack_multicore.go.rej" \
       "$TINYGO_SRC/internal/task/queue.go.rej" \
       "$TINYGO_SRC/runtime/scheduler_cooperative.go.rej" \
+      "$TINYGO_SRC/runtime/scheduler_cores.go.rej" \
       "$TINYGO_SRC/runtime/gc_blocks.go.rej" \
       "$TINYGO_SRC/runtime/wait_other.go.rej"
 
@@ -169,12 +179,41 @@ if ! grep -q 'apScheduler' "$SCHED"; then
     echo "error: $SCHED is missing the apScheduler entry" >&2
     fail=1
 fi
-if ! grep -q 'systemStacks' "$TS64"; then
-    echo "error: $TS64 is missing per-CPU systemStacks" >&2
+# Wave 2 (scheduler=cores): scheduler_cores.go carries the same set
+# of per-CPU artifacts because the active scheduler is selected by
+# build tag, not by file choice. Both files carry the hunks.
+if ! grep -q 'runqueues' "$SCHEDC"; then
+    echo "error: $SCHEDC is missing per-CPU runqueues (Wave 2)" >&2
+    fail=1
+fi
+if ! grep -q 'stealWork' "$SCHEDC"; then
+    echo "error: $SCHEDC is missing stealWork helper (Wave 2)" >&2
+    fail=1
+fi
+if ! grep -q 'apScheduler' "$SCHEDC"; then
+    echo "error: $SCHEDC is missing apScheduler entry (Wave 2)" >&2
+    fail=1
+fi
+# task_stack_amd64.go: Wave 2 retired the per-CPU systemStacks array
+# in favor of linkname'ing runtime.systemStackPtr (upstream-managed).
+if ! grep -q 'runtime_systemStackPtr' "$TS64"; then
+    echo "error: $TS64 is missing runtime_systemStackPtr linkname (Wave 2)" >&2
     fail=1
 fi
 if ! grep -q 'currentTasks' "$TSU"; then
     echo "error: $TSU is missing per-CPU currentTasks" >&2
+    fail=1
+fi
+if ! grep -q 'numCPU = 17' "$RG"; then
+    echo "error: $RG is missing the numCPU constant (Wave 2)" >&2
+    fail=1
+fi
+if ! grep -q 'atomicsLock' "$RG"; then
+    echo "error: $RG is missing atomicsLock (Wave 2)" >&2
+    fail=1
+fi
+if ! grep -q 'futexLock' "$RG"; then
+    echo "error: $RG is missing futexLock (Wave 2)" >&2
     fail=1
 fi
 if ! grep -q 'gooos_readInterruptDepth' "$IG"; then
@@ -183,6 +222,12 @@ if ! grep -q 'gooos_readInterruptDepth' "$IG"; then
 fi
 if ! grep -q 'gooos_readSyscallDepth' "$IG"; then
     echo "error: $IG is missing readSyscallDepth linkname (M2)" >&2
+    fail=1
+fi
+# queue.go noescape annotations added in M3-4 to prevent GC alloc
+# re-entrancy on scheduler=cores (see TODO_SMP4.md M3-4).
+if ! grep -q 'go:noescape' "$TINYGO_SRC/internal/task/queue.go"; then
+    echo "error: $TINYGO_SRC/internal/task/queue.go is missing //go:noescape on spinlock decls (Wave 2)" >&2
     fail=1
 fi
 if (( fail )); then

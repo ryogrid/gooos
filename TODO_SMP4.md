@@ -66,7 +66,7 @@ Closing (README + docs).
 
 - [x] **M3-1. Wave 2 runtime declarations (`numCPU`, `gooosSpinLock`, lock vars, `currentCPU`, `gcPauseCore` stub)** (commit `5fd015f`)
 
-- [ ] **M3-2. `task_stack_amd64.go` build-tag widening + `runtime_systemStackPtr` linkname**
+- [x] **M3-2. `task_stack_amd64.go` build-tag widening + `runtime_systemStackPtr` linkname**
   - Widen build tag to `(scheduler.tasks || scheduler.cores) && amd64 && !windows`
   - Retire gooos per-CPU `systemStacks` array; consume upstream `systemStackPtr()` via linkname (mirror `task_stack_tinygoriscv.go:12-13`)
   - Rewrite `resume()` / `pause()` / `SystemStack()` per `§4.2`
@@ -74,7 +74,7 @@ Closing (README + docs).
   - Verify: `make build` clean under tasks mode (still); `scripts/test_tcp_phase5.sh` PASS
   - Commit: `build(toolchain): widen task_stack_amd64.go build tag; consume systemStackPtr linkname`
 
-- [ ] **M3-3. `scheduler_cores.go` push-site retargeting + `stealWork` + `apScheduler`**
+- [x] **M3-3. `scheduler_cores.go` push-site retargeting + `stealWork` + `apScheduler`**
   - Patched `scheduler_cores.go`:
     - Add `var runqueues [numCPU]task.Queue` alongside upstream `runqueue`
     - Retarget `scheduleTask` push at line 37 to `runqueues[gooosCpuID()].Push(t)`
@@ -92,9 +92,9 @@ Closing (README + docs).
   - Verify: `make build` clean under cores mode; `-smp 1` and `-smp 4` both boot to shell; `scripts/test_net.sh` + `test_tcp_phase{1..5}.sh` all PASS.
   - Commit: `build(target): flip scheduler to cores`
 
-- [ ] **M3-5. `scripts/patch_tinygo_runtime.sh` Wave 2 post-conditions**
-  - Add grep probes: `numCPU = 17`, `atomicsLock`, `futexLock`, `runqueues` in `scheduler_cores.go`, build-tag widening in `task_stack_amd64.go`
-  - Verify: re-running the script on already-patched tree prints `already-applied:` with the new checks
+- [x] **M3-5. `scripts/patch_tinygo_runtime.sh` Wave 2 post-conditions**
+  - Added idempotency + post-condition grep probes for: `numCPU = 17`, `atomicsLock`, `futexLock` in `runtime_gooos.go`; `runqueues`/`stealWork`/`apScheduler` in `scheduler_cores.go`; `runtime_systemStackPtr` (replaces the retired `systemStacks`) in `task_stack_amd64.go`; `//go:noescape` in `internal/task/queue.go`. Also widened the `.rej` cleanup list to cover `scheduler_cores.go` and `task_stack_multicore.go`.
+  - Verify: `bash scripts/patch_tinygo_runtime.sh` on the already-patched tree prints `already-applied:` and exits 0.
   - Commit: `build(toolchain): patch script Wave 2 post-conditions`
 
 - [ ] **M3-6. Wire `stealWork()` into scheduler pop site**
