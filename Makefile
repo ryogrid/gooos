@@ -108,7 +108,7 @@ $(KERNEL_BIN): $(BOOT_O) $(STUBS_O) $(ISR_O) $(SWITCH_O) $(TRAMP_O) $(TASK_O) $(
 check-multiboot: $(KERNEL_BIN)
 	grub-file --is-x86-multiboot $(KERNEL_BIN)
 
-iso: $(KERNEL_ISO)
+iso: embed-user $(KERNEL_ISO)
 
 $(KERNEL_ISO): $(KERNEL_BIN) $(GRUB_DIR)/grub.cfg
 	rm -rf $(ISO_DIR)

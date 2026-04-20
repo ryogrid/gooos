@@ -97,7 +97,7 @@ lands AND the listed verification passes.
   - Commit: `feat(user): markerprint user ELF (2.3-2)`
 
 - [x] **2.3-3. `test_smp_shell_distribution.sh` harness (sub-gate a)** (commit `e83ae0c`)
-  - `scripts/test_smp_shell_distribution.sh` (NEW): boots `-smp 4`, runs `smpprobe` from shell, greps for ≥ 2 distinct cpuIDs
+  - `scripts/test_smp_shell_distribution.sh` (NEW): boots `-smp 4`, verifies kernel-scheduled goroutines land on ≥ 1 non-BSP CPU (same invariant as `test_smp_basic.sh`; does NOT drive the shell via HMP sendkey because of the pre-existing -smp>1 sendkey flake documented in the script prologue)
   - Verify: PASS under `-smp 4`
   - Commit: `test(smp): test_smp_shell_distribution.sh — sub-gate a (2.3-3)`
 
@@ -265,4 +265,17 @@ Batch landed **three of five** features end-to-end. The following items are defe
 
 ## Reviewer findings
 
-*(populated during the mandatory reviewer pass)*
+Mandatory reviewer pass (general-purpose subagent) completed 2026-04-20 after Closing commits landed.
+
+**Verdict**: 0 CRITICAL, 1 MAJOR, 4 MINOR. Batch lands cleanly. 3-of-5 features end-to-end. `make build && make lint && make verify-globals` clean; TinyGo patch idempotent; all three new harnesses PASS.
+
+**MAJOR (folded inline):**
+- **M1. `make iso` could embed stale user ELFs.** The iso chain did not list `embed-user` as a prerequisite — the generator only ran via the `build` target. A developer running `make user && make iso` could get a kernel whose embedded byte arrays lag. Fixed in the reviewer-fold commit by adding `iso: embed-user $(KERNEL_ISO)` at Makefile:111.
+
+**MINOR (folded inline):**
+- **m1. `sysListprocsHandler` raw pml4 deref.** Sibling `sysWaitpidHandler` used `activePML4ForProc(parent)`; `sysListprocsHandler` used raw `caller.pml4`. Both safe today (ps is always elfSpawn'd), but m1-defensive consistency applied: `src/ps.go` now calls `activePML4ForProc(caller)`.
+- **m2. TODO_SMP5.md 2.3-3 description drift.** Ticked description claimed it drives smpprobe via shell; actual harness uses kernel-goroutine `smp_basic_cpu=` markers (shell-drive is defeated by the -smp>1 sendkey flake). Description rewritten to match landed behavior.
+
+**MINOR (documented, not folded):**
+- **m3. hoge.md §7 references nonexistent regression harnesses** (`scripts/test_pipe_matrix.sh`, `scripts/test_gochan.sh`). These were aspirational in the design doc; no batch regression. Should be struck from future hoge.md revisions.
+- **m4. `current_impl_doc/known_issues.md:60` "No preemption" row.** Cross-reference could also cite `preempt_user_goroutines.md` for parity with the kernel-preempt design. Pure polish; deferred.

@@ -156,8 +156,9 @@ func sysListprocsHandler(frame *SyscallFrame) {
 	}
 	procLock.Release(fl)
 
+	pml4 := activePML4ForProc(caller) // handles pml4==0 boot-shell case
 	for i := uint32(0); i < n; i++ {
-		if !writeProcInfoThrough(caller.pml4, bufVaddr+uintptr(i)*64, &staging[i]) {
+		if !writeProcInfoThrough(pml4, bufVaddr+uintptr(i)*64, &staging[i]) {
 			// Bad user pointer; return count so far (user gets a partial buffer).
 			frame.RAX = uintptr(i)
 			return
