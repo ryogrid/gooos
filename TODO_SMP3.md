@@ -66,59 +66,35 @@ One git commit per top-level item. Mark `- [x]` only when the commit lands AND t
   - No kernel triple-fault / panic in log
   - Commit: `test(smp): M1 exit — -smp 4 boot verified on 0.40.1`
 
-## M2 — AP LAPIC timer race fix — **DEFERRED**
+## M2 — AP LAPIC timer race fix — **PARTIAL (syscall-aware per-CPU depth landed; AP LAPIC enable still deferred)**
 
-Rationale: `impldoc/smp_deferred_and_known_issues.md §2.2` documents
-that migrating `interrupt.In()` to the per-CPU counter exposes a
-second issue — gooos's ISR-hosted syscall design calls `task.Pause()`
-while the per-CPU ISR depth is 1 (correct for that design), which
-panics as "blocked inside interrupt". Resolving requires a redesign
-of the syscall-handler / ISR-depth accounting scheme that is beyond
-the scope of this toolchain migration. Listed here as a pointer; the
-full design work tracks under the original SMP v2 known-issues.
+**Landed 2026-04-20** (commits `6a3ef14`, `49b7605`, `f25f839`):
+- [x] **M2-1. Migrate `interrupt.In()` to read per-CPU `%gs:4` counter only** — done. Global `gooos_in_interrupt_depth` retired; ISR prologue/epilogue write the per-CPU `%gs:4` (`InterruptDepth`) counter. To unblock `task.Pause()` from gooos's ISR-hosted syscall handlers, a separate `SyscallDepth` at `%gs:44` is bumped by the vector-0x80 branch in the ISR prologue. `runtime/interrupt.In()` now returns `InterruptDepth != 0 && SyscallDepth == 0`.
 
-- [ ] ~~**M2-1. Migrate `interrupt.In()` to read per-CPU `%gs:4` counter only**~~ (deferred)
-- [ ] ~~**M2-2. Enable AP LAPIC timer init**~~ (deferred — depends on M2-1)
+**Still deferred**:
+- [ ] **M2-2. Enable AP LAPIC timer init** — racy global counter was not the sole cause. Re-enabling `lapicTimerInit()` on APs still hangs boot under `-smp 4` after "Scheduler: TinyGo goroutines active". Requires further QEMU+GDB investigation. Tracked in `TODO_SMP4.md` and `impldoc/smp_deferred_and_known_issues.md §2.2`. Work-stealing functions without AP preemption because `schedulerWake → gooosWakeupCPU` IPI-broadcast covers idle-AP wake (commit `aa5bb91`).
 
-## M3 — Wave 2 (scheduler=cores promotion) — **DEFERRED**
+## M3 — Wave 2 (scheduler=cores promotion) — **LANDED 2026-04-20**
 
-Rationale: Promoting to `scheduler=cores` requires enabling work
-stealing (`stealWork()` call in the scheduler loop), but enabling
-stealWork under gooos triggers the M4 AP Ring-3 `iretq` triple-fault
-captured in `impldoc/smp_deferred_and_known_issues.md §2.1` because
-APs would immediately steal `ring3Wrapper` goroutines — reproduced
-during M1 verification in this session. Landing M3 cleanly therefore
-depends on M4 being resolved first (or on a stealWork-kernel-only
-affinity mechanism that excludes `ring3Wrapper` from stealing — a
-non-trivial addition). The Wave 1 patch already ships the dormant
-infrastructure (`stealWork`, `apScheduler`) so a future M3 commit
-only needs to wire the call site + add the cores-mode bits.
+Landed via commits `5fd015f`, `3052257`, `e159ed1`, `68f6835`, `670e502`, `aa5bb91`. Tracked and executed through `TODO_SMP4.md` as a dedicated follow-up session after `impldoc/smp_unblock_*` design docs were written.
 
-- [ ] ~~**W2-1. Flip `src/target.json` `"scheduler": "tasks"` → `"cores"`**~~ (deferred)
-- [ ] ~~**W2-2. Add Wave 2 patch hunks (numCPU, spinlock variables, gcPauseCore, currentCPU)**~~ (deferred)
-- [ ] ~~**W2-3. Add `scripts/patch_tinygo_runtime.sh` Wave 2 post-conditions**~~ (deferred)
+- [x] **W2-1. Flip `src/target.json` `"scheduler": "tasks"` → `"cores"`** (commit `68f6835`). Required a companion fix: `//go:noescape` on the spinlock asm decls in `internal/task/queue.go` and `runtime/runtime_gooos.go` so `var markedTaskQueue task.Queue` inside upstream `gc_blocks.go runGC` does not escape to the heap (heap-alloc would re-enter `gcLock` and hang GC).
+- [x] **W2-2. Add Wave 2 patch hunks (`numCPU`, spinlock variables, `gcPauseCore`, `currentCPU`)** (commit `5fd015f`).
+- [x] **W2-3. Add `scripts/patch_tinygo_runtime.sh` Wave 2 post-conditions** (commit `670e502`).
+- [x] **M3-EXIT-1. New harness `scripts/test_smp_basic.sh` — kernel goroutine distribution** — passes (observed `smp_basic_cpu=N` with N != 0 under `-smp 4`, and `ring3Wrapper: cpuID=1/3`).
+- [x] **M3-EXIT-2. Regression matrix green under `-smp 4`** — `test_net.sh` + `test_tcp_phase{1..5}.sh` all PASS.
 
-- [ ] ~~**M3-EXIT-1. New harness `scripts/test_smp_basic.sh` — kernel goroutine distribution**~~ (deferred — depends on W2-2)
-- [ ] ~~**M3-EXIT-2. Regression matrix green under `-smp 4`**~~ (deferred — depends on W2-2)
+## M4 — Ring-3 on APs — **LANDED 2026-04-20**
 
-## M4 — Ring-3 on APs — **DEFERRED**
+Root cause identified via QEMU's `-d int,cpu_reset,guest_errors` (no interactive GDB needed): APs started with `IDTR = {base=0, limit=0xFFFF}` (reset default). The first exception on the AP vectored through a zero IDT and triple-faulted.
 
-Rationale: per `impldoc/smp_deferred_and_known_issues.md §2.1`,
-resolving the AP Ring-3 `iretq` triple-fault requires a QEMU+GDB
-hardware-level debugging session — an intermittent fault tied to
-per-CPU TSS / GDT / CR3 transitions that cannot reliably be root-
-caused by code review alone. Out of scope for this toolchain
-migration session.
-
-- [ ] ~~**M4. Debug AP `iretq` triple-fault**~~ (deferred — QEMU+GDB work)
+- [x] **M4. Debug AP `iretq` triple-fault** (commit `5aea173`). Fix: added `idtLoadAP()` in `src/idt.go` and invoked from `src/smp.go apEntry` after `gdtInitPerCPU`. Full investigation write-up: `impldoc/smp_m4_ring3_fault.md`. Evidence: `tmp/m4_qemu.log`.
 
 ## M5 — SMP-safe GC — **DEFERRED**
 
-Rationale: depends on M3 scheduler=cores landing (GC stop-the-world
-only has value when APs actually run goroutines concurrently).
-Deferred transitively.
+Rationale: still deferred. `gcPauseCore` / `gcResumeCore` / `gcSignalCore` remain stubs (commit `5fd015f`). Under `scheduler=cores` this leaves a concurrent-mutator window during GC mark, but the current test matrix doesn't exercise heavy concurrent allocation. Becomes important for long-running SMP workloads.
 
-- [ ] ~~**M5. Real `gcPauseCore(cpu)` body + IPI handler**~~ (deferred — depends on M3)
+- [ ] **M5. Real `gcPauseCore(cpu)` body + IPI handler** (deferred — M5 scope beyond the unblock session).
 
 ## Closing: README Wave 2 + doc updates + reviewer pass + final audit
 
@@ -149,27 +125,36 @@ Deferred transitively.
 
 ## Deferred further
 
-1. **M2 (AP LAPIC timer race fix)** — `interrupt.In()` per-CPU migration
-   conflicts with gooos's ISR-hosted syscall design (`task.Pause()` is
-   called while per-CPU ISR depth is 1, panicking as "blocked inside
-   interrupt"). Requires syscall-handler / ISR-depth accounting redesign;
-   out of scope for this migration. See
-   `impldoc/smp_deferred_and_known_issues.md §2.2`.
+Updated 2026-04-20 after the unblock session landed M2 (partial),
+M3, and M4:
 
-2. **M3 (scheduler=cores promotion, including W2-1/W2-2/W2-3 and
-   M3-EXIT-1/2)** — enabling the `stealWork()` call at the scheduler's
-   pop site triggers the M4 AP Ring-3 `iretq` triple-fault (reproduced
-   in this session during M1 verification). Landing M3 cleanly depends
-   on M4 first, or on adding kernel-only stealWork affinity. The Wave 1
-   patch already ships dormant `stealWork` / `apScheduler` / per-CPU
-   `runqueues[17]` infrastructure; future wire-up is a narrow change.
+1. **M2-2 (AP LAPIC timer enable)** — remaining deferral. The
+   racy global counter originally blamed is gone (M2-1 landed,
+   per-CPU depth + syscall-aware `interrupt.In()` is live), but
+   re-enabling `lapicTimerInit()` on APs still hangs boot under
+   `-smp 4` — the cause is no longer the counter race but
+   something else in the AP's timer ISR dispatch path. Needs
+   QEMU+GDB bisection. Tracked in `TODO_SMP4.md` and
+   `impldoc/smp_deferred_and_known_issues.md §2.2`. Consequence:
+   APs have no independent preemption source; a compute-bound
+   goroutine on an AP can only be unstuck by cooperative yield or
+   channel op. IPI-based wake (landed in M3-6 via `schedulerWake
+   → gooosWakeupCPU` broadcast) is sufficient for work-stealing.
 
-3. **M4 (AP Ring-3 iretq triple-fault)** — per
-   `impldoc/smp_deferred_and_known_issues.md §2.1`, requires QEMU+GDB
-   hardware-level debugging. Out of scope for this session.
+2. **M3 (scheduler=cores promotion)** — **LANDED** (see main
+   M3 section above for per-item tracking). `scheduler=cores`
+   is live, stealWork is wired, kernel + Ring-3 goroutines
+   migrate to APs routinely.
 
-4. **M5 (gcPauseCore IPI + stop-the-world GC)** — depends transitively
-   on M3. Out of scope.
+3. **M4 (AP Ring-3 iretq triple-fault)** — **LANDED**
+   (commit `5aea173`). Root cause: APs never loaded their IDT.
+   Fixed with `idtLoadAP()` in `apEntry`.
+
+4. **M5 (gcPauseCore IPI + stop-the-world GC)** — still
+   deferred. `gcPauseCore`/`gcResumeCore`/`gcSignalCore` are
+   stubs; under `scheduler=cores` this leaves a
+   concurrent-mutator window during GC mark. Becomes important
+   for long-running SMP workloads.
 
 5. **User-mode promotion to `scheduler=cores`** — `user/target.json`
    stays on `scheduler=tasks`. Deliberate per

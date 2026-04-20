@@ -145,8 +145,9 @@ file > 64 KiB even though `maxFileData` is 128 KiB. Bumped to
 
 `src/afterticks.go`. The naive `afterTicks` implementation —
 one goroutine spawn per call — accumulated unreclaimed Task
-structs because gooos's patched TinyGo `scheduler=tasks`
-runtime has no task free-list. Repeated hot-loop callers
+structs because gooos's patched TinyGo runtime (both the
+former `scheduler=tasks` and the current `scheduler=cores`
+builds) has no task free-list. Repeated hot-loop callers
 (TCP RTO scanner, kernel echo idle poll, netsock wait loops)
 produced a late-timing RX stall: kernel-goroutine scheduling
 collapsed ~12-16 s after Ring-3 startup and

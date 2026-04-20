@@ -3,11 +3,13 @@
 gooos **does not have a custom scheduler**. Every running
 thing in the kernel — service loops, Ring-3 wrappers,
 `afterTicks` timers, per-process exit watchers — is a TinyGo
-goroutine. TinyGo's `scheduler=tasks` runtime (loaded from
-`~/.local/tinygo0.40.1/src/runtime/scheduler_cooperative.go`
-+ `scheduler.go` common + a few gooos patches; see
+goroutine. TinyGo's `scheduler=cores` runtime (loaded from
+`~/.local/tinygo0.40.1/src/runtime/scheduler_cores.go` +
+`scheduler.go` common + a few gooos patches; see
 `impldoc/smp_migration_overview.md` for the 0.33.0 → 0.40.1
-migration background) does all the context-switching.
+migration background and `impldoc/smp_m3_cores_promotion.md`
+for the tasks → cores promotion) does all the
+context-switching.
 
 ## Scheduler Anatomy
 
@@ -181,26 +183,55 @@ sequenceDiagram
     BSP->>BSP: report "SMP: N cores online"
 ```
 
-**SMP v2 (current, post-TinyGo-0.40.1 migration)**: APs enter
-the TinyGo scheduler loop after per-CPU initialization (GS
-base, GDT/TSS). Each CPU has its own runqueue
-(`runqueues[cpuID()]`), systemStack, GDT, and TSS. However:
+**SMP v2 (current, post-M3 unblock landing, 2026-04-20)**:
+APs enter the TinyGo scheduler loop (`runtime.apScheduler` →
+`scheduler(false)`) after per-CPU initialization (GS base,
+GDT/TSS, IDT). Each CPU has its own runqueue
+(`runqueues[cpuID()]`), systemStack via
+`runtime.systemStackPtr`, GDT, TSS, and IDT. The configuration
+flip from `scheduler=tasks` to `scheduler=cores` landed in
+`src/target.json` (commit `68f6835`).
 
-- `stealWork()` exists in the patched runtime but is
-  **intentionally not called** from the scheduler's pop site.
-  Wiring it triggers the Ring-3 `iretq` triple-fault on APs
-  (see `impldoc/smp_deferred_and_known_issues.md §2.1`);
-  enabling it is tracked as `TODO_SMP3.md` milestone M3.
-- Only BSP runs a LAPIC timer (100 Hz). Enabling per-AP LAPIC
-  timers hits a separate ISR-depth race captured as M2 in
-  `TODO_SMP3.md` and `impldoc/smp_deferred_and_known_issues.md §2.2`.
-- IPI wakeup vector 0xFC is wired but only used for boot-phase
-  signalling in current code.
+Live features:
 
-Net effect: all goroutines currently execute on BSP (CPU 0).
-APs idle in `waitForEvents` (`sti; hlt; cli`). See
-`impldoc/smp_*.md` and `impldoc/smp_migration_overview.md` for
-the full design set and forward plan.
+- **Per-CPU runqueues**: every `scheduleTask` push targets
+  `runqueues[gooosCpuID()]`. `schedulerRunQueue()` returns the
+  caller's per-CPU queue for GC to scan.
+- **Work-stealing**: when the local queue is empty,
+  `scheduler()` calls `stealWork()` which round-robin scans
+  peer queues and pops one task (commit `aa5bb91`). Verified:
+  `ring3Wrapper: cpuID=N` with N != 0 is routinely observed
+  under `-smp 4`.
+- **Cross-CPU wakeup**: `schedulerWake()` in
+  `runtime_gooos.go` broadcasts an IPI to every online AP via
+  `gooosWakeupCPU(i)` for `i` in `[0, main.numCoresOnline)`.
+  The IPI handler (`handleWakeupIPI`) is a plain EOI; the
+  wake happens naturally by returning from `hlt` in
+  `schedulerUnlockAndWait()`.
+- **GC**: `gcLock` is a real `task.PMutex` under
+  `scheduler=cores`. `runtime.alloc` acquires it and cannot be
+  reentered from inside `runGC()` — which previously
+  deadlocked because `var markedTaskQueue task.Queue` inside
+  upstream `gc_blocks.go` was escape-analyzed to the heap.
+  Fix: `//go:noescape` on `gooos_spinlockAcquire` /
+  `gooos_spinlockRelease` in
+  `internal/task/queue.go` and `runtime/runtime_gooos.go`
+  keeps `markedTaskQueue` on the stack (commit `68f6835`).
+- **BSP remains the sole clock**: `hasSleepingCore()` returns
+  false, and only BSP runs the 100 Hz LAPIC timer. AP LAPIC
+  timer is deferred (see
+  `impldoc/smp_deferred_and_known_issues.md §2.2`); APs rely
+  entirely on the IPI wake path above, which means an AP
+  running a compute-bound goroutine cannot be preempted from
+  outside. Cooperative yield points and channel ops are
+  sufficient for the current workload.
+
+Net effect: goroutines genuinely migrate across cores. The
+shell goroutine (Ring-3 launcher) is routinely observed
+running on AP 1 or AP 3. See
+`impldoc/smp_unblock_overview.md` and sibling docs for the
+M2/M3/M4 design set and the M5 roadmap
+(`gcPauseCore` IPI + AP LAPIC timer).
 
 ## Boot-Time Checks
 

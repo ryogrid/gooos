@@ -41,62 +41,66 @@ Cross-references `impldoc/smp_overview.md` (items 1-19),
 
 ## 2. Known Issues (Blocking AP Scheduling)
 
-### 2.1 Ring-3 Triple Fault on APs
+### 2.1 Ring-3 Triple Fault on APs — RESOLVED (commit `5aea173`, 2026-04-20)
 
-**Symptom**: when an AP steals a `ring3Wrapper` goroutine via
-`stealWork()` and calls `jumpToRing3` → `iretq`, the AP
-silently triple-faults. No serial output, no panic — the CPU
-simply resets.
+**Original symptom**: when an AP stole a `ring3Wrapper`
+goroutine via `stealWork()` and called `jumpToRing3` →
+`iretq`, the AP silently triple-faulted.
 
-**Observed behavior**:
-- `ring3Wrapper` debug prints confirm: "cpuID=2,
-  stackAcquired, jumping to Ring 3" — then silence.
-- Single-CPU and `-smp 4` with stealWork disabled: shell
-  works perfectly on BSP.
-- `-smp 4` with stealWork enabled: shell goroutine stolen by
-  AP → triple fault.
+**Root cause**: APs never loaded their IDT. An AP starts with
+`IDTR = {base=0, limit=0xFFFF}` (reset default). The first
+exception on the AP — which under x86-64 `iretq` can be a
+`#GP` if any segment selector is invalid in the per-CPU GDT
+— vectored through a zero IDT, loading a zero-filled
+descriptor from address 0 and immediately triple-faulting.
+Evidence: `tmp/m4_qemu.log` shows
+`IDT=     0000000000000000 0000ffff` on the AP at the fault
+point.
 
-**Hypothesis**: the per-CPU TSS or GDT on the AP is not
-correctly configured for Ring-3 → Ring-0 transitions. When
-user code on the AP fires `int 0x80`, the CPU reads RSP0
-from the AP's TSS — if this is wrong or the TSS type bits
-are stale after `ltr`, the CPU cannot switch stacks and
-triple-faults.
+**Fix** (M4-fix, commit `5aea173`): added `idtLoadAP()` in
+`src/idt.go` (1-line wrapper around `lidt`) and invoked it
+from `src/smp.go apEntry` immediately after `gdtInitPerCPU`
+(before enabling the AP's LAPIC). Confirmed: `-smp 4` boots
+cleanly with stealWork live; shell goroutine routinely
+migrates to AP 1 or AP 3 (`ring3Wrapper: cpuID=N`).
 
-**Investigation needed**: QEMU + GDB step-through of `iretq`
-on an AP. Check: (a) AP's TR (Task Register) points at
-correct per-CPU TSS; (b) TSS type is 0x9 (available, not
-0xB busy); (c) RSP0 in AP TSS matches the ring3StackPool
-kernel stack; (d) CR3 in AP matches `proc.pml4`; (e) the
-user CS/SS selectors (0x1B/0x23) resolve correctly in the
-AP's per-CPU GDT.
+**Investigation methodology**: the issue was diagnosed using
+QEMU's `-d int,cpu_reset,guest_errors` flag (no interactive
+GDB needed) — the zeroed IDT register in the register dump
+at triple-fault was unambiguous. See
+`impldoc/smp_m4_ring3_fault.md` for the full investigation
+playbook.
 
-**Workaround**: stealWork disabled; all goroutines run on BSP.
+### 2.2 AP LAPIC Timer Causes Boot Hang — PARTIAL (racy counter fixed 2026-04-20; second-order hang deferred)
 
-### 2.2 AP LAPIC Timer Causes Boot Hang
+**Status 2026-04-20**: the global-counter race originally
+suspected as the cause has been eliminated. `incl
+gooos_in_interrupt_depth(%rip)` is gone; ISR depth is now
+per-CPU at `%gs:4`, and `interrupt.In()` in
+`runtime/interrupt/interrupt_gooos.go` reads that per-CPU
+counter while distinguishing syscall context (vector 0x80
+branch bumps a separate `SyscallDepth` at `%gs:44`, and
+`interrupt.In()` returns false when `SyscallDepth > 0` to
+unblock `task.Pause()` from syscall handlers). Commits:
+`6a3ef14`, `49b7605`, `f25f839`.
 
-**Symptom**: enabling `lapicTimerInit()` on APs causes the
-system to hang during boot under `-smp 4`. Boot stops at
-"Scheduler: TinyGo goroutines active".
+**Remaining symptom**: re-enabling `lapicTimerInit()` on APs
+*still* hangs boot under `-smp 4` after "Scheduler: TinyGo
+goroutines active". The cause is no longer the dual-counter
+race; the hang now points to a different interaction in the
+AP timer ISR dispatch path — likely a contention between the
+AP's timer-driven scheduler entry and BSP's `setupUserspace`
+flow, or a `go_interrupt_handler` split-stack interaction on
+the AP. Needs investigation under QEMU + GDB.
 
-**Root cause (suspected)**: the ISR prologue's dual-counter
-approach (`incl gooos_in_interrupt_depth(%rip)` + `incl
-%gs:4`) races on the global counter when multiple CPUs fire
-timer ISRs simultaneously. `incl` is a non-atomic
-read-modify-write on x86; two concurrent `incl` on the same
-address can lose an update, leaving the global counter
-permanently elevated.
-
-**Fix approach**: remove the global counter entirely and
-switch `interrupt.In()` to read the per-CPU `%gs:4` counter.
-This was attempted but caused "blocked inside interrupt"
-panics because syscall handlers call `task.Pause()` while
-the per-CPU ISR depth is 1 (which is correct — the goroutine
-IS in ISR context). The current fix (§1: `interrupt.In()`
-always returns false) eliminates this check, but without the
-AP timer the issue is moot.
-
-**Workaround**: AP LAPIC timer disabled; APs wake only via IPI.
+**Workaround**: AP LAPIC timer remains disabled (M2-4
+deferred). APs wake via the IPI path
+(`runtime.schedulerWake → gooosWakeupCPU` broadcast landed
+in M3-6, commit `aa5bb91`), which is sufficient for
+work-stealing to function — every `scheduleTask` push pokes
+idle APs. The consequence is that APs cannot preempt
+long-running CPU-bound goroutines; cooperative yield points
+or channel ops are required for migration.
 
 ### 2.3 IOAPIC IRQ0 Redirection Failure
 
@@ -139,7 +143,7 @@ Items from the original 19-item work plan
 |---|---|---|
 | 3 | VGA console spinlock wrapping | `vgaLock` declared, functions not wrapped (cosmetic) |
 | 4 | Serial port lock | Not implemented (cosmetic) |
-| 5 | elfSpawn AP wakeup IPI | Implemented but reverted — APs not in scheduler |
+| 5 | elfSpawn AP wakeup IPI | Done via `runtime.schedulerWake → gooosWakeupCPU` broadcast (2026-04-20, commit `aa5bb91`) |
 | 6 | IOAPIC type-2 override parsing | Not implemented |
 
 ## 5. TinyGo Runtime SMP Gaps (Remaining)
@@ -157,21 +161,25 @@ multi-CPU execution:
 
 ## 6. Priority Order for Remaining Work
 
-1. **Ring-3 triple fault on APs** (§2.1) — highest priority;
-   blocks all multi-core user execution. Requires hardware-
-   level debugging with QEMU+GDB.
+Status as of 2026-04-20 (commits `5aea173`, `68f6835`,
+`aa5bb91`): §2.1 resolved, §1 work-stealing row done,
+`scheduler=cores` live, APs executing kernel and user
+goroutines. Remaining work, in priority order:
 
-2. **AP LAPIC timer** (§2.2) — needed for AP preemption.
-   Blocked by ISR global counter race. Fix: migrate
-   `interrupt.In()` fully to per-CPU counter, which requires
-   understanding why syscall-blocking goroutines see depth=1
-   (expected behavior for gooos's ISR-hosted syscall design).
+1. **AP LAPIC timer second-order hang** (§2.2) — APs still
+   have no independent preemption source. Cooperative yield
+   points + IPI wake are enough for work-stealing to
+   function, but a compute-bound goroutine on an AP won't
+   yield and can block that AP forever. Needs QEMU+GDB
+   bisection on the remaining dispatch-path interaction.
+
+2. **GC stop-the-world** (§5) — `gcPauseCore` / `gcSignalCore`
+   are still stubs; under `scheduler=cores` this leaves a
+   concurrent-mutator window during mark. Not triggered by
+   the current test matrix; becomes important for
+   long-running SMP workloads. M5 work.
 
 3. **IOAPIC type-2 parsing** (§2.3) — independent of AP
    scheduling. Can be developed and tested under `-smp 1`.
 
 4. **VGA/serial locks** (§4) — cosmetic only; low priority.
-
-5. **GC stop-the-world** (§5) — correctness issue for
-   long-running SMP workloads. Deferred until APs actually
-   execute goroutines.

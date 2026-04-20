@@ -112,24 +112,12 @@ Closing (README + docs).
 
 ## Closing: README + doc updates + reviewer pass + final audit
 
-- [ ] **C-1. Update `impldoc/smp_deferred_and_known_issues.md` §2.1/§2.2/§5**
-  - Mark resolved items with "Resolved <date>, commit <hash>" banner per `smp_unblock_readme_update_plan.md §4`
-  - Flip §5 "work stealing" row from Dormant to Done
-  - Commit: `docs(smp): mark M2/M4 resolved + update work-stealing row`
-
-- [ ] **C-2. Update `current_impl_doc/scheduler.md` SMP-v2 paragraph**
-  - Third-pass rewrite per `smp_unblock_readme_update_plan.md §3`
-  - Commit: `docs(impl): refresh as-built scheduler.md for cores-mode + live stealWork`
-
-- [ ] **C-3. Update `README.md` progress table + known-limitations**
-  - Apply the applicable scheduler-row variant per `smp_unblock_readme_update_plan.md §2.3`
-  - Update Scheduler row `§2.2`; remove/rewrite Known-limitations bullet `§2.5`
-  - Audit greps per `§2.8`
-  - Commit: `docs(README): multi-core SMP scheduling live`
-
-- [ ] **C-4. Update `TODO_SMP3.md` tick M2/M3/M4 + trim Deferred tail**
-  - Remove `~~…~~` strike-through; flip `[ ]` → `[x]`; append commit hashes; trim rationale paragraphs
-  - Commit: `docs(smp): tick M2/M3/M4 in TODO_SMP3 after unblock landing`
+- [x] **C-1..C-4. Docs refresh** (single bundled commit, see closing commit):
+  - `impldoc/smp_deferred_and_known_issues.md` — §2.1 marked RESOLVED; §2.2 status updated to PARTIAL; §4 work-stealing row marked Done; §6 priority order re-ordered.
+  - `current_impl_doc/scheduler.md` — opening paragraph updated to `scheduler=cores`; SMP v2 paragraph rewritten to document per-CPU runqueues, live `stealWork`, IPI-broadcast `schedulerWake`, GC escape-analysis fix, and the remaining AP-LAPIC-timer deferral.
+  - `current_impl_doc/known_issues.md` — afterTicks paragraph updated to reflect both scheduler modes.
+  - `README.md` — tagline, Scheduler row, SMP row all rewritten for multi-core work-stealing as the live state.
+  - `TODO_SMP3.md` — M2 marked PARTIAL; M3 marked LANDED with per-item commit tags; M4 marked LANDED; "Deferred further" trimmed.
 
 - [ ] **C-5. Reviewer pass + CRITICAL/MAJOR fix-in**
   - `general-purpose` subagent with the brief from `hoge.md §8`
