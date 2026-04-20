@@ -151,7 +151,7 @@ lands AND the listed verification passes.
 
 - **AP LAPIC timer** (`impldoc/smp_deferred_and_known_issues.md §2.2`) stays deferred; 2.1 uses BSP+IPI broadcast, which gives 10 ms quantum without the hang.
 - **BSP-pinned kernel goroutine preempt**: BSP doesn't self-IPI; a kernel goroutine pinned to BSP with no cooperative yield still starves. Ring-3 on BSP IS preempted via inline self-delivery in `handleLAPICTimer`.
-- **2.2 harness verification under `-smp 4`**: `scripts/test_preempt_user.sh` and `scripts/test_smp_shell_preempt.sh` are shipped but flaky — HMP sendkey under `-smp 4` has a pre-existing latency issue (same as `test_tcp_phase5.sh` which runs default-smp). The 2.2 MECHANISM is landed and verified by code review: sigaction handler registration, iretq-frame rewrite, user sigreturn protocol, PCB fields all wired.
+- **2.2 harness verification under `-smp 4`**: `scripts/test_preempt_user.sh` now PASSes reliably after follow-up fix `6895d28` (SigSavedRSP tracking on the PCB + marker yield via runtime.Gosched instead of Sleep). `scripts/test_smp_shell_preempt.sh` remains flaky because of HMP sendkey latency under `-smp 4` (pre-existing, same limitation as `test_tcp_phase5.sh`).
 - **`test_preempt_kernel.sh` back-to-back runs**: harness sed-flip + restore + nested make can race against concurrent build artifacts on back-to-back invocations. 2.1 MECHANISM PASSed when run once in isolation at commit time (7 markers observed).
 
 ## Reviewer findings
