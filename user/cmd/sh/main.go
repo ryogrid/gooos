@@ -1,6 +1,10 @@
 package main
 
-import "github.com/ryogrid/gooos/user/gooos"
+import (
+	"strconv"
+
+	"github.com/ryogrid/gooos/user/gooos"
+)
 
 // Reserved fd slots used by executeCommand to save and restore
 // stdin / stdout across redirection. Picked above 2 (stdio)
@@ -28,7 +32,7 @@ func main() {
 			gooos.Println("sh: syntax error")
 			continue
 		}
-		executePipeline(p)
+		executePipeline(p, p.background)
 	}
 }
 
@@ -37,15 +41,20 @@ func main() {
 // concurrent pipes: every adjacent pair is connected by a
 // kernel chan-byte pipe (sys_pipe); each stage is Spawn'd
 // concurrently; the shell Wait's on the tail.
-func executePipeline(p pipeline) {
+//
+// When background == true (trailing & in the command line), the
+// shell spawns the stages but does NOT wait; PIDs are registered
+// in the jobs table (see user/cmd/sh/jobs.go) and reaped lazily
+// between prompts via reapBackgroundJobs(). Feature 2.4.
+func executePipeline(p pipeline, background bool) {
 	if len(p.stages) == 0 {
 		return
 	}
 	if len(p.stages) == 1 {
-		executeCmdLine(p.stages[0])
+		executeCmdLine(p.stages[0], background)
 		return
 	}
-	executeConcurrentPipe(p.stages)
+	executeConcurrentPipe(p.stages, background)
 }
 
 // executeConcurrentPipe spawns N stages connected by N-1
@@ -55,7 +64,7 @@ func executePipeline(p pipeline) {
 // ORIGINAL slot reference right after the child that
 // inherits that end is spawned. That way the final holder
 // is the child, and its processExit closes the last ref.
-func executeConcurrentPipe(stages []cmdLine) {
+func executeConcurrentPipe(stages []cmdLine, background bool) {
 	n := len(stages)
 	pids := make([]int, n)
 
@@ -93,7 +102,11 @@ func executeConcurrentPipe(stages []cmdLine) {
 		}
 
 		if isBuiltin(stages[i].argv[0]) {
-			executeCmdLine(stages[i])
+			// Built-ins always run synchronously in-process. A
+			// pipeline stage that's a builtin can't be backgrounded
+			// on its own; the ensemble background-ness applies to
+			// the externally-spawned stages.
+			executeCmdLine(stages[i], false)
 			pids[i] = -1
 		} else {
 			pid, serr := gooos.Spawn(stages[i].argv[0]+".elf", joinArgs(stages[i].argv))
@@ -130,8 +143,30 @@ func executeConcurrentPipe(stages []cmdLine) {
 	gooos.Dup2(savedStdoutFD, gooos.Stdout)
 	gooos.Close(savedStdoutFD)
 
-	// Wait on each spawned stage. Built-ins ran synchronously
-	// above with pid==-1.
+	if background {
+		// POSIX: a backgrounded pipeline registers every spawned
+		// stage (built-ins stayed foreground; their pids[i] == -1
+		// and are skipped). One completion line per stage when the
+		// reap poll catches it (impldoc/shell_background_jobs.md §9).
+		for i := 0; i < n; i++ {
+			if pids[i] < 0 {
+				continue
+			}
+			id := registerJob(pids[i], stages[i].argv[0])
+			if id < 0 {
+				gooos.Println("sh: too many background jobs; waiting on stage " +
+					strconv.Itoa(i))
+				gooos.Wait(pids[i])
+				continue
+			}
+			gooos.Println("[" + strconv.Itoa(id) + "] " +
+				strconv.Itoa(pids[i]) + " " + stages[i].argv[0])
+		}
+		return
+	}
+
+	// Foreground: wait on each spawned stage. Built-ins ran
+	// synchronously above with pid==-1.
 	for i := 0; i < n; i++ {
 		if pids[i] >= 0 {
 			gooos.Wait(pids[i])
@@ -152,7 +187,11 @@ func isBuiltin(cmd string) bool {
 // executeCmdLine applies any redirection in c, dispatches to
 // a built-in or external command, then restores the shell's
 // own stdio so the next prompt sees the console again.
-func executeCmdLine(c cmdLine) {
+//
+// When background == true, external commands are spawned via
+// gooos.Spawn + registerJob (no Wait); built-ins fall back to
+// synchronous execution (no background builtins). Feature 2.4.
+func executeCmdLine(c cmdLine, background bool) {
 	needRestore := c.stdinFile != "" || c.stdoutFile != ""
 
 	if needRestore {
@@ -191,9 +230,39 @@ func executeCmdLine(c cmdLine) {
 		gooos.Close(fd)
 	}
 
-	runCommand(c.argv)
+	if background && !isBuiltin(c.argv[0]) {
+		runCommandBackground(c.argv)
+	} else {
+		runCommand(c.argv)
+	}
 
 	restoreStdio(needRestore)
+}
+
+// runCommandBackground spawns argv[0].elf without waiting; records
+// the PID in the jobs table (see jobs.go) and prints the standard
+// `[id] pid cmd` notification. Builtins cannot be backgrounded; the
+// caller (executeCmdLine) filters them out upstream.
+func runCommandBackground(argv []string) {
+	cmd := argv[0]
+	args := joinArgs(argv)
+	pid, errno := gooos.Spawn(cmd+".elf", args)
+	if pid < 0 {
+		gooos.Println("sh: spawn failed: " + cmd + " (errno=" +
+			strconv.Itoa(errno) + ")")
+		return
+	}
+	id := registerJob(pid, cmd)
+	if id < 0 {
+		// Table full — still spawned; synthesize an immediate wait
+		// to avoid leaking the pid entirely. Reverts to foreground
+		// semantics for this one call; documented in
+		// impldoc/shell_background_jobs.md §2.3.
+		gooos.Println("sh: too many background jobs; running foreground")
+		gooos.Wait(pid)
+		return
+	}
+	gooos.Println("[" + strconv.Itoa(id) + "] " + strconv.Itoa(pid) + " " + cmd)
 }
 
 // restoreStdio undoes the dup2 dance from executeCmdLine. No-op
