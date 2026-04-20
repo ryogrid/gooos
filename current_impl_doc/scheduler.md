@@ -144,21 +144,67 @@ flowchart LR
 - Channel-backed free list keeps the pool goroutine-safe and
   lets acquires block cleanly if the pool runs dry.
 
-## Preemption (or lack thereof)
+## Preemption
 
-- **Cooperative**. The PIT fires at 100 Hz (`src/pit.go`) but
-  the ISR only increments `pitTicks`; it does not force a
-  goroutine switch. A CPU-bound goroutine that never calls
-  `Gosched()` or channel ops will starve the scheduler — this
-  is accepted for a single-CPU v1 since all kernel loops are
-  channel-driven.
+As of 2026-04-20 (features 2.1 + 2.2 landed), gooos is **preemptive**.
+
+- **Kernel goroutines** (feature 2.1) — the BSP's 100 Hz LAPIC
+  timer broadcasts a preempt IPI (vector 0xFB = `ipiPreemptVector`)
+  to every online AP. Each AP's `handlePreemptIPI`
+  (`src/goroutine_irq.go`) checks safe-points:
+  - `InterruptDepth > 1` → nested ISR, bail.
+  - `PreemptDisable > 0` → spinlock held, set `WantReschedule` and
+    bail (the spinlock asm in `src/stubs.S:437-459` bumps
+    `%gs:48 PreemptDisable` on every `spinlockAcquire`, drops on
+    `spinlockRelease` — covers both kernel Spinlock and TinyGo
+    runtime-side queue/scheduler spinlocks).
+  - `SyscallDepth > 1` → nested syscall, bail.
+  - `taskCurrent() == 0` → CPU is in scheduler loop, nothing to
+    preempt; bail.
+  Otherwise `runtime.Gosched()` is called directly. The preempt
+  vector 0xFB is treated like 0x80 by `src/isr.S` — both prologue
+  and epilogue bump+drop `SyscallDepth` so `interrupt.In()`
+  returns false during the preempt handler and `task.Pause()`
+  from Gosched is allowed. The 15 GPRs and hardware iretq frame
+  pushed on ISR entry sit untouched at the top of the task's
+  kernel stack while the task is paused; they're correctly popped
+  + iretq-ed by the normal ISR epilogue when the scheduler
+  eventually resumes the task. Enabled via
+  `const preemptEnabled = true` in `src/preempt_config.go`.
+- **BSP self-delivery**. `broadcastPreemptIPI` skips the sending
+  CPU (no self-IPI). So if a Ring-3 user goroutine is running on
+  the BSP when its own timer fires, the BSP timer handler
+  (`src/lapic_timer.go`) performs an inline `maybeDeliverSignal`
+  against the interrupted Ring-3 frame. Kernel BSP-pinned
+  goroutines are NOT self-preempted (bail per the taskCurrent
+  safe-point above); the cooperative yield path remains for them.
+- **User goroutines** (feature 2.2) — kernel-delivered SIGALRM via
+  trap-frame rewrite. When a preempt ISR fires while a Ring-3
+  context (`CS.RPL == 3`) is running AND the process has registered
+  a SIGALRM handler via `sys_sigaction` #35 AND the 10-tick
+  quantum has expired (tracked per-process by
+  `maybeSignalUserPreempt` in `src/user_signal.go`), the kernel
+  pushes a 13-word `sigFrame` (magic `0xDEADBEEF` + saved
+  RIP/RSP/RFLAGS/caller-saved GPRs) onto the user stack and
+  rewrites `frame.RIP` to the user handler, `frame.RSP` to just
+  below the sigFrame. When iretq returns, user code starts at the
+  handler. The handler MUST tail-call `gooos.Sigreturn()`
+  (`user/gooos/signal.go`) which issues `sys_sigreturn` #36; the
+  kernel restores the saved context from the sigFrame on the user
+  stack and iretq-s back to the interrupted RIP.
 - **Idle path**: TinyGo's scheduler calls `sleepTicks(timeLeft)`
   when the runqueue is empty and a timer is pending. Our
   kernel `sleepTicks` (`src/runtime_gooos.go` via the patch) is
-  a `sti; hlt; cli` busy loop — NOT a parking primitive. That
-  matters for syscall handlers: parking via `time.Sleep` from
+  a `sti; hlt; cli` busy loop — NOT a parking primitive. Still
+  relevant for syscall handlers: parking via `time.Sleep` from
   inside a handler holds the CPU, so gooos uses `afterTicks`
   (see `ipc.md`) instead.
+- **Known limitations**: BSP-pinned kernel goroutines with no
+  cooperative yield still starve (BSP doesn't self-IPI for kernel
+  preempt; only BSP self-delivery to Ring 3 is wired). AP LAPIC
+  timer remains deferred; quantum is bounded by BSP tick + IPI
+  latency. See `impldoc/preempt_kernel_goroutines.md §Future:
+  per-CPU AP timer`.
 
 ## SMP v1 (`src/smp.go`)
 
