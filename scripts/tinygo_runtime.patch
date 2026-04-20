@@ -1,8 +1,8 @@
 diff --git a/src/internal/task/queue.go b/src/internal/task/queue.go
-index 7242c4e3..2e799584 100644
+index 7242c4e3..5157b687 100644
 --- a/src/internal/task/queue.go
 +++ b/src/internal/task/queue.go
-@@ -4,16 +4,32 @@ import "runtime/interrupt"
+@@ -4,16 +4,34 @@ import "runtime/interrupt"
  
  const asserts = false
  
@@ -16,9 +16,11 @@ index 7242c4e3..2e799584 100644
 +// and the spinlock becomes redundant but harmless.
 +//
 +//go:linkname gooos_spinlockAcquire spinlockAcquire
++//go:noescape
 +func gooos_spinlockAcquire(lock *uint32)
 +
 +//go:linkname gooos_spinlockRelease spinlockRelease
++//go:noescape
 +func gooos_spinlockRelease(lock *uint32)
 +
 +// Queue is a FIFO container of tasks. SMP v2: each queue has a
@@ -38,7 +40,7 @@ index 7242c4e3..2e799584 100644
  		unlockAtomics(mask)
  		panic("runtime: pushing a task to a queue with a non-nil Next pointer")
  	}
-@@ -25,14 +41,17 @@ func (q *Queue) Push(t *Task) {
+@@ -25,14 +43,17 @@ func (q *Queue) Push(t *Task) {
  	if q.head == nil {
  		q.head = t
  	}
@@ -57,7 +59,7 @@ index 7242c4e3..2e799584 100644
  		unlockAtomics(mask)
  		return nil
  	}
-@@ -41,6 +60,7 @@ func (q *Queue) Pop() *Task {
+@@ -41,6 +62,7 @@ func (q *Queue) Pop() *Task {
  		q.tail = nil
  	}
  	t.Next = nil
@@ -65,7 +67,7 @@ index 7242c4e3..2e799584 100644
  	unlockAtomics(mask)
  	return t
  }
-@@ -48,6 +68,8 @@ func (q *Queue) Pop() *Task {
+@@ -48,6 +70,8 @@ func (q *Queue) Pop() *Task {
  // Append pops the contents of another queue and pushes them onto the end of this queue.
  func (q *Queue) Append(other *Queue) {
  	mask := lockAtomics()
@@ -74,7 +76,7 @@ index 7242c4e3..2e799584 100644
  	if q.head == nil {
  		q.head = other.head
  	} else {
-@@ -55,13 +77,17 @@ func (q *Queue) Append(other *Queue) {
+@@ -55,13 +79,17 @@ func (q *Queue) Append(other *Queue) {
  	}
  	q.tail = other.tail
  	other.head, other.tail = nil, nil
@@ -173,6 +175,34 @@ index d252b1c5..5e20bca8 100644
 -	return systemStack
 +	return *runtime_systemStackPtr()
  }
+diff --git a/src/internal/task/task_stack_multicore.go b/src/internal/task/task_stack_multicore.go
+index 65cf3a00..99147a7b 100644
+--- a/src/internal/task/task_stack_multicore.go
++++ b/src/internal/task/task_stack_multicore.go
+@@ -6,8 +6,21 @@ import "runtime/interrupt"
+ 
+ // Current returns the current active task.
+ //
+-//go:linkname Current runtime.currentTask
+-func Current() *Task
++// gooos patch: upstream declares Current as a body-less function with
++// //go:linkname Current runtime.currentTask. Under TinyGo 0.40.1 with
++// the gooos build configuration, that forward-decl pattern doesn't
++// resolve (linker reports "undefined symbol: internal/task.Current"),
++// because TinyGo's DCE pass drops runtime.currentTask when no direct
++// caller exists in the same IR module. Give Current a real body that
++// calls the linkname target explicitly — the compiler/linker keeps
++// the symbol alive and callers get the correct dispatch.
++//
++//go:linkname runtime_currentTask runtime.currentTask
++func runtime_currentTask() *Task
++
++func Current() *Task {
++	return runtime_currentTask()
++}
+ 
+ // Pause suspends the current task and returns to the scheduler.
+ // This function may only be called when running on a goroutine stack, not when running on the system stack or in an interrupt.
 diff --git a/src/internal/task/task_stack_unicore.go b/src/internal/task/task_stack_unicore.go
 index b4425de3..4bfe5af9 100644
 --- a/src/internal/task/task_stack_unicore.go
@@ -355,10 +385,10 @@ index 00000000..8d645459
 +func In() bool            { return false }
 diff --git a/src/runtime/runtime_gooos.go b/src/runtime/runtime_gooos.go
 new file mode 100644
-index 00000000..1b031e65
+index 00000000..fc917ecc
 --- /dev/null
 +++ b/src/runtime/runtime_gooos.go
-@@ -0,0 +1,168 @@
+@@ -0,0 +1,272 @@
 +//go:build gooos && baremetal && kernelspace
 +
 +// gooos-local runtime bodies for bare-metal x86_64 Ring 0.
@@ -476,9 +506,11 @@ index 00000000..1b031e65
 +const numCPU = 17
 +
 +//go:linkname gooos_spinlockAcquire spinlockAcquire
++//go:noescape
 +func gooos_spinlockAcquire(lock *uint32)
 +
 +//go:linkname gooos_spinlockRelease spinlockRelease
++//go:noescape
 +func gooos_spinlockRelease(lock *uint32)
 +
 +// gooosSpinLock is the lock type consumed by the upstream
@@ -511,6 +543,13 @@ index 00000000..1b031e65
 +//go:nosplit
 +func currentCPU() uint32 { return gooosCpuID() }
 +
++// Keep currentTask (scheduler_cores.go:293) alive against TinyGo's
++// DCE. It is called only via the task_stack_multicore.go linkname
++// `Current -> runtime.currentTask`, which the linker's dead-code
++// pass can drop on our build even though RP2 keeps it through other
++// reachability. Forcing a package-level reference pins the symbol.
++var _ = currentTask
++
 +// gcPauseCore is called by gc_stack_cores.go's gcMarkReachable
 +// to stop every peer core before scanning. M3 stub: returns
 +// immediately. M5 replaces with IPI + per-CPU ack-flag spin.
@@ -527,6 +566,101 @@ index 00000000..1b031e65
 +//go:linkname gcResumeCore runtime.gcResumeCore
 +//go:nosplit
 +func gcResumeCore(cpu uint32) { /* M3 stub; full impl at M5 */ }
++
++// ---- Multicore-scheduler target primitives (RP2-style) -----------
++//
++// Upstream scheduler_cores.go + gc_stack_cores.go reference a set
++// of target-local primitives — RP2 provides them via arm.Asm("wfe")
++// / arm.Asm("sev"). The gooos equivalent uses hlt (already a no-op
++// on no-events) and the existing IPI path (gooosWakeupCPU) for
++// cross-CPU nudges. Most are no-ops at M3 because gooos's BSP-
++// driven scheduling already handles the coordination the RP2
++// multicore scheduler needed. Future M3-6 / M5 may revisit.
++
++//go:nosplit
++func spinLoopWait() {
++	// Wait for the next interrupt-triggered wake event. gooos's hlt
++	// semantics match RP2's wfe for this purpose: halt until the
++	// next IPI/LAPIC-timer wake.
++	gooos_sti()
++	gooos_hlt()
++	gooos_cli()
++}
++
++//go:nosplit
++func hasSleepingCore() bool {
++	// gooos APs idle in waitForEvents after bspBootDone; there is
++	// no "sleeping-core" delegate protocol at M3 (BSP owns the
++	// clock). Return false so scheduler_cores.go always handles the
++	// clock on the caller (which is always BSP under current tests).
++	return false
++}
++
++//go:nosplit
++func sleepTicksMulticore(d timeUnit) {
++	// Same as sleepTicks; the "interruptible" part of the RP2
++	// implementation is irrelevant because hasSleepingCore == false.
++	sleepTicks(d)
++}
++
++//go:nosplit
++func interruptSleepTicksMulticore(wakeup timeUnit) {
++	// No-op: nobody is sleepTicksMulticore-sleeping under M3.
++}
++
++func schedulerUnlockAndWait() {
++	schedulerLock.Unlock()
++	gooos_sti()
++	gooos_hlt()
++	gooos_cli()
++	schedulerLock.Lock()
++}
++
++//go:nosplit
++func schedulerWake() {
++	// gooos cross-CPU wake is via IPI (src/ipi.go gooosWakeupCPU),
++	// which chan.go / scheduleTask do NOT currently invoke because
++	// stealWork is still gated (M3-6 wires it). This function is
++	// called from scheduleTask's RunStatePaused branch; at M3 it
++	// can be a no-op.
++}
++
++//go:nosplit
++func startSecondaryCores() {
++	// gooos starts APs from main.go via smpInit() before the TinyGo
++	// runtime's run() function is entered. By the time this is
++	// called from run(), APs are already bootstrapped and spinning
++	// on bspBootDone in apEntry. So no work to do here.
++}
++
++// gc_stack_cores.go references these too.
++
++//go:nosplit
++func gcSignalCore(core uint32) {
++	// M3 stub: gooos's GC doesn't coordinate peer cores yet (stop-
++	// the-world will land in M5 via gcPauseCore IPI). Safe because
++	// with stealWork dormant, APs don't hold goroutine stacks that
++	// GC must scan.
++}
++
++// coreStackTop returns the highest address of the given core's
++// system stack. RP2 has distinct linker symbols per core
++// (stackTopSymbol / stack1TopSymbol); gooos currently uses a
++// single _stack_top for BSP and per-AP stacks allocated from the
++// heap (src/smp.go). At M3 the GC-stack-scan paths that consume
++// this function are gated by hasSleepingCore / gcSignalCore stubs,
++// so returning 0 for core > 0 is safe — those call paths never
++// fire under M3.
++//
++//go:nosplit
++func coreStackTop(core uint32) uintptr {
++	if core == 0 {
++		return stackTop
++	}
++	// AP stack tops are not linker-symbol-exposed; M5 will revisit
++	// when GC starts peer-scanning AP stacks.
++	return 0
++}
 diff --git a/src/runtime/runtime_gooos_user.go b/src/runtime/runtime_gooos_user.go
 new file mode 100644
 index 00000000..3102f251
@@ -825,7 +959,7 @@ index 2c2bf099..c94723b0 100644
  			if schedulerDebug {
  				println("  sleeping...", sleepQueue, uint(timeLeft))
 diff --git a/src/runtime/scheduler_cores.go b/src/runtime/scheduler_cores.go
-index e45eaf39..07a222f9 100644
+index e45eaf39..297ec954 100644
 --- a/src/runtime/scheduler_cores.go
 +++ b/src/runtime/scheduler_cores.go
 @@ -24,8 +24,16 @@ var cpuTasks [numCPU]*task.Task
@@ -904,7 +1038,26 @@ index e45eaf39..07a222f9 100644
  }
  
  // Pause the current task for a given time.
-@@ -162,8 +200,11 @@ func run() {
+@@ -145,7 +183,17 @@ func run() {
+ 
+ 		// After package initializers have finished, start all the other cores.
+ 		startSecondaryCores()
+-		secondaryCoresStarted = true
++		// gooos SMP v2: keep secondaryCoresStarted = false at M3.
++		// The GC stop-the-world protocol in gc_stack_cores.go uses this
++		// flag to decide whether to pause peer cores before scanning —
++		// true means "call gcPauseCore(i) for each peer and wait for
++		// gcScanState to reach numCPU". gcPauseCore is a no-op stub at
++		// M3 (real IPI impl lands at M5), so setting this to true would
++		// deadlock GC in a busy-wait loop. Leaving it false makes GC
++		// take the single-core scan path, which is safe because
++		// stealWork is still dormant: APs don't hold goroutine stacks
++		// that would need scanning.
++		// secondaryCoresStarted = true  // deferred to M5
+ 
+ 		// Run main.main.
+ 		callMain()
+@@ -162,8 +210,11 @@ func run() {
  
  func scheduler(_ bool) {
  	for mainExited.Load() == 0 {

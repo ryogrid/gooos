@@ -64,11 +64,7 @@ Closing (README + docs).
 
 ## M3 — scheduler=cores promotion + stealWork wire-up (per `impldoc/smp_m3_cores_promotion.md`)
 
-- [ ] **M3-1. Wave 2 runtime declarations (`numCPU`, `gooosSpinLock`, lock vars, `currentCPU`, `gcPauseCore` stub)**
-  - Patched `~/.local/tinygo0.40.1/src/runtime/runtime_gooos.go`: add declarations per `smp_m3_cores_promotion.md §4.1`
-  - Regenerate `scripts/tinygo_runtime.patch`
-  - Verify: `make build` still clean (declarations unused until M3-4); `grep 'numCPU = 17\|atomicsLock\|futexLock' runtime_gooos.go` all present
-  - Commit: `build(toolchain): Wave 2 runtime declarations for scheduler=cores`
+- [x] **M3-1. Wave 2 runtime declarations (`numCPU`, `gooosSpinLock`, lock vars, `currentCPU`, `gcPauseCore` stub)** (commit `5fd015f`)
 
 - [ ] **M3-2. `task_stack_amd64.go` build-tag widening + `runtime_systemStackPtr` linkname**
   - Widen build tag to `(scheduler.tasks || scheduler.cores) && amd64 && !windows`
@@ -90,9 +86,10 @@ Closing (README + docs).
   - Verify: `make build` clean; still in tasks mode so cores file not yet active
   - Commit: `build(toolchain): scheduler_cores.go per-CPU runqueues + stealWork + apScheduler`
 
-- [ ] **M3-4. Flip `src/target.json` `"tasks"` → `"cores"`**
-  - Single-line edit; first commit where cores mode actually activates
-  - Verify: `make build` clean under cores mode; `make run-smp` boots to shell (stealWork still dormant per M3-6); atomics smoke OK (boot doesn't hang); `scripts/test_net.sh` + `test_tcp_phase5.sh` PASS
+- [x] **M3-4. Flip `src/target.json` `"tasks"` → `"cores"`**
+  - Single-line edit at `src/target.json:9`; first commit where cores mode actually activates.
+  - Also folded in: `//go:noescape` annotations on `gooos_spinlockAcquire`/`gooos_spinlockRelease` in both `internal/task/queue.go` and `runtime/runtime_gooos.go`. Required because without them, escape analysis inside `Queue.Push` conservatively marks `&q.lock` (and therefore `q` itself) as escaping, which caused `var markedTaskQueue task.Queue` inside upstream `gc_blocks.go runGC` to be heap-allocated via `runtime.alloc()`. `alloc()` takes `gcLock`, already held by the enclosing `GC()`, so the mutex re-entered and `Pause()`d the goroutine — the CPU ended up idling in the scheduler hlt-loop at RIP=0x100155 (ret-after-hlt, confirmed via `-d int,cpu_reset,guest_errors`). Under `-smp 1` the symptom was a GC that printed `G1G2R1R2` then hung.
+  - Verify: `make build` clean under cores mode; `-smp 1` and `-smp 4` both boot to shell; `scripts/test_net.sh` + `test_tcp_phase{1..5}.sh` all PASS.
   - Commit: `build(target): flip scheduler to cores`
 
 - [ ] **M3-5. `scripts/patch_tinygo_runtime.sh` Wave 2 post-conditions**
