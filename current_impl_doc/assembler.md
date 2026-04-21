@@ -34,7 +34,7 @@ For each mnemonic, this document explains what the abbreviation means and what r
 - **lgdt** — *Load Global Descriptor Table*: loads GDTR from memory.
 - **lidt** — *Load Interrupt Descriptor Table*: loads IDTR from memory.
 - **ljmp** — *Long JuMP*: far jump (segment:offset), used in mode/segment transitions.
-- **ljmpl** — *Long JuMP, long-form variant*: explicit-size far jump variant in assembler syntax.
+- **ljmpl** — *Long JuMP with 32-bit operand size*: explicit-size far jump variant in assembler syntax.
 - **lock** — *LOCK prefix*: makes read-modify-write operation atomic across cores.
 - **lretq** — *Long RETurn Quadword*: far return; pops RIP and CS in long mode.
 - **ltr** — *Load Task Register*: loads TR with a TSS selector.
@@ -44,7 +44,7 @@ For each mnemonic, this document explains what the abbreviation means and what r
 - **movq** — *MOVe Quadword*: copies 64-bit data.
 - **movsb** — *MOVe String Byte*: string instruction copying byte(s), typically under `rep`.
 - **movw** — *MOVe Word*: copies 16-bit data.
-- **movzbl** — *MOVe with Zero-extend Byte to Doubleword*: loads byte and zero-extends to doubleword (32-bit).
+- **movzbl** — *MOVe with Zero-extend Byte to Long (32-bit)*: loads byte and zero-extends to 32-bit.
 - **orl** — *OR Long*: bitwise-OR on 32-bit operands.
 - **orq** — *OR Quadword*: bitwise-OR on 64-bit operands.
 - **outb** — *OUT Byte*: writes one byte to an I/O port.
