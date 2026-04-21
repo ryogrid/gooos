@@ -183,9 +183,6 @@ func netDiag() {
 		" netRxFrames=" + utoa(s.NetRxFrames) +
 		" pitTicks=" + utoa(pitTicks))
 	serialPrintln("Sched: afterTicksCalls=" + utoa(afterTicksCalls))
-	serialPrintln("KBD: irqs=" + utoa(kbdIRQCount) +
-		" pumpDrained=" + utoa(kbdPumpDrainCount) +
-		" wakeupIPIs=" + utoa(wakeupIPICount))
 	tcpDiag()
 	serialPrintln("=== end ===")
 }

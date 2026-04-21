@@ -90,16 +90,9 @@ func keyboardInit() {}
 // from port 0x60, packs event bytes, and publishes into the
 // gooosKbdRing via keyboardIRQSend. Never blocks, never allocates.
 //
-// kbdIRQCount is incremented on every PS/2 keyboard ISR entry (IRQ1).
-// Exposed in netDiag for cross-checking under -smp > 1 where the
-// keyboard-to-shell chain spans BSP IRQ → keyboardPump → keyboardCh
-// → shell's ring3Wrapper on an AP.
-var kbdIRQCount uint64
-
 //go:nosplit
 func handleKeyboard(vector uint64) {
 	scancode := inb(kbdDataPort)
-	kbdIRQCount++
 	if ioapicActive {
 		lapicSendEOI()
 	} else {

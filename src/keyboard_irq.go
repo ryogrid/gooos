@@ -60,12 +60,6 @@ func keyboardIRQRecv() (uint32, bool) {
 	return event, true
 }
 
-// kbdPumpDrainCount is incremented every time keyboardPump successfully
-// drains an event from the ring and forwards it to keyboardCh.
-// Exposed in netDiag to distinguish "IRQs not firing" from "ring not
-// being drained" under -smp > 1.
-var kbdPumpDrainCount uint64
-
 // keyboardPump forwards ring events into keyboardCh. It yields via
 // runtime.Gosched on empty; no need for sti+hlt parking in v1.
 func keyboardPump() {
@@ -73,7 +67,6 @@ func keyboardPump() {
 	for {
 		ev, ok := keyboardIRQRecv()
 		if ok {
-			kbdPumpDrainCount++
 			keyboardCh <- ev
 			continue
 		}
