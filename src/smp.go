@@ -269,6 +269,10 @@ func apEntry(apIndex uint64) {
 	// The BSP does this in smpInit; APs must do it themselves.
 	svr := lapicRead(lapicRegSVR)
 	lapicWrite(lapicRegSVR, svr|(1<<8)|0xFF)
+	// Latch APICID only after LAPIC software-enable. Capturing earlier
+	// (inside percpuInitAP) can read as 0 on some boots, which then
+	// makes wakeup/preempt IPI send paths skip this AP forever.
+	percpuLatchAPICIDCurrent()
 
 	// Wait for BSP to finish LAPIC timer calibration.
 	for lapicCalibratedInitCnt == 0 {

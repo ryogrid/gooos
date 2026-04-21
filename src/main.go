@@ -373,6 +373,15 @@ func main() {
 	vgaWriteLine(12, "GDT: Ring 3 + TSS loaded")
 	serialPrintln("GDT: Ring 3 + TSS loaded")
 
+	// Register IPI handlers before enabling any preempt broadcast
+	// source. If vector 0xFB fires before registration, the generic
+	// dispatcher does not send LAPIC EOI and interrupt delivery can
+	// stall after the first tick.
+	registerHandler(ipiWakeupVector, handleWakeupIPI)
+	serialPrintln("IPI: wakeup handler registered at vector 0xFC")
+	registerHandler(ipiPreemptVector, handlePreemptIPI)
+	serialPrintln("IPI: preempt handler registered at vector 0xFB")
+
 	// Calibrate the LAPIC timer using PIT as reference, then start
 	// the BSP's LAPIC timer at 100 Hz and register the handler.
 	registerHandler(lapicTimerVector, handleLAPICTimer)
@@ -407,13 +416,6 @@ func main() {
 			}
 		}()
 	}
-
-	// Register IPI handlers before IOAPIC (which enables interrupt
-	// delivery to APs).
-	registerHandler(ipiWakeupVector, handleWakeupIPI)
-	serialPrintln("IPI: wakeup handler registered at vector 0xFC")
-	registerHandler(ipiPreemptVector, handlePreemptIPI)
-	serialPrintln("IPI: preempt handler registered at vector 0xFB")
 
 	// IOAPIC initialization disabled: QEMU's IOAPIC IRQ0
 	// redirection does not deliver PIT timer interrupts correctly
@@ -566,6 +568,43 @@ func main() {
 		serialPrintln("preempt_probe: auto-launching userpreempt.elf")
 		go func() {
 			_, _ = elfSpawn("userpreempt.elf", "", nil)
+		}()
+	}
+
+	if preemptEnabled && runSMPShellPreemptProbe {
+		// Feature 2.3 harness auto-launch — spawn cpuhog.elf and
+		// markerprint.elf without shell sendkey injection.
+		serialPrintln("preempt_probe: waiting for AP launcher for cpuhog+markerprint")
+		n := uint32(numCoresOnline)
+		if n == 0 {
+			n = 1
+		}
+		for i := uint32(0); i < n; i++ {
+			serialPrintln("preempt_probe: apicid cpu=" + utoa(uint64(i)) +
+				" id=" + utoa(uint64(perCPUBlocks[i].APICID)))
+		}
+		go func() {
+			waited := 0
+			for {
+				c := cpuID()
+				if c != 0 || waited >= 200 {
+					if c == 0 {
+						serialPrintln("preempt_probe: AP launcher timeout, fallback cpu=0")
+					}
+					// Give boot shell setup a short head start to avoid
+					// startup races between multiple concurrent elfSpawn.
+					for i := 0; i < 50; i++ {
+						<-afterTicks(1)
+					}
+					serialPrintln("preempt_probe: launching cpuhog+markerprint from cpu=" +
+						utoa(uint64(c)))
+					_, _ = elfSpawn("markerprint.elf", "", nil)
+					_, _ = elfSpawn("cpuhog.elf", "", nil)
+					return
+				}
+				waited++
+				<-afterTicks(1)
+			}
 		}()
 	}
 

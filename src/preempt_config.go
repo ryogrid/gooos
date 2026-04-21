@@ -30,3 +30,9 @@ const runPreemptProbe = false
 // doesn't need HMP sendkey (which is flaky under -smp > 1). Flipped
 // by that harness via the same sed pattern as runPreemptProbe.
 const runUserPreemptProbe = false
+
+// runSMPShellPreemptProbe gates auto-loading of cpuhog.elf and
+// markerprint.elf from bspBootDone. This bypasses shell-driving via
+// HMP sendkey, which is flaky under -smp > 1 and can cause false
+// negatives in scripts/test_smp_shell_preempt.sh.
+const runSMPShellPreemptProbe = false

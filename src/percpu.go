@@ -20,16 +20,16 @@ const ia32GSBASE = 0xC0000101
 // its own instance. Fields accessed from assembly must have stable
 // byte offsets documented below.
 type PerCPU struct {
-	CPUIndex       uint32  // offset 0:  CPU index (0 = BSP)
-	InterruptDepth uint32  // offset 4:  ISR nesting counter (%gs:4)
-	SystemStack    uintptr // offset 8:  scheduler stack for TinyGo
-	TSSPtr         uintptr // offset 16: pointer to this CPU's TSS
-	APICID         uint32  // offset 24: LAPIC APIC ID
-	WantReschedule uint32  // offset 28: timer preemption flag
-	CurrentPML4    uintptr // offset 32: CR3 of current goroutine
-	CurrentPoolIdx int32   // offset 40: ring3 pool slot (-1 if kernel)
-	SyscallDepth   uint32  // offset 44: syscall-dispatch depth (%gs:44)
-	PreemptDisable uint32  // offset 48: spinlock-held / no-preempt nesting depth (%gs:48)
+	CPUIndex       uint32   // offset 0:  CPU index (0 = BSP)
+	InterruptDepth uint32   // offset 4:  ISR nesting counter (%gs:4)
+	SystemStack    uintptr  // offset 8:  scheduler stack for TinyGo
+	TSSPtr         uintptr  // offset 16: pointer to this CPU's TSS
+	APICID         uint32   // offset 24: LAPIC APIC ID
+	WantReschedule uint32   // offset 28: timer preemption flag
+	CurrentPML4    uintptr  // offset 32: CR3 of current goroutine
+	CurrentPoolIdx int32    // offset 40: ring3 pool slot (-1 if kernel)
+	SyscallDepth   uint32   // offset 44: syscall-dispatch depth (%gs:44)
+	PreemptDisable uint32   // offset 48: spinlock-held / no-preempt nesting depth (%gs:48)
 	_pad           [12]byte // pad to 64-byte cache line boundary
 }
 
@@ -103,12 +103,30 @@ func percpuInitBSPLate() {
 // percpuInitAP initializes per-CPU storage for an AP.
 // Called from apEntry before any other per-CPU work.
 //
+// APICID is intentionally not latched here: APs call this before
+// their LAPIC software-enable write in apEntry, and reading
+// lapicRegID too early can yield 0 on some boots. The AP latches
+// APICID after LAPIC enable via percpuLatchAPICIDCurrent.
+//
 //go:nosplit
 func percpuInitAP(apIndex uint64) {
 	idx := apIndex + 1 // BSP is 0; first AP is 1
 	perCPUBlocks[idx].CPUIndex = uint32(idx)
-	perCPUBlocks[idx].APICID = lapicRead(lapicRegID) >> 24
+	perCPUBlocks[idx].APICID = 0
 	perCPUBlocks[idx].CurrentPoolIdx = -1
 	addr := uint64(uintptr(unsafe.Pointer(&perCPUBlocks[idx])))
 	wrmsr(ia32GSBASE, addr)
+}
+
+// percpuLatchAPICIDCurrent captures the current CPU's LAPIC ID into
+// its per-CPU block. Called on APs only after LAPIC software-enable
+// has been written in apEntry.
+//
+//go:nosplit
+func percpuLatchAPICIDCurrent() {
+	idx := cpuID()
+	if idx >= maxCPUs {
+		return
+	}
+	perCPUBlocks[idx].APICID = lapicRead(lapicRegID) >> 24
 }

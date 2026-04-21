@@ -33,6 +33,36 @@ func lapicSendIPI(targetAPICID uint8, vector uint8) {
 	lapicWaitICR()
 }
 
+// lapicBroadcastIPI sends a fixed-delivery IPI using destination
+// shorthand, avoiding per-CPU APIC-ID targeting.
+//
+// includeSelf=true  -> all including self   (dest shorthand 0b10)
+// includeSelf=false -> all excluding self   (dest shorthand 0b11)
+//
+//go:nosplit
+func lapicBroadcastIPI(vector uint8, includeSelf bool) {
+	// Destination shorthand occupies ICR low bits 18-19.
+	var shorthand uint32 = 0x000C0000 // all excluding self
+	if includeSelf {
+		shorthand = 0x00080000 // all including self
+	}
+	// With destination shorthand, ICR high destination field is ignored.
+	lapicWrite(lapicRegICRH, 0)
+	lapicWrite(lapicRegICRL, uint32(vector)|0x00004000|shorthand)
+	lapicWaitICR()
+}
+
+// lapicSendSelfIPI queues a fixed-delivery self IPI using destination
+// shorthand "self" (bits 19:18 = 01). Used from timer ISR context to
+// request a local preempt interrupt without waiting in ICR polling.
+//
+//go:nosplit
+func lapicSendSelfIPI(vector uint8) {
+	const selfShorthand uint32 = 0x00040000
+	lapicWrite(lapicRegICRH, 0)
+	lapicWrite(lapicRegICRL, uint32(vector)|0x00004000|selfShorthand)
+}
+
 // wakeFirstSeen[cpu] is flipped to 1 the first time handleWakeupIPI
 // enters on that CPU. Exposed via netDiag as a 4-bit bitmap. Plain
 // [maxCPUs]uint32 — NOT a counter, NOT a u64: the 082051f attempt
@@ -78,9 +108,14 @@ func gooosWakeupCPU(cpuIdx uint32) {
 	if cpuIdx >= maxCPUs {
 		return
 	}
-	apicID := perCPUBlocks[cpuIdx].APICID
-	if apicID == perCPUBlocks[cpuID()].APICID {
+	if cpuIdx == cpuID() {
 		return // don't IPI self
+	}
+	apicID := perCPUBlocks[cpuIdx].APICID
+	// AP slots start as APICID=0 until AP bring-up latches the real ID.
+	// cpuIdx=0 is BSP and may legitimately have APICID 0.
+	if cpuIdx != 0 && apicID == 0 {
+		return
 	}
 	lapicSendIPI(uint8(apicID), ipiWakeupVector)
 }
@@ -93,27 +128,8 @@ func gooosWakeupCPU(cpuIdx uint32) {
 //
 //go:nosplit
 func broadcastPreemptIPI() {
-	n := uint32(numCoresOnline)
-	if n == 0 {
-		n = 1
-	}
-	me := cpuID()
-	for i := uint32(0); i < n; i++ {
-		if i == me {
-			continue
-		}
-		apicID := perCPUBlocks[i].APICID
-		// APs fill in their APICID from inside percpuInitAP. If the
-		// slot is still 0, the AP has not reported yet — skip this
-		// tick (the next one will retry once the AP has run). The
-		// OLD `if apicID == meAPIC` self-skip guard was BROKEN here:
-		// meAPIC is 0 for BSP, and every un-initialized AP slot is
-		// also 0, so the guard filtered out EVERY AP and no IPI was
-		// ever sent. See Step 3 diagnosis for the keyboard-under-smp4
-		// bug.
-		if apicID == 0 {
-			continue
-		}
-		lapicSendIPI(uint8(apicID), ipiPreemptVector)
-	}
+	// Use LAPIC destination shorthand broadcast instead of per-CPU
+	// APIC-ID targeting. This avoids false skips on environments where
+	// AP APIC IDs are not yet latched in perCPUBlocks during early boot.
+	lapicBroadcastIPI(ipiPreemptVector, false)
 }

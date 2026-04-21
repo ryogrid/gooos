@@ -18,6 +18,11 @@ const lapicTimerVector = 0xFE
 // read by all APs.
 var lapicCalibratedInitCnt uint32
 
+// preemptBroadcastFirst is flipped when BSP first executes the
+// preempt-broadcast path. Diagnostic marker for 2.3 investigation.
+var preemptBroadcastFirst uint32
+var preemptBroadcastCount uint32
+
 // lapicTimerCalibrate measures the LAPIC timer decrement rate
 // using the PIT (already running at 100 Hz) as a reference.
 // Must be called on the BSP after pitInit() and smpInit()
@@ -85,17 +90,23 @@ func handleLAPICTimer(vector uint64) {
 		for i := uint32(0); i < uint32(numCoresOnline); i++ {
 			maybeSignalUserPreempt(i)
 		}
+		if preemptBroadcastFirst == 0 {
+			preemptBroadcastFirst = 1
+			serialPrintln("MARKER: M9 preempt:bcast-first")
+		}
+		preemptBroadcastCount++
+		if preemptBroadcastCount == 10 {
+			serialPrintln("MARKER: M18 preempt:bcast-10")
+		}
 		broadcastPreemptIPI()
-		// BSP self-delivery: broadcastPreemptIPI skips the sending
-		// CPU, so if a Ring-3 user goroutine is running on BSP right
-		// now we rewrite its iretq frame in place from inside this
-		// timer ISR — otherwise a tight-loop user goroutine on BSP
-		// can never be preempted.
+		lapicSendSelfIPI(ipiPreemptVector)
+		// BSP fast-path: if a Ring-3 user goroutine is running on BSP
+		// now, attempt signal delivery via in-place iretq-frame rewrite.
 		framePtr := lastFramePtrs[idx]
 		if framePtr != 0 {
 			frame := (*SyscallFrame)(unsafe.Pointer(framePtr))
 			if frame.CS&3 == 3 {
-				maybeDeliverSignal(frame)
+				_ = maybeDeliverSignal(frame)
 			}
 		}
 	}

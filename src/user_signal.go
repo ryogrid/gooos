@@ -263,19 +263,19 @@ func procByPoolIdx(idx int) *Process {
 // Called with interrupt.Disable already in effect (we're mid-ISR).
 //
 //go:nosplit
-func maybeDeliverSignal(frame *SyscallFrame) {
+func maybeDeliverSignal(frame *SyscallFrame) bool {
 	proc := currentProc()
 	if proc == nil {
-		return
+		return false
 	}
 	if proc.SigAlrmHandler == 0 {
-		return
+		return false
 	}
 	if proc.UserPreemptPending == 0 {
-		return
+		return false
 	}
 	if proc.SigInProgress != 0 {
-		return
+		return false
 	}
 
 	pml4 := activePML4ForProc(proc)
@@ -284,43 +284,43 @@ func maybeDeliverSignal(frame *SyscallFrame) {
 	// Push sigFrame (13 words) in REVERSE order of layout so the
 	// final user_rsp lands at Magic, making &sigFrame[0] = userRSP.
 	if !pushU64Through(pml4, &userRSP, uint64(frame.RIP)) {
-		return
+		return false
 	}
 	if !pushU64Through(pml4, &userRSP, uint64(frame.RSP)) {
-		return
+		return false
 	}
 	if !pushU64Through(pml4, &userRSP, uint64(frame.RFLAGS)) {
-		return
+		return false
 	}
 	if !pushU64Through(pml4, &userRSP, uint64(frame.RAX)) {
-		return
+		return false
 	}
 	if !pushU64Through(pml4, &userRSP, uint64(frame.RCX)) {
-		return
+		return false
 	}
 	if !pushU64Through(pml4, &userRSP, uint64(frame.RDX)) {
-		return
+		return false
 	}
 	if !pushU64Through(pml4, &userRSP, uint64(frame.RSI)) {
-		return
+		return false
 	}
 	if !pushU64Through(pml4, &userRSP, uint64(frame.RDI)) {
-		return
+		return false
 	}
 	if !pushU64Through(pml4, &userRSP, uint64(frame.R8)) {
-		return
+		return false
 	}
 	if !pushU64Through(pml4, &userRSP, uint64(frame.R9)) {
-		return
+		return false
 	}
 	if !pushU64Through(pml4, &userRSP, uint64(frame.R10)) {
-		return
+		return false
 	}
 	if !pushU64Through(pml4, &userRSP, uint64(frame.R11)) {
-		return
+		return false
 	}
 	if !pushU64Through(pml4, &userRSP, sigMagic) {
-		return
+		return false
 	}
 
 	// Rewrite iretq frame.
@@ -330,4 +330,5 @@ func maybeDeliverSignal(frame *SyscallFrame) {
 	proc.SigSavedRSP = userRSP
 	proc.SigInProgress = 1
 	proc.UserPreemptPending = 0
+	return true
 }

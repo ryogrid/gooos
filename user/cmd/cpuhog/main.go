@@ -17,22 +17,28 @@ import (
 	"github.com/ryogrid/gooos/user/gooos"
 )
 
-const maxHeartbeats = 30 // 30 × 2 s = 60 s hard cap
+const maxHeartbeats = 100000 // effectively long-lived for test windows
+
+//go:noinline
+func burnStep(v uint64, i int) uint64 {
+	// LCG-like update with a per-iteration term to keep the dependency
+	// chain opaque to aggressive loop-collapsing optimizations.
+	return v*2862933555777941757 + 3037000493 + uint64(i)
+}
 
 func main() {
 	gooos.Println("cpuhog: started on cpu=" + strconv.Itoa(gooos.GetCpuID()))
-	// A counter-driven loop is sufficient; TinyGo will NOT optimize
-	// it away because the counter is consumed by the heartbeat print.
-	var ticks uint64
+	var ticks uint64 = 1
 	for beat := 0; beat < maxHeartbeats; beat++ {
-		// Inner loop: ~200M iters / beat (tuned so we emit ~every 2 s
-		// on QEMU TCG). No syscall inside the inner loop.
-		for i := 0; i < 200_000_000; i++ {
-			ticks++
+		// Inner loop: CPU-bound arithmetic with no syscalls.
+		for i := 0; i < 20_000_000; i++ {
+			ticks = burnStep(ticks, i)
 		}
-		gooos.Println("cpuhog: heartbeat " + strconv.Itoa(beat) +
-			" cpu=" + strconv.Itoa(gooos.GetCpuID()) +
-			" ticks=" + strconv.FormatUint(ticks, 10))
+		if beat%100 == 0 {
+			gooos.Println("cpuhog: heartbeat " + strconv.Itoa(beat) +
+				" cpu=" + strconv.Itoa(gooos.GetCpuID()) +
+				" ticks=" + strconv.FormatUint(ticks, 10))
+		}
 	}
 	gooos.Println("cpuhog: exit")
 }

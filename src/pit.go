@@ -13,9 +13,9 @@ const (
 
 // PIT constants.
 const (
-	pitFreq    = 1193182 // PIT oscillator frequency in Hz
-	pitTargetHz = 100    // Desired interrupt frequency
-	pitDivisor = pitFreq / pitTargetHz // ~11932 (0x2E9C)
+	pitFreq     = 1193182               // PIT oscillator frequency in Hz
+	pitTargetHz = 100                   // Desired interrupt frequency
+	pitDivisor  = pitFreq / pitTargetHz // ~11932 (0x2E9C)
 )
 
 // pitTicks is the global tick counter, incremented by the IRQ0 handler.

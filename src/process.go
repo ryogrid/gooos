@@ -456,6 +456,13 @@ func processExit(exitCode uintptr) {
 	}
 
 	serialPrintln("MARKER: M2 processExit pre-freePage")
+	if runSMPShellPreemptProbe {
+		for i := uint32(0); i < uint32(numCoresOnline); i++ {
+			serialPrintln("APIDSTAT cpu=" + utoa(uint64(i)) +
+				" apicid=" + utoa(uint64(perCPUBlocks[i].APICID)))
+		}
+		dumpPreemptCounters()
+	}
 	// Free the user physical pages. With per-process PML4 the
 	// child's mappings live only in proc.pml4, so we don't have
 	// to unmap from the active PML4 (which is also proc.pml4 at

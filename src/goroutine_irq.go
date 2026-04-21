@@ -11,6 +11,22 @@ package main
 
 import "unsafe"
 
+// preemptFirstSeen[cpu] is flipped to 1 the first time handlePreemptIPI
+// runs on that CPU. Serialized markers help diagnose whether preempt
+// IPIs are actually being delivered to AP targets.
+var preemptFirstSeen [maxCPUs]uint32
+var preemptSkipIntDepthSeen [maxCPUs]uint32
+var preemptSkipDisableSeen [maxCPUs]uint32
+var preemptSkipSysDepthSeen [maxCPUs]uint32
+var preemptTaskCurrentZeroSeen [maxCPUs]uint32
+var preemptYieldSeen [maxCPUs]uint32
+var preemptCallsCount [maxCPUs]uint32
+var preemptRing3Count [maxCPUs]uint32
+var preemptRing3SigCount [maxCPUs]uint32
+var preemptRing3NoSigCount [maxCPUs]uint32
+var preemptSkipTask0Count [maxCPUs]uint32
+var preemptYieldCount [maxCPUs]uint32
+
 // readInterruptDepth reads the per-CPU ISR-depth counter from %gs:4.
 // Implemented in src/stubs.S.
 //
@@ -73,14 +89,44 @@ func readPreemptDisable() uint32
 func handlePreemptIPI(vector uint64) {
 	lapicSendEOI()
 
+	c := cpuID()
+	if c < maxCPUs {
+		preemptCallsCount[c]++
+	}
+	if c < maxCPUs && preemptFirstSeen[c] == 0 {
+		preemptFirstSeen[c] = 1
+		switch c {
+		case 0:
+			serialPrintln("MARKER: M8 preempt:first-cpu0")
+		case 1:
+			serialPrintln("MARKER: M8 preempt:first-cpu1")
+		case 2:
+			serialPrintln("MARKER: M8 preempt:first-cpu2")
+		case 3:
+			serialPrintln("MARKER: M8 preempt:first-cpu3")
+		}
+	}
+
 	if readInterruptDepth() > 1 {
+		if c < maxCPUs && preemptSkipIntDepthSeen[c] == 0 {
+			preemptSkipIntDepthSeen[c] = 1
+			serialPrintln("MARKER: M10 preempt:skip-intdepth-cpu" + utoa(uint64(c)))
+		}
 		return
 	}
 	if readPreemptDisable() > 0 {
-		perCPUBlocks[cpuID()].WantReschedule = 1
+		if c < maxCPUs && preemptSkipDisableSeen[c] == 0 {
+			preemptSkipDisableSeen[c] = 1
+			serialPrintln("MARKER: M11 preempt:skip-disable-cpu" + utoa(uint64(c)))
+		}
+		perCPUBlocks[c].WantReschedule = 1
 		return
 	}
 	if readSyscallDepth() > 1 {
+		if c < maxCPUs && preemptSkipSysDepthSeen[c] == 0 {
+			preemptSkipSysDepthSeen[c] = 1
+			serialPrintln("MARKER: M12 preempt:skip-sysdepth-cpu" + utoa(uint64(c)))
+		}
 		return
 	}
 
@@ -90,33 +136,71 @@ func handlePreemptIPI(vector uint64) {
 	// SyscallFrame lets us read the interrupted RIP/CS/RSP/SS and,
 	// for Ring 3 preemption (feature 2.2), rewrite them in place
 	// before the ISR epilogue's iretq.
-	cpu := cpuID()
-	framePtr := lastFramePtrs[cpu]
+	framePtr := lastFramePtrs[c]
 	if framePtr != 0 {
 		frame := (*SyscallFrame)(unsafe.Pointer(framePtr))
 		// Low 2 bits of CS = RPL. RPL==3 → interrupted Ring 3.
 		if frame.CS&3 == 3 {
+			if c < maxCPUs {
+				preemptRing3Count[c]++
+			}
 			// Ring 3: deliver SIGALRM if a handler is registered.
 			// maybeDeliverSignal rewrites frame.RIP / frame.RSP in
 			// place; on iretq the user process jumps to its
 			// SIGALRM handler instead of the interrupted RIP.
-			maybeDeliverSignal(frame)
-			// Do NOT Gosched — returning from this handler lets the
-			// ISR epilogue iretq directly back to Ring 3, either
-			// at the handler (if we rewrote) or at the interrupted
-			// RIP (if we didn't).
-			return
+			if maybeDeliverSignal(frame) {
+				if c < maxCPUs {
+					preemptRing3SigCount[c]++
+				}
+				// Signal delivery rewrote the iretq frame; return
+				// directly so userland runs the handler next.
+				return
+			}
+			if c < maxCPUs {
+				preemptRing3NoSigCount[c]++
+			}
+			// No user-signal delivery this tick. Fall back to
+			// kernel-level preemption by yielding the hosting
+			// ring3Wrapper goroutine.
 		}
 	}
 
 	// Ring 0: kernel goroutine preemption via cooperative swap.
 	if taskCurrent() == 0 {
+		if c < maxCPUs {
+			preemptSkipTask0Count[c]++
+		}
+		if c < maxCPUs && preemptTaskCurrentZeroSeen[c] == 0 {
+			preemptTaskCurrentZeroSeen[c] = 1
+			serialPrintln("MARKER: M14 preempt:skip-task0-cpu" + utoa(uint64(c)))
+		}
 		return
 	}
-	perCPUBlocks[cpu].WantReschedule = 0
+	if c < maxCPUs && preemptYieldSeen[c] == 0 {
+		preemptYieldSeen[c] = 1
+		serialPrintln("MARKER: M15 preempt:yield-cpu" + utoa(uint64(c)))
+	}
+	if c < maxCPUs {
+		preemptYieldCount[c]++
+	}
+	perCPUBlocks[c].WantReschedule = 0
 	gooosSchedulerYield()
 }
 
+func dumpPreemptCounters() {
+	for i := uint32(0); i < maxCPUs; i++ {
+		if preemptCallsCount[i] == 0 && preemptRing3Count[i] == 0 && preemptSkipTask0Count[i] == 0 && preemptYieldCount[i] == 0 {
+			continue
+		}
+		serialPrintln("PRESTAT cpu=" + utoa(uint64(i)) +
+			" calls=" + utoa(uint64(preemptCallsCount[i])) +
+			" ring3=" + utoa(uint64(preemptRing3Count[i])) +
+			" sig=" + utoa(uint64(preemptRing3SigCount[i])) +
+			" nosig=" + utoa(uint64(preemptRing3NoSigCount[i])) +
+			" skip_task0=" + utoa(uint64(preemptSkipTask0Count[i])) +
+			" yield=" + utoa(uint64(preemptYieldCount[i])))
+	}
+}
 
 // gooosSchedulerYield is a //go:linkname wrapper around
 // runtime.Gosched(). Calling runtime.Gosched directly from this file
