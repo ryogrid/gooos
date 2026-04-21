@@ -542,6 +542,14 @@ func main() {
 	fsCreate("for.tc")
 	fsWrite("for.tc", []byte("main()\n{\n    var i, sum;\n    sum = 0;\n    for (i = 1; i <= 10; i = i + 1) {\n        sum = sum + i;\n    }\n    println(\"sum = %d\", sum);\n}\n"))
 
+	if runSMPProbeShellTest {
+		// One-shot shell autorun path for deterministic SMP shell probes.
+		// Executed by user/cmd/sh/main.go before the interactive prompt.
+		fsCreate(".autorun.sh")
+		fsWrite(".autorun.sh", []byte("smpprobe\necho POST_SMPPROBE_OK\n"))
+		serialPrintln("preempt_probe: prepared .autorun.sh for smpprobe shell test")
+	}
+
 	vgaWriteLine(14, "Scheduler: TinyGo goroutines active")
 	serialPrintln("Scheduler: TinyGo goroutines active")
 

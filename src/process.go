@@ -411,10 +411,35 @@ func elfSpawn(filename, args string, parent *Process) (*Process, bool) {
 // them) see EOF on stdin reads.
 func processWait(proc *Process) uintptr {
 	prevForeground := foregroundProc
+	if runSMPProbeShellTest {
+		prevPID := uint32(0)
+		if prevForeground != nil {
+			prevPID = prevForeground.pid
+		}
+		waitPID := uint32(0)
+		if proc != nil {
+			waitPID = proc.pid
+		}
+		serialPrintln("SHELLPROBE: fg_before_wait prev=" + utoa(uint64(prevPID)) +
+			" wait=" + utoa(uint64(waitPID)))
+	}
 	setForegroundProc(proc)
 	exitCode := <-proc.exitCh
 	serialPrintln("MARKER: M6 processWait post-exitCh-recv")
 	setForegroundProc(prevForeground)
+	if runSMPProbeShellTest {
+		after := getForegroundProc()
+		afterPID := uint32(0)
+		if after != nil {
+			afterPID = after.pid
+		}
+		restoredPID := uint32(0)
+		if prevForeground != nil {
+			restoredPID = prevForeground.pid
+		}
+		serialPrintln("SHELLPROBE: fg_after_wait restored=" + utoa(uint64(restoredPID)) +
+			" current=" + utoa(uint64(afterPID)))
+	}
 	{
 		fl := procLock.Acquire()
 		delete(procByPID, proc.pid)

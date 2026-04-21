@@ -2,6 +2,7 @@ package main
 
 import (
 	"strconv"
+	"strings"
 
 	"github.com/ryogrid/gooos/user/gooos"
 )
@@ -14,11 +15,14 @@ const (
 	savedStdoutFD = 11
 )
 
+const autorunScriptName = ".autorun.sh"
+
 func main() {
 	gooos.VgaClear()
 	gooos.Println("gooos shell v0.1")
 	gooos.Println("Type 'help' for available commands.")
 	gooos.Println("")
+	runAutorunIfPresent()
 
 	for {
 		reapBackgroundJobs()
@@ -34,6 +38,37 @@ func main() {
 		}
 		executePipeline(p, p.background)
 	}
+}
+
+func runAutorunIfPresent() {
+	script := gooos.ReadFile(autorunScriptName)
+	if script == nil || len(script) == 0 {
+		return
+	}
+	gooos.Println("autorun: start")
+	text := string(script)
+	start := 0
+	for i := 0; i <= len(text); i++ {
+		if i != len(text) && text[i] != '\n' {
+			continue
+		}
+		line := strings.TrimSpace(text[start:i])
+		start = i + 1
+		if len(line) == 0 || strings.HasPrefix(line, "#") {
+			continue
+		}
+		p, ok := parsePipeline(line)
+		if !ok {
+			gooos.Println("autorun: syntax error: " + line)
+			continue
+		}
+		executePipeline(p, p.background)
+	}
+	if !gooos.WriteFile(autorunScriptName, []byte{}) {
+		gooos.Println("autorun: cleanup failed")
+		return
+	}
+	gooos.Println("autorun: done")
 }
 
 // executePipeline runs a parsed pipeline. Single-stage uses

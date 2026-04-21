@@ -36,3 +36,8 @@ const runUserPreemptProbe = false
 // HMP sendkey, which is flaky under -smp > 1 and can cause false
 // negatives in scripts/test_smp_shell_preempt.sh.
 const runSMPShellPreemptProbe = false
+
+// runSMPProbeShellTest writes a one-shot shell autorun script at boot
+// (`.autorun.sh`) so SMP `smpprobe` validation can execute through the
+// real shell parser/exec/wait path without HMP sendkey injection.
+const runSMPProbeShellTest = false
