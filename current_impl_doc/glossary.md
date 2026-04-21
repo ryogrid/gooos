@@ -473,7 +473,7 @@ its LMA (load-time physical address).
 ---
 ## Auto-Extracted Uppercase Keywords Index
 
-This index is generated from all Markdown files in the repository using the pattern `\b[A-Z]{2,}\b`.
+This index is generated from all Markdown files in the repository using the regex `/\b[A-Z]{2,}\b/`.
 The following terms appeared in Markdown but do not yet have a dedicated expanded glossary entry above.
 Because this is a raw regex extraction, it intentionally includes non-abbreviation uppercase tokens as well.
 

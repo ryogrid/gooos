@@ -7,7 +7,7 @@ For each mnemonic, this document explains what the abbreviation means and what r
 
 - **addq** — *ADD Quadword*: adds a 64-bit value to a register/memory operand.
 - **andq** — *AND Quadword*: bitwise-AND on 64-bit operands, often for masking bits.
-- **call** — *CALL*: near call to a function/symbol; in this x86-64 codebase it is equivalent in effect to `callq`.
+- **call** — *CALL*: near call to a function/symbol; in x86-64 this already encodes a 64-bit call, so `call` vs `callq` is mainly assembler spelling.
 - **callq** — *CALL Quadword*: explicit 64-bit near-call spelling; pushes return address and jumps to callee.
 - **cld** — *CLear Direction flag*: sets forward string-operation direction (`DF=0`).
 - **cli** — *CLear Interrupt flag*: disables maskable interrupts (`IF=0`).
@@ -19,7 +19,7 @@ For each mnemonic, this document explains what the abbreviation means and what r
 - **incl** — *INCrement Long*: increments a 32-bit operand by 1.
 - **inl** — *IN Long*: reads a 32-bit value from an I/O port.
 - **int** — *INTerrupt*: software interrupt/trap instruction (used for syscall entry in user runtime).
-- **invlpg** — *INValidate TLB entry for PaGe*: invalidates a single-page TLB translation.
+- **invlpg** — *INValidate TLB Entry for PaGe*: invalidates a single-page TLB translation.
 - **iretq** — *Interrupt RETurn Quadword*: returns from interrupt/exception handler in long mode.
 - **ja** — *Jump if Above*: unsigned `>` conditional jump.
 - **jae** — *Jump if Above or Equal*: unsigned `>=` conditional jump.
