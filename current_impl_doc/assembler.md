@@ -44,7 +44,7 @@ For each mnemonic, this document explains what the abbreviation means and what r
 - **movq** — *MOVe Quadword*: copies 64-bit data.
 - **movsb** — *MOVe String Byte*: string instruction copying byte(s), typically under `rep`.
 - **movw** — *MOVe Word*: copies 16-bit data.
-- **movzbl** — *MOVe with Zero-extend Byte to Doubleword*: loads byte and zero-extends to 32-bit.
+- **movzbl** — *MOVe with Zero-extend Byte to Doubleword*: loads byte and zero-extends to doubleword (32-bit).
 - **orl** — *OR Long*: bitwise-OR on 32-bit operands.
 - **orq** — *OR Quadword*: bitwise-OR on 64-bit operands.
 - **outb** — *OUT Byte*: writes one byte to an I/O port.
