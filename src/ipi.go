@@ -16,6 +16,14 @@ const (
 
 // lapicSendIPI sends an IPI to the specified APIC ID with the
 // given vector. Uses the LAPIC ICR (Interrupt Command Register).
+//
+// Nosplit because every caller is itself nosplit (pitWakeAPs from
+// the PIT ISR, broadcastPreemptIPI from the LAPIC-timer ISR,
+// gooosWakeupCPU from the TinyGo scheduler wake path). Without
+// this annotation TinyGo may emit a stack-growth check at entry
+// and recursively call the Go runtime from ISR context.
+//
+//go:nosplit
 func lapicSendIPI(targetAPICID uint8, vector uint8) {
 	// Write destination APIC ID to ICR high (bits 24-31).
 	lapicWrite(lapicRegICRH, uint32(targetAPICID)<<24)

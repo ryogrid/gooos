@@ -106,10 +106,26 @@ func lapicSendEOI() {
 	lapicWrite(lapicRegEOI, 0)
 }
 
-// lapicWaitICR spins until the ICR delivery status bit (12) is idle.
+// lapicWaitICR spins until the ICR delivery status bit (12) is idle,
+// with a bounded iteration cap. Nosplit because callers run from ISR
+// context (pitWakeAPs → handleTimer, broadcastPreemptIPI → handleLAPICTimer).
+//
+// The previous unbounded spin could freeze the ISR if the LAPIC
+// delivery stalled for any reason (emulation corner, hardware quirk);
+// a hung PIT ISR would in turn freeze afterTicks, the shell, and every
+// other kernel goroutine. A dropped IPI is recoverable because the
+// next PIT tick will retry; a hung ISR is not. 65_536 MMIO reads take
+// a few hundred microseconds at QEMU rates — far below the 10 ms PIT
+// period — so the bound is safe.
+//
+//go:nosplit
 func lapicWaitICR() {
-	for lapicRead(lapicRegICRL)&(1<<12) != 0 {
+	for i := 0; i < 65536; i++ {
+		if lapicRead(lapicRegICRL)&(1<<12) == 0 {
+			return
+		}
 	}
+	// Timeout: give up, let the next caller retry.
 }
 
 // ioDelay performs a short delay (~1 µs per iteration) using port 0x80.
