@@ -89,7 +89,7 @@ func lapicTimerInit() {
 func handleLAPICTimer(vector uint64) {
 	idx := cpuID()
 	perCPUBlocks[idx].WantReschedule = 1
-	if preemptEnabled && bspBootDone != 0 && idx == 0 {
+	if preemptEnabled && idx == 0 && preemptPhaseIsOperational() {
 		if runSMPShellPreemptProbe && preemptProbeWarmupTicks < 100 {
 			preemptProbeWarmupTicks++
 			lapicSendEOI()

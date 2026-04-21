@@ -549,6 +549,7 @@ func main() {
 	// running, filesystem populated. APs will now enter the
 	// scheduler and begin work-stealing.
 	bspBootDone = 1
+	preemptPhaseAdvance(preemptPhaseSchedReady)
 
 	// M3-7: SMP goroutine distribution probe. Spawn a long-running
 	// kernel goroutine that loops reporting which CPU it runs on.

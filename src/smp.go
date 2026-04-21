@@ -319,6 +319,7 @@ func apEntry(apIndex uint64) {
 
 	// Enter the TinyGo scheduler loop on this AP.
 	sti()
+	markAPSchedulerEntered()
 	apSchedulerEntry()
 
 	// Safety net.
