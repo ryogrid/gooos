@@ -70,11 +70,31 @@ func keyboardIRQRecv() (uint32, bool) {
 // lets the scheduler migrate the pump back onto BSP (the BSP is
 // always runnable thanks to PIT / LAPIC-timer ticks), where the
 // hlt is safely serviced by IRQ1.
+// kbdPumpCpuSeen[i] is set to 1 the FIRST time keyboardPump
+// drains an event while running on CPU i (M9). Flag array, not a
+// counter. netDiag reports it as "pump:NNNN" alongside wake:NNNN
+// so the user can tell which CPU the pump actually drains from.
+var kbdPumpCpuSeen [maxCPUs]uint32
+
 func keyboardPump() {
 	keyboardPumpHandle = taskCurrent()
 	for {
 		ev, ok := keyboardIRQRecv()
 		if ok {
+			c := cpuID()
+			if c < maxCPUs && kbdPumpCpuSeen[c] == 0 {
+				kbdPumpCpuSeen[c] = 1
+				switch c {
+				case 0:
+					serialPrintln("MARKER: M9 pump:drained-on-cpu0")
+				case 1:
+					serialPrintln("MARKER: M9 pump:drained-on-cpu1")
+				case 2:
+					serialPrintln("MARKER: M9 pump:drained-on-cpu2")
+				case 3:
+					serialPrintln("MARKER: M9 pump:drained-on-cpu3")
+				}
+			}
 			keyboardCh <- ev
 			continue
 		}

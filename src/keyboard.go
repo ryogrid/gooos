@@ -90,9 +90,20 @@ func keyboardInit() {}
 // from port 0x60, packs event bytes, and publishes into the
 // gooosKbdRing via keyboardIRQSend. Never blocks, never allocates.
 //
+// kbdIRQSeen is flipped to 1 on the FIRST IRQ1 entry (M8). Flag,
+// not counter, so the 082051f u64-increment hang can't recur. The
+// netDiag dump prints it alongside wake:NNNN so the user can see
+// whether the keyboard IRQ is reaching the kernel at all after $
+// reappears.
+var kbdIRQSeen uint32
+
 //go:nosplit
 func handleKeyboard(vector uint64) {
 	scancode := inb(kbdDataPort)
+	if kbdIRQSeen == 0 {
+		kbdIRQSeen = 1
+		serialPrintln("MARKER: M8 handleKeyboard first entry")
+	}
 	if ioapicActive {
 		lapicSendEOI()
 	} else {

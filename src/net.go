@@ -183,15 +183,24 @@ func netDiag() {
 		" netRxFrames=" + utoa(s.NetRxFrames) +
 		" pitTicks=" + utoa(pitTicks))
 	serialPrintln("Sched: afterTicksCalls=" + utoa(afterTicksCalls))
-	// MARKER M7 summary: 4-char "wake:NNNN" with N='1' if that CPU
-	// has entered handleWakeupIPI at least once, '0' otherwise.
+	// MARKER M7/M8/M9 summaries. N='1' if flag set, '0' otherwise.
+	// All flag arrays, never counters (see kbdIRQSeen comment for why).
 	wb := [4]byte{'0', '0', '0', '0'}
+	pb := [4]byte{'0', '0', '0', '0'}
 	for i := uint32(0); i < maxCPUs && i < 4; i++ {
 		if wakeFirstSeen[i] != 0 {
 			wb[i] = '1'
 		}
+		if kbdPumpCpuSeen[i] != 0 {
+			pb[i] = '1'
+		}
 	}
-	serialPrintln("wake:" + string(wb[:]))
+	serialPrintln("wake:" + string(wb[:]) + " pump:" + string(pb[:]))
+	if kbdIRQSeen != 0 {
+		serialPrintln("kbdIRQ:seen")
+	} else {
+		serialPrintln("kbdIRQ:never")
+	}
 	tcpDiag()
 	serialPrintln("=== end ===")
 }
