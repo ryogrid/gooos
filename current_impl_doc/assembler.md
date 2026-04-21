@@ -1,0 +1,75 @@
+# Assembler Opcode Notes
+
+This document lists x86-64 opcodes/prefixes that are used in `src/*.S` and `user/*.S`.
+For each mnemonic, this document explains what the abbreviation means and what role it has in this codebase.
+
+## Opcode explanations
+
+- **addq** — *ADD Quadword*: adds a 64-bit value to a register/memory operand.
+- **andq** — *AND Quadword*: bitwise-AND on 64-bit operands, often for masking bits.
+- **call** — *CALL*: near call to a function/symbol (AT&T syntax form without explicit size suffix).
+- **callq** — *CALL Quadword*: 64-bit near call; pushes return address and jumps to callee.
+- **cld** — *CLear Direction flag*: sets forward string-operation direction (`DF=0`).
+- **cli** — *CLear Interrupt flag*: disables maskable interrupts (`IF=0`).
+- **cmpl** — *CoMPare Long*: 32-bit compare (subtract for flags only).
+- **cmpq** — *CoMPare Quadword*: 64-bit compare (subtract for flags only).
+- **decl** — *DECrement Long*: decrements a 32-bit operand by 1.
+- **hlt** — *HaLT*: halts CPU until the next interrupt/event.
+- **inb** — *IN Byte*: reads one byte from an I/O port.
+- **incl** — *INCrement Long*: increments a 32-bit operand by 1.
+- **inl** — *IN Long*: reads a 32-bit value from an I/O port.
+- **int** — *INTerrupt*: software interrupt/trap instruction (used for syscall entry in user runtime).
+- **invlpg** — *INValidate TLB entry for PaGe*: invalidates a single-page TLB translation.
+- **iretq** — *Interrupt RETurn Quadword*: returns from interrupt/exception handler in long mode.
+- **ja** — *Jump if Above*: unsigned `>` conditional jump.
+- **jae** — *Jump if Above or Equal*: unsigned `>=` conditional jump.
+- **jb** — *Jump if Below*: unsigned `<` conditional jump.
+- **jbe** — *Jump if Below or Equal*: unsigned `<=` conditional jump.
+- **je** — *Jump if Equal*: jump when zero flag indicates equality.
+- **jmp** — *JuMP*: unconditional jump.
+- **jmpq** — *JuMP Quadword*: 64-bit unconditional jump form.
+- **jne** — *Jump if Not Equal*: jump when zero flag is clear.
+- **jnz** — *Jump if Not Zero*: alias of `jne`.
+- **leaq** — *Load Effective Address Quadword*: computes address expressions into 64-bit register.
+- **lgdt** — *Load Global Descriptor Table*: loads GDTR from memory.
+- **lidt** — *Load Interrupt Descriptor Table*: loads IDTR from memory.
+- **ljmp** — *Long JuMP*: far jump (segment:offset), used in mode/segment transitions.
+- **ljmpl** — *Long JuMP Long form*: explicit-size far jump variant in assembler syntax.
+- **lock** — *LOCK prefix*: makes read-modify-write operation atomic across cores.
+- **lretq** — *Long RETurn Quadword*: far return; pops RIP and CS in long mode.
+- **ltr** — *Load Task Register*: loads TR with a TSS selector.
+- **mfence** — *Memory FENCE*: full memory-ordering fence for loads/stores.
+- **movb** — *MOVe Byte*: copies 8-bit data.
+- **movl** — *MOVe Long*: copies 32-bit data.
+- **movq** — *MOVe Quadword*: copies 64-bit data.
+- **movsb** — *MOVe String Byte*: string instruction copying byte(s), typically under `rep`.
+- **movw** — *MOVe Word*: copies 16-bit data.
+- **movzbl** — *MOVe with Zero-extend Byte to Long*: loads byte and zero-extends to 32-bit.
+- **orl** — *OR Long*: bitwise-OR on 32-bit operands.
+- **orq** — *OR Quadword*: bitwise-OR on 64-bit operands.
+- **outb** — *OUT Byte*: writes one byte to an I/O port.
+- **outl** — *OUT Long*: writes a 32-bit value to an I/O port.
+- **pause** — *PAUSE hint*: spin-wait hint reducing contention/power in busy loops.
+- **popfq** — *POP Flags Quadword*: pops RFLAGS from stack.
+- **popq** — *POP Quadword*: pops 64-bit value from stack.
+- **pushfq** — *PUSH Flags Quadword*: pushes RFLAGS to stack.
+- **pushq** — *PUSH Quadword*: pushes 64-bit value to stack.
+- **rdmsr** — *ReaD Model-Specific Register*: reads MSR into EDX:EAX.
+- **rep** — *REPeat prefix*: repeats following string instruction (`movsb`, `stosb`) with RCX count.
+- **ret** — *RETurn*: near return from function.
+- **retq** — *RETurn Quadword*: explicit 64-bit near return form.
+- **shll** — *SHift Left Logical Long*: 32-bit logical left shift.
+- **shlq** — *SHift Left Logical Quadword*: 64-bit logical left shift.
+- **shrq** — *SHift Right Logical Quadword*: 64-bit logical right shift.
+- **std** — *SeT Direction flag*: sets backward string-operation direction (`DF=1`).
+- **sti** — *SeT Interrupt flag*: enables maskable interrupts (`IF=1`).
+- **stosb** — *STOre String Byte*: stores AL to destination string, typically under `rep`.
+- **subq** — *SUBtract Quadword*: subtracts 64-bit value.
+- **testl** — *TEST Long*: 32-bit bitwise test (AND for flags only).
+- **wrmsr** — *WRite Model-Specific Register*: writes EDX:EAX into selected MSR.
+- **xaddl** — *eXchange and ADD Long*: atomic exchange-add on 32-bit operands (often with `lock`).
+- **xchgl** — *eXCHanGe Long*: exchanges two 32-bit operands atomically with memory operand.
+- **xor** — *eXclusive OR*: bitwise XOR (generic form without explicit size suffix).
+- **xorl** — *eXclusive OR Long*: 32-bit XOR.
+- **xorq** — *eXclusive OR Quadword*: 64-bit XOR.
+- **xorw** — *eXclusive OR Word*: 16-bit XOR.
