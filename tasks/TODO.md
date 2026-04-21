@@ -133,3 +133,12 @@ Current status summary:
 - 2.1 (`scripts/test_preempt_kernel.sh`) is flapping (PASS and FAIL both observed in close succession).
 - 2.3 (`scripts/test_smp_shell_preempt.sh`) remains failing (typically 0 or 1 marker observed).
 - Stack-boundary PF mitigation is in place in both boot and child stack setup paths, but overall preempt behavior still requires architectural cleanup.
+
+## Plan - current_impl_0421_night docs (2026-04-21)
+
+- [x] 1. Extract subsystem facts from current code (boot/irq/smp/scheduler/process/memory/fs/net/userland/tests)
+- [x] 2. Create `current_impl_0421_night/` and write multi-file English Markdown doc set
+- [x] 3. Ensure generated docs are self-contained (no references to external docs outside allowed scope)
+- [x] 4. Run reviewer subagent against code and docs, collect findings by severity
+- [x] 5. Fix reviewer findings (High/Medium) and run reviewer again
+- [x] 6. Record final status summary (created files + review loop outcome)
