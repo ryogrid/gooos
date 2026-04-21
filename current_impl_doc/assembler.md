@@ -7,8 +7,8 @@ For each mnemonic, this document explains what the abbreviation means and what r
 
 - **addq** — *ADD Quadword*: adds a 64-bit value to a register/memory operand.
 - **andq** — *AND Quadword*: bitwise-AND on 64-bit operands, often for masking bits.
-- **call** — *CALL*: near call to a function/symbol (AT&T syntax form without explicit size suffix).
-- **callq** — *CALL Quadword*: 64-bit near call; pushes return address and jumps to callee.
+- **call** — *CALL*: near call to a function/symbol; in this x86-64 codebase it is equivalent in effect to `callq`.
+- **callq** — *CALL Quadword*: explicit 64-bit near-call spelling; pushes return address and jumps to callee.
 - **cld** — *CLear Direction flag*: sets forward string-operation direction (`DF=0`).
 - **cli** — *CLear Interrupt flag*: disables maskable interrupts (`IF=0`).
 - **cmpl** — *CoMPare Long*: 32-bit compare (subtract for flags only).
