@@ -29,6 +29,9 @@ const (
 	colorAttr = uint16(0x0F00) // bright white on black
 )
 
+// smpShellProbeLaunched prevents duplicate 2.3 probe launches.
+var smpShellProbeLaunched uint32
+
 // vgaWriteLine writes a string to the given row of the VGA text buffer.
 //
 //go:nosplit
@@ -583,29 +586,6 @@ func main() {
 			serialPrintln("preempt_probe: apicid cpu=" + utoa(uint64(i)) +
 				" id=" + utoa(uint64(perCPUBlocks[i].APICID)))
 		}
-		go func() {
-			waited := 0
-			for {
-				c := cpuID()
-				if c != 0 || waited >= 200 {
-					if c == 0 {
-						serialPrintln("preempt_probe: AP launcher timeout, fallback cpu=0")
-					}
-					// Give boot shell setup a short head start to avoid
-					// startup races between multiple concurrent elfSpawn.
-					for i := 0; i < 50; i++ {
-						<-afterTicks(1)
-					}
-					serialPrintln("preempt_probe: launching cpuhog+markerprint from cpu=" +
-						utoa(uint64(c)))
-					_, _ = elfSpawn("markerprint.elf", "", nil)
-					_, _ = elfSpawn("cpuhog.elf", "", nil)
-					return
-				}
-				waited++
-				<-afterTicks(1)
-			}
-		}()
 	}
 
 	if preemptEnabled && runPreemptProbe {
@@ -666,6 +646,18 @@ func kpMarker() {
 func smpBasicProbe() {
 	for iter := 0; iter < 50; iter++ {
 		c := cpuID()
+		if preemptEnabled && runSMPShellPreemptProbe && smpShellProbeLaunched == 0 {
+			if c != 0 || iter >= 5 {
+				smpShellProbeLaunched = 1
+				if c == 0 {
+					serialPrintln("preempt_probe: AP launcher timeout in smpBasicProbe, fallback cpu=0")
+				}
+				serialPrintln("preempt_probe: launching cpuhog+markerprint from cpu=" +
+					utoa(uint64(c)))
+				_, _ = elfSpawn("markerprint.elf", "", nil)
+				_, _ = elfSpawn("cpuhog.elf", "", nil)
+			}
+		}
 		out := "smp_basic_cpu=" + utoa(uint64(c)) + " iter=" + utoa(uint64(iter))
 		serialPrintln(out)
 		<-afterTicks(1)

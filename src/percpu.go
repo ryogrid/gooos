@@ -128,5 +128,17 @@ func percpuLatchAPICIDCurrent() {
 	if idx >= maxCPUs {
 		return
 	}
-	perCPUBlocks[idx].APICID = lapicRead(lapicRegID) >> 24
+	id := lapicRead(lapicRegID) >> 24
+	if idx != 0 && id == 0 {
+		// Some boots briefly report AP LAPIC ID as 0 immediately after
+		// software-enable. Retry a bounded number of times.
+		for i := 0; i < 1024; i++ {
+			gooosPause()
+			id = lapicRead(lapicRegID) >> 24
+			if id != 0 {
+				break
+			}
+		}
+	}
+	perCPUBlocks[idx].APICID = id
 }

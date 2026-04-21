@@ -95,29 +95,17 @@ func handlePreemptIPI(vector uint64) {
 	}
 	if c < maxCPUs && preemptFirstSeen[c] == 0 {
 		preemptFirstSeen[c] = 1
-		switch c {
-		case 0:
-			serialPrintln("MARKER: M8 preempt:first-cpu0")
-		case 1:
-			serialPrintln("MARKER: M8 preempt:first-cpu1")
-		case 2:
-			serialPrintln("MARKER: M8 preempt:first-cpu2")
-		case 3:
-			serialPrintln("MARKER: M8 preempt:first-cpu3")
-		}
 	}
 
 	if readInterruptDepth() > 1 {
 		if c < maxCPUs && preemptSkipIntDepthSeen[c] == 0 {
 			preemptSkipIntDepthSeen[c] = 1
-			serialPrintln("MARKER: M10 preempt:skip-intdepth-cpu" + utoa(uint64(c)))
 		}
 		return
 	}
 	if readPreemptDisable() > 0 {
 		if c < maxCPUs && preemptSkipDisableSeen[c] == 0 {
 			preemptSkipDisableSeen[c] = 1
-			serialPrintln("MARKER: M11 preempt:skip-disable-cpu" + utoa(uint64(c)))
 		}
 		perCPUBlocks[c].WantReschedule = 1
 		return
@@ -125,7 +113,6 @@ func handlePreemptIPI(vector uint64) {
 	if readSyscallDepth() > 1 {
 		if c < maxCPUs && preemptSkipSysDepthSeen[c] == 0 {
 			preemptSkipSysDepthSeen[c] = 1
-			serialPrintln("MARKER: M12 preempt:skip-sysdepth-cpu" + utoa(uint64(c)))
 		}
 		return
 	}
@@ -172,13 +159,11 @@ func handlePreemptIPI(vector uint64) {
 		}
 		if c < maxCPUs && preemptTaskCurrentZeroSeen[c] == 0 {
 			preemptTaskCurrentZeroSeen[c] = 1
-			serialPrintln("MARKER: M14 preempt:skip-task0-cpu" + utoa(uint64(c)))
 		}
 		return
 	}
 	if c < maxCPUs && preemptYieldSeen[c] == 0 {
 		preemptYieldSeen[c] = 1
-		serialPrintln("MARKER: M15 preempt:yield-cpu" + utoa(uint64(c)))
 	}
 	if c < maxCPUs {
 		preemptYieldCount[c]++

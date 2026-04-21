@@ -81,16 +81,6 @@ func handleWakeupIPI(vector uint64) {
 	c := cpuID()
 	if c < maxCPUs && wakeFirstSeen[c] == 0 {
 		wakeFirstSeen[c] = 1
-		switch c {
-		case 0:
-			serialPrintln("MARKER: M7 wake:first-cpu0")
-		case 1:
-			serialPrintln("MARKER: M7 wake:first-cpu1")
-		case 2:
-			serialPrintln("MARKER: M7 wake:first-cpu2")
-		case 3:
-			serialPrintln("MARKER: M7 wake:first-cpu3")
-		}
 	}
 	lapicSendEOI()
 }
@@ -128,8 +118,24 @@ func gooosWakeupCPU(cpuIdx uint32) {
 //
 //go:nosplit
 func broadcastPreemptIPI() {
-	// Use LAPIC destination shorthand broadcast instead of per-CPU
-	// APIC-ID targeting. This avoids false skips on environments where
-	// AP APIC IDs are not yet latched in perCPUBlocks during early boot.
-	lapicBroadcastIPI(ipiPreemptVector, false)
+	n := uint32(numCoresOnline)
+	if n == 0 {
+		n = 1
+	}
+	me := cpuID()
+	sent := 0
+	for i := uint32(0); i < n; i++ {
+		if i == me {
+			continue
+		}
+		apicID := perCPUBlocks[i].APICID
+		if i != 0 && apicID == 0 {
+			continue
+		}
+		lapicSendIPI(uint8(apicID), ipiPreemptVector)
+		sent++
+	}
+	if sent == 0 {
+		lapicBroadcastIPI(ipiPreemptVector, false)
+	}
 }

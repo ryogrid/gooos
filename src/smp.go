@@ -313,6 +313,9 @@ func apEntry(apIndex uint64) {
 	for bspBootDone == 0 {
 		gooosPause()
 	}
+	// Re-latch APICID once more after BSP boot completion. Early bring-up
+	// reads can transiently return 0 on some boots.
+	percpuLatchAPICIDCurrent()
 
 	// Enter the TinyGo scheduler loop on this AP.
 	sti()

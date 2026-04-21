@@ -188,8 +188,8 @@ func elfLoad(name string) bool {
 	// Phase B: allocate a fresh Process for the boot shell. No
 	// parent — processExit on this goroutine prints and halts.
 	proc := &Process{parent: nil, exitCh: make(chan uintptr, 1), poolIdx: -1}
-	procInitStdio(proc)       // boot shell gets console fds 0,1,2
-	setForegroundProc(proc)   // boot shell starts as foreground
+	procInitStdio(proc)     // boot shell gets console fds 0,1,2
+	setForegroundProc(proc) // boot shell starts as foreground
 	userFlags := uintptr(pagePresent | pageWrite | pageUser)
 
 	// Map and load each PT_LOAD segment.
@@ -214,13 +214,15 @@ func elfLoad(name string) bool {
 		}
 	}
 
-	// Allocate user stack: 2 pages (8 KiB) at userStackBase.
-	for i := uintptr(0); i < 2; i++ {
+	// Allocate user stack: 4 pages (16 KiB) at userStackBase.
+	// Keep initial RSP one page below the mapped top so boundary
+	// accesses above RSP don't fault at process start.
+	for i := uintptr(0); i < 4; i++ {
 		paddr := allocPage()
 		mapPage(userStackBase+i*pageSize, paddr, userFlags)
 		processRecordPage(proc, userStackBase+i*pageSize, paddr)
 	}
-	stackTop := userStackBase + 2*pageSize
+	stackTop := userStackBase + 3*pageSize - 8
 
 	// Set heap break to end of last PT_LOAD (page-aligned up) and
 	// install the per-process heap ceiling. See userHeapLimit in

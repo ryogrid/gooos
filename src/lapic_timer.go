@@ -22,6 +22,9 @@ var lapicCalibratedInitCnt uint32
 // preempt-broadcast path. Diagnostic marker for 2.3 investigation.
 var preemptBroadcastFirst uint32
 var preemptBroadcastCount uint32
+var preemptSnap200Done uint32
+var preemptSnap800Done uint32
+var preemptProbeWarmupTicks uint32
 
 // lapicTimerCalibrate measures the LAPIC timer decrement rate
 // using the PIT (already running at 100 Hz) as a reference.
@@ -86,20 +89,28 @@ func lapicTimerInit() {
 func handleLAPICTimer(vector uint64) {
 	idx := cpuID()
 	perCPUBlocks[idx].WantReschedule = 1
-	if preemptEnabled {
+	if preemptEnabled && bspBootDone != 0 && idx == 0 {
+		if runSMPShellPreemptProbe && preemptProbeWarmupTicks < 100 {
+			preemptProbeWarmupTicks++
+			lapicSendEOI()
+			return
+		}
 		for i := uint32(0); i < uint32(numCoresOnline); i++ {
 			maybeSignalUserPreempt(i)
 		}
 		if preemptBroadcastFirst == 0 {
 			preemptBroadcastFirst = 1
-			serialPrintln("MARKER: M9 preempt:bcast-first")
 		}
 		preemptBroadcastCount++
-		if preemptBroadcastCount == 10 {
-			serialPrintln("MARKER: M18 preempt:bcast-10")
+		if runSMPShellPreemptProbe {
+			if preemptBroadcastCount >= 200 && preemptSnap200Done == 0 {
+				preemptSnap200Done = 1
+			}
+			if preemptBroadcastCount >= 800 && preemptSnap800Done == 0 {
+				preemptSnap800Done = 1
+			}
 		}
 		broadcastPreemptIPI()
-		lapicSendSelfIPI(ipiPreemptVector)
 		// BSP fast-path: if a Ring-3 user goroutine is running on BSP
 		// now, attempt signal delivery via in-place iretq-frame rewrite.
 		framePtr := lastFramePtrs[idx]

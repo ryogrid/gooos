@@ -379,15 +379,16 @@ func elfSpawn(filename, args string, parent *Process) (*Process, bool) {
 		*(*byte)(unsafe.Pointer(argPaddr + uintptr(i))) = child.ArgString[i]
 	}
 
-	// User stack (2 pages).
-	for i := uintptr(0); i < 2; i++ {
+	// User stack (4 pages). Keep initial RSP one page below mapped top
+	// to tolerate boundary accesses near process start.
+	for i := uintptr(0); i < 4; i++ {
 		paddr := allocPage()
 		mapPageInto(child.pml4, userStackBase+i*pageSize, paddr, userFlags)
 		processRecordPage(child, userStackBase+i*pageSize, paddr)
 	}
 
 	child.EntryPoint = entry
-	child.StackTop = userStackBase + 2*pageSize
+	child.StackTop = userStackBase + 3*pageSize - 8
 
 	if len(phdrs) > 0 {
 		lastPh := &phdrs[len(phdrs)-1]
