@@ -60,8 +60,16 @@ func keyboardIRQRecv() (uint32, bool) {
 	return event, true
 }
 
-// keyboardPump forwards ring events into keyboardCh. It yields via
-// runtime.Gosched on empty; no need for sti+hlt parking in v1.
+// keyboardPump forwards ring events into keyboardCh. On empty ring
+// it yields via Gosched repeatedly until it is running on the BSP,
+// and only then parks on sti+hlt. Reason: the keyboard IRQ (IRQ1
+// via PIC pass-through) only ever fires on the BSP (LVT0 ExtINT
+// unmasked on BSP only; APs have LVT0 masked). If work-stealing
+// parks the pump on an AP's hlt it will never wake, stalling the
+// whole keyboard → shell path. Staying in a Gosched loop on APs
+// lets the scheduler migrate the pump back onto BSP (the BSP is
+// always runnable thanks to PIT / LAPIC-timer ticks), where the
+// hlt is safely serviced by IRQ1.
 func keyboardPump() {
 	keyboardPumpHandle = taskCurrent()
 	for {
@@ -70,19 +78,24 @@ func keyboardPump() {
 			keyboardCh <- ev
 			continue
 		}
-		// Empty ring. Yield so fsTask / shell / ring3Wrapper can
-		// run. If they all park and nothing else is runnable, the
-		// scheduler falls through to runtime.sleepTicks (a.k.a.
-		// gooos's sti+hlt idle loop) which wakes on the next IRQ.
+		// If we're on an AP, just yield and spin — do NOT park on
+		// sti+hlt because IRQ1 won't wake us here.
+		if cpuID() != 0 {
+			runtime.Gosched()
+			continue
+		}
+		// Empty ring on BSP. Yield so fsTask / shell / ring3Wrapper
+		// can run first. If still empty after scheduler round-trip,
+		// park on sti+hlt — IRQ1 on BSP wakes us directly.
 		runtime.Gosched()
 		if _, again := keyboardIRQRecv(); again {
 			continue
 		}
-		// Idle briefly on sti+hlt — leave IF enabled afterwards so
-		// other kernel goroutines can still service IRQs while we
-		// yield. (Don't cli after hlt: interrupts must stay enabled
-		// for cooperative goroutines to receive keyboard/timer
-		// events.)
+		if cpuID() != 0 {
+			// Migrated off BSP mid-round — loop back to the
+			// on-AP path rather than hlt here.
+			continue
+		}
 		sti()
 		hlt()
 	}
