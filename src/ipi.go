@@ -33,6 +33,11 @@ func lapicSendIPI(targetAPICID uint8, vector uint8) {
 	lapicWaitICR()
 }
 
+// wakeupIPICount is incremented on every wakeup-IPI entry (vector
+// 0xFC), across all CPUs. Exposed in netDiag for cross-checking
+// that AP-targeted IPIs are actually being delivered.
+var wakeupIPICount uint64
+
 // handleWakeupIPI is the IPI handler for cross-CPU goroutine
 // wakeup. The handler just sends LAPIC EOI — returning from the
 // ISR wakes the CPU from hlt, and the scheduler loop checks the
@@ -40,6 +45,7 @@ func lapicSendIPI(targetAPICID uint8, vector uint8) {
 //
 //go:nosplit
 func handleWakeupIPI(vector uint64) {
+	wakeupIPICount++
 	lapicSendEOI()
 }
 
