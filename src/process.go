@@ -412,6 +412,7 @@ func processWait(proc *Process) uintptr {
 	prevForeground := foregroundProc
 	setForegroundProc(proc)
 	exitCode := <-proc.exitCh
+	serialPrintln("MARKER: M6 processWait post-exitCh-recv")
 	setForegroundProc(prevForeground)
 	{
 		fl := procLock.Acquire()
@@ -454,6 +455,7 @@ func processExit(exitCode uintptr) {
 		}
 	}
 
+	serialPrintln("MARKER: M2 processExit pre-freePage")
 	// Free the user physical pages. With per-process PML4 the
 	// child's mappings live only in proc.pml4, so we don't have
 	// to unmap from the active PML4 (which is also proc.pml4 at
@@ -463,11 +465,14 @@ func processExit(exitCode uintptr) {
 	}
 	proc.UserPageCnt = 0
 	proc.ExitCode = exitCode
+	serialPrintln("MARKER: M3 processExit post-freePage")
 
 	if proc.parent != nil {
 		serialPrintln("processExit: child exit code " + utoa(uint64(exitCode)) +
 			", resuming parent")
+		serialPrintln("MARKER: M4 processExit pre-exitCh-send")
 		proc.exitCh <- exitCode
+		serialPrintln("MARKER: M5 processExit post-exitCh-send")
 	} else {
 		serialPrintln("processExit: no parent, halting")
 	}

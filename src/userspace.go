@@ -185,6 +185,7 @@ func syscallDispatch(frame *SyscallFrame) {
 // --- Syscall 0: sys_exit ---
 
 func sysExitHandler(frame *SyscallFrame) {
+	serialPrintln("MARKER: M1 sysExitHandler entry")
 	processExit(frame.RDI)
 	// Does not return if parent exists; if no parent, halts in processExit.
 }

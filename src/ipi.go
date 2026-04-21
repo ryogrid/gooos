@@ -33,6 +33,14 @@ func lapicSendIPI(targetAPICID uint8, vector uint8) {
 	lapicWaitICR()
 }
 
+// wakeFirstSeen[cpu] is flipped to 1 the first time handleWakeupIPI
+// enters on that CPU. Exposed via netDiag as a 4-bit bitmap. Plain
+// [maxCPUs]uint32 — NOT a counter, NOT a u64: the 082051f attempt
+// to increment a uint64 counter here hung the user's environment,
+// so this diagnostic uses only a single "seen" flag per CPU with
+// word-sized stores.
+var wakeFirstSeen [maxCPUs]uint32
+
 // handleWakeupIPI is the IPI handler for cross-CPU goroutine
 // wakeup. The handler just sends LAPIC EOI — returning from the
 // ISR wakes the CPU from hlt, and the scheduler loop checks the
@@ -40,6 +48,20 @@ func lapicSendIPI(targetAPICID uint8, vector uint8) {
 //
 //go:nosplit
 func handleWakeupIPI(vector uint64) {
+	c := cpuID()
+	if c < maxCPUs && wakeFirstSeen[c] == 0 {
+		wakeFirstSeen[c] = 1
+		switch c {
+		case 0:
+			serialPrintln("MARKER: M7 wake:first-cpu0")
+		case 1:
+			serialPrintln("MARKER: M7 wake:first-cpu1")
+		case 2:
+			serialPrintln("MARKER: M7 wake:first-cpu2")
+		case 3:
+			serialPrintln("MARKER: M7 wake:first-cpu3")
+		}
+	}
 	lapicSendEOI()
 }
 

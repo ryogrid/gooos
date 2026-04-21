@@ -183,6 +183,15 @@ func netDiag() {
 		" netRxFrames=" + utoa(s.NetRxFrames) +
 		" pitTicks=" + utoa(pitTicks))
 	serialPrintln("Sched: afterTicksCalls=" + utoa(afterTicksCalls))
+	// MARKER M7 summary: 4-char "wake:NNNN" with N='1' if that CPU
+	// has entered handleWakeupIPI at least once, '0' otherwise.
+	wb := [4]byte{'0', '0', '0', '0'}
+	for i := uint32(0); i < maxCPUs && i < 4; i++ {
+		if wakeFirstSeen[i] != 0 {
+			wb[i] = '1'
+		}
+	}
+	serialPrintln("wake:" + string(wb[:]))
 	tcpDiag()
 	serialPrintln("=== end ===")
 }
