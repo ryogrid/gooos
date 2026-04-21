@@ -71,6 +71,12 @@ func lapicSendSelfIPI(vector uint8) {
 // word-sized stores.
 var wakeFirstSeen [maxCPUs]uint32
 
+// preemptTargetSnapshot stores the latest BSP-selected APIC-ID fanout
+// set for vector 0xFB delivery. BSP timer path updates this every tick
+// in broadcastPreemptIPI; used for deterministic target selection.
+var preemptTargetSnapshot [maxCPUs]uint8
+var preemptTargetSnapshotN uint32
+
 // handleWakeupIPI is the IPI handler for cross-CPU goroutine
 // wakeup. The handler just sends LAPIC EOI — returning from the
 // ISR wakes the CPU from hlt, and the scheduler loop checks the
@@ -123,7 +129,7 @@ func broadcastPreemptIPI() {
 		n = 1
 	}
 	me := cpuID()
-	sent := 0
+	snapN := uint32(0)
 	for i := uint32(0); i < n; i++ {
 		if i == me {
 			continue
@@ -132,10 +138,13 @@ func broadcastPreemptIPI() {
 		if i != 0 && apicID == 0 {
 			continue
 		}
-		lapicSendIPI(uint8(apicID), ipiPreemptVector)
-		sent++
+		if snapN < maxCPUs {
+			preemptTargetSnapshot[snapN] = uint8(apicID)
+			snapN++
+		}
 	}
-	if sent == 0 {
-		lapicBroadcastIPI(ipiPreemptVector, false)
+	preemptTargetSnapshotN = snapN
+	for i := uint32(0); i < snapN; i++ {
+		lapicSendIPI(preemptTargetSnapshot[i], ipiPreemptVector)
 	}
 }
