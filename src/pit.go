@@ -70,13 +70,16 @@ func handleTimer(vector uint64) {
 func pitWakeAPs() {
 	n := numCoresOnline
 	me := cpuID()
-	meAPIC := perCPUBlocks[me].APICID
 	for i := uint32(0); i < n; i++ {
 		if i == me {
 			continue
 		}
 		apicID := perCPUBlocks[i].APICID
-		if apicID == meAPIC {
+		// Same "APICID == 0 means uninitialized AP" skip as
+		// broadcastPreemptIPI. Do NOT use the old `apicID == meAPIC`
+		// self-check: BSP's meAPIC is 0, and APs also read 0 until
+		// they finish percpuInitAP, so that check filtered every AP.
+		if apicID == 0 {
 			continue
 		}
 		lapicSendIPI(uint8(apicID), ipiWakeupVector)

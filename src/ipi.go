@@ -76,13 +76,20 @@ func broadcastPreemptIPI() {
 		n = 1
 	}
 	me := cpuID()
-	meAPIC := perCPUBlocks[me].APICID
 	for i := uint32(0); i < n; i++ {
 		if i == me {
 			continue
 		}
 		apicID := perCPUBlocks[i].APICID
-		if apicID == meAPIC {
+		// APs fill in their APICID from inside percpuInitAP. If the
+		// slot is still 0, the AP has not reported yet — skip this
+		// tick (the next one will retry once the AP has run). The
+		// OLD `if apicID == meAPIC` self-skip guard was BROKEN here:
+		// meAPIC is 0 for BSP, and every un-initialized AP slot is
+		// also 0, so the guard filtered out EVERY AP and no IPI was
+		// ever sent. See Step 3 diagnosis for the keyboard-under-smp4
+		// bug.
+		if apicID == 0 {
 			continue
 		}
 		lapicSendIPI(uint8(apicID), ipiPreemptVector)
