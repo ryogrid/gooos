@@ -19,7 +19,7 @@ For each mnemonic, this document explains what the abbreviation means and what r
 - **incl** — *INCrement Long*: increments a 32-bit operand by 1.
 - **inl** — *IN Long*: reads a 32-bit value from an I/O port.
 - **int** — *INTerrupt*: software interrupt/trap instruction (used for syscall entry in user runtime).
-- **invlpg** — *INValidate TLB Entry for PaGe*: invalidates a single-page TLB translation.
+- **invlpg** — *INValidate TLB Entry for Page*: invalidates a single-page TLB translation.
 - **iretq** — *Interrupt RETurn Quadword*: returns from interrupt/exception handler in long mode.
 - **ja** — *Jump if Above*: unsigned `>` conditional jump.
 - **jae** — *Jump if Above or Equal*: unsigned `>=` conditional jump.
@@ -34,7 +34,7 @@ For each mnemonic, this document explains what the abbreviation means and what r
 - **lgdt** — *Load Global Descriptor Table*: loads GDTR from memory.
 - **lidt** — *Load Interrupt Descriptor Table*: loads IDTR from memory.
 - **ljmp** — *Long JuMP*: far jump (segment:offset), used in mode/segment transitions.
-- **ljmpl** — *Long JuMP Long form*: explicit-size far jump variant in assembler syntax.
+- **ljmpl** — *Long JuMP, long-form variant*: explicit-size far jump variant in assembler syntax.
 - **lock** — *LOCK prefix*: makes read-modify-write operation atomic across cores.
 - **lretq** — *Long RETurn Quadword*: far return; pops RIP and CS in long mode.
 - **ltr** — *Load Task Register*: loads TR with a TSS selector.
@@ -44,7 +44,7 @@ For each mnemonic, this document explains what the abbreviation means and what r
 - **movq** — *MOVe Quadword*: copies 64-bit data.
 - **movsb** — *MOVe String Byte*: string instruction copying byte(s), typically under `rep`.
 - **movw** — *MOVe Word*: copies 16-bit data.
-- **movzbl** — *MOVe with Zero-extend Byte to Long*: loads byte and zero-extends to 32-bit.
+- **movzbl** — *MOVe with Zero-extend Byte to Doubleword*: loads byte and zero-extends to 32-bit.
 - **orl** — *OR Long*: bitwise-OR on 32-bit operands.
 - **orq** — *OR Quadword*: bitwise-OR on 64-bit operands.
 - **outb** — *OUT Byte*: writes one byte to an I/O port.
