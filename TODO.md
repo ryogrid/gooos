@@ -11,4 +11,8 @@ Policy notes:
 - [x] Phase 2: Implement deterministic preempt target snapshot routing (`src/ipi.go`) while preserving ISR safe-point policy.
 - [x] Phase 3: Implement deterministic shell `smpprobe` path (probe gate + autorun path + foreground ownership diagnostics).
 - [x] Phase 4: Add deterministic harness and execute Tier-0/Tier-1 verification matrix.
-- [ ] Phase 5: Run reviewer subagent, fix findings, update `README.md` and linked docs, and reconcile unresolved TODO/FIXME markers.
+- [x] Phase 5: Run reviewer subagent, fix findings, update `README.md` and linked docs, and reconcile unresolved TODO/FIXME markers.
+
+Deferred scope memo:
+
+1. `scripts/test_preempt_user.sh` remains unstable (`userpreempt_marker` stays at 0 in current runs) even after startup/preempt gating and deterministic autorun-path updates. This item is deferred as a separate feature-2.2 stabilization track.

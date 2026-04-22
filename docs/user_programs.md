@@ -110,7 +110,7 @@ The full roster of programs embedded in the kernel ISO:
 | `fdprobe` | fd-table syscall verification probe |
 | `goprobe` | userspace goroutines / channels probe |
 | `gochan` | pipeline + select demo (above) |
-| `smpprobe` | SMP / LAPIC / IPI probe |
+| `smpprobe` | SMP worker-distribution probe (`Spawn` + `Wait`); workers emit CPU IDs with cooperative `Yield` between samples. Deterministic shell-path harness: `scripts/test_smp_shell_smpprobe.sh` |
 | `tinyc` | Tiny C interpreter (above) |
 | `edit` | vi-like editor (above) |
 | `udpecho` | UDP port-17 echo server (userspace) |

@@ -50,7 +50,7 @@ trap 'cleanup; restore_config' EXIT
 for _ in $(seq 1 600); do
     HAS_START=$(grep -c 'smpprobe: spawning' "$OUT" 2>/dev/null || true)
     HAS_WORKER=$(grep -cE '^worker-[0-9]+: cpuID=' "$OUT" 2>/dev/null || true)
-    HAS_DONE=$(grep -c 'smpprobe: done' "$OUT" 2>/dev/null || true)
+    HAS_DONE=$(grep -c 'autorun: done smpprobe' "$OUT" 2>/dev/null || true)
     HAS_POST=$(grep -c '^POST_SMPPROBE_OK$' "$OUT" 2>/dev/null || true)
     HAS_FG=$(grep -c 'SHELLPROBE: fg_after_wait' "$OUT" 2>/dev/null || true)
     if [ "${HAS_START:-0}" -ge 1 ] && [ "${HAS_WORKER:-0}" -ge 1 ] && \
@@ -63,7 +63,7 @@ done
 
 HAS_START=$(grep -c 'smpprobe: spawning' "$OUT" 2>/dev/null || true)
 HAS_WORKER=$(grep -cE '^worker-[0-9]+: cpuID=' "$OUT" 2>/dev/null || true)
-HAS_DONE=$(grep -c 'smpprobe: done' "$OUT" 2>/dev/null || true)
+HAS_DONE=$(grep -c 'autorun: done smpprobe' "$OUT" 2>/dev/null || true)
 HAS_POST=$(grep -c '^POST_SMPPROBE_OK$' "$OUT" 2>/dev/null || true)
 HAS_FG=$(grep -c 'SHELLPROBE: fg_after_wait' "$OUT" 2>/dev/null || true)
 

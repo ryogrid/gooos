@@ -17,32 +17,44 @@ var preemptPhase uint32 = preemptPhaseBootInit
 // apSchedEnteredCount counts APs that reached scheduler handoff.
 var apSchedEnteredCount uint32
 
+var preemptPhaseLock Spinlock
+
 func maybeEnterOperational() {
 	if preemptPhase < preemptPhaseSchedReady {
 		return
 	}
-	// Keep startup gating simple and deterministic: once BSP boot is
-	// complete, promote to operational preempt fanout.
-	if bspBootDone != 0 {
+	needed := uint32(0)
+	if numCoresOnline > 0 {
+		needed = numCoresOnline - 1 // AP count (exclude BSP)
+	}
+	if bspBootDone != 0 && apSchedEnteredCount >= needed {
 		preemptPhase = preemptPhaseOperational
 	}
 }
 
 // preemptPhaseAdvance monotonically advances preempt phase.
 func preemptPhaseAdvance(next uint32) {
+	flags := preemptPhaseLock.Acquire()
 	if next > preemptPhase {
 		preemptPhase = next
 	}
 	maybeEnterOperational()
+	preemptPhaseLock.Release(flags)
 }
 
 // markAPSchedulerEntered records AP scheduler handoff.
 func markAPSchedulerEntered() {
+	flags := preemptPhaseLock.Acquire()
 	apSchedEnteredCount++
 	maybeEnterOperational()
+	preemptPhaseLock.Release(flags)
 }
 
 //go:nosplit
 func preemptPhaseIsOperational() bool {
+	// Interrupt-path gate check: stay lock-free so LAPIC timer ISR
+	// never spins on a lock that could be held by interrupted code.
+	// preemptPhase is monotonic (BootInit -> SchedReady -> Operational),
+	// so a stale read can only delay enablement by at most one tick.
 	return preemptPhase >= preemptPhaseOperational
 }

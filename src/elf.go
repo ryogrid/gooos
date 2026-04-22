@@ -236,6 +236,11 @@ func elfLoad(name string) bool {
 	proc.EntryPoint = entry
 	proc.StackTop = stackTop
 
+	// Start timer-driven preempt fanout only after userspace bootstrap
+	// setup is complete, avoiding early-boot scheduling jitter while
+	// core services and filesystem population are still settling.
+	preemptPhaseAdvance(preemptPhaseSchedReady)
+
 	serialPrintln("ELF: spawning boot shell goroutine at 0x" + hextoa(uint64(entry)))
 
 	// Spawn the shell on its own goroutine. main() then blocks on

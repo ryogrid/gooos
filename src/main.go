@@ -548,6 +548,12 @@ func main() {
 		fsCreate(".autorun.sh")
 		fsWrite(".autorun.sh", []byte("smpprobe\necho POST_SMPPROBE_OK\n"))
 		serialPrintln("preempt_probe: prepared .autorun.sh for smpprobe shell test")
+	} else if preemptEnabled && runUserPreemptProbe {
+		// Feature 2.2 harness auto-launch via shell autorun path to keep
+		// user process startup deterministic without HMP sendkey.
+		fsCreate(".autorun.sh")
+		fsWrite(".autorun.sh", []byte("userpreempt\n"))
+		serialPrintln("preempt_probe: prepared .autorun.sh for userpreempt test")
 	}
 
 	vgaWriteLine(14, "Scheduler: TinyGo goroutines active")
@@ -557,7 +563,6 @@ func main() {
 	// running, filesystem populated. APs will now enter the
 	// scheduler and begin work-stealing.
 	bspBootDone = 1
-	preemptPhaseAdvance(preemptPhaseSchedReady)
 
 	// M3-7: SMP goroutine distribution probe. Spawn a long-running
 	// kernel goroutine that loops reporting which CPU it runs on.
@@ -574,15 +579,6 @@ func main() {
 	// 0xFB to the AP where kpHog lands, the AP's handlePreemptIPI
 	// runs Gosched, and kpMarker gets its turn. Serial log greps
 	// for `preempt_probe_marker=N` in scripts/test_preempt_kernel.sh.
-	if preemptEnabled && runUserPreemptProbe {
-		// Feature 2.2 harness auto-launch — spawn userpreempt.elf
-		// as a child of the boot shell. Runs alongside the shell.
-		serialPrintln("preempt_probe: auto-launching userpreempt.elf")
-		go func() {
-			_, _ = elfSpawn("userpreempt.elf", "", nil)
-		}()
-	}
-
 	if preemptEnabled && runSMPShellPreemptProbe {
 		// Feature 2.3 harness auto-launch — spawn cpuhog.elf and
 		// markerprint.elf without shell sendkey injection.
