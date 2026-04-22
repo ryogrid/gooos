@@ -248,6 +248,11 @@ func ring3Wrapper(proc *Process) {
 	setCurrentProc(proc)
 	registerRing3GWithStack(kernelStackTop, proc)
 	tssSetRSP0ForCurrentG()
+	if proc.parent == nil {
+		// Boot-shell handoff point: userspace stack/TSS state is now ready.
+		// Enable timer preempt fanout from this point onward.
+		preemptPhaseAdvance(preemptPhaseSchedReady)
+	}
 	serialPrintln("ring3Wrapper: jumping to Ring 3")
 	// Allow Ring 3 to trigger int 0x80 each time a Ring-3 goroutine
 	// enters; safe to call repeatedly.
