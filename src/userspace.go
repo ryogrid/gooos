@@ -851,11 +851,15 @@ func writeU32Through(pml4, vaddr uintptr, val uint32) {
 
 // --- Shell bootstrap ---
 
+// bootShellArgs is copied into Process.ArgString for the initial shell
+// launched by setupUserspace.
+var bootShellArgs string
+
 // setupUserspace loads the shell ELF and enters Ring 3 via a
 // ring3Wrapper goroutine. Blocks main's goroutine forever because
 // TinyGo's scheduler stops if main returns (`schedulerDone = true`).
 func setupUserspace() {
-	if !elfLoad("sh.elf") {
+	if !elfLoad("sh.elf", bootShellArgs) {
 		serialPrintln("Userspace: shell ELF load failed, halting")
 		for {
 			hlt()

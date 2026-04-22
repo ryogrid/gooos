@@ -22,7 +22,9 @@ func main() {
 	gooos.Println("gooos shell v0.1")
 	gooos.Println("Type 'help' for available commands.")
 	gooos.Println("")
-	runAutorunIfPresent()
+	if gooos.Args() == "--autorun" {
+		runAutorunIfPresent()
+	}
 
 	for {
 		reapBackgroundJobs()

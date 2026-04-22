@@ -167,7 +167,7 @@ func elfParse(data []byte) (entry uintptr, phdrs []Elf64Phdr, ok bool) {
 // validates it, maps PT_LOAD segments into userspace memory, allocates a user
 // stack, and jumps to Ring 3 at the entry point. Does not return on success.
 // Returns false if the file is not found or the ELF is invalid.
-func elfLoad(name string) bool {
+func elfLoad(name string, args string) bool {
 	// Read the ELF binary from the filesystem via the FS task.
 	data := fsSendRead(name)
 	if data == nil {
@@ -190,6 +190,13 @@ func elfLoad(name string) bool {
 	proc := &Process{parent: nil, exitCh: make(chan uintptr, 1), poolIdx: -1}
 	procInitStdio(proc)     // boot shell gets console fds 0,1,2
 	setForegroundProc(proc) // boot shell starts as foreground
+	proc.ArgLen = len(args)
+	if proc.ArgLen > 256 {
+		proc.ArgLen = 256
+	}
+	for i := 0; i < proc.ArgLen; i++ {
+		proc.ArgString[i] = args[i]
+	}
 	userFlags := uintptr(pagePresent | pageWrite | pageUser)
 
 	// Map and load each PT_LOAD segment.

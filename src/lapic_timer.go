@@ -25,6 +25,7 @@ var preemptBroadcastCount uint32
 var preemptSnap200Done uint32
 var preemptSnap800Done uint32
 var preemptProbeWarmupTicks uint32
+var preemptStartupWarmupTicks uint32
 
 // lapicTimerCalibrate measures the LAPIC timer decrement rate
 // using the PIT (already running at 100 Hz) as a reference.
@@ -90,6 +91,13 @@ func handleLAPICTimer(vector uint64) {
 	idx := cpuID()
 	perCPUBlocks[idx].WantReschedule = 1
 	if preemptEnabled && !runSMPProbeShellTest && idx == 0 && preemptPhaseIsOperational() {
+		// Keep startup deterministic: defer preempt fanout briefly after
+		// userspace handoff so shell bootstrap can reach prompt/input state.
+		if preemptStartupWarmupTicks < 150 {
+			preemptStartupWarmupTicks++
+			lapicSendEOI()
+			return
+		}
 		if runSMPShellPreemptProbe && preemptProbeWarmupTicks < 100 {
 			preemptProbeWarmupTicks++
 			lapicSendEOI()
