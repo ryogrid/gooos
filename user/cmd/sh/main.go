@@ -45,6 +45,11 @@ func runAutorunIfPresent() {
 	if script == nil || len(script) == 0 {
 		return
 	}
+	// Let early boot goroutines settle so the first autorun command is
+	// less sensitive to immediate post-shell-start scheduling jitter.
+	for i := 0; i < 50; i++ {
+		gooos.Yield()
+	}
 	gooos.Println("autorun: start")
 	text := string(script)
 	start := 0
@@ -57,12 +62,14 @@ func runAutorunIfPresent() {
 		if len(line) == 0 || strings.HasPrefix(line, "#") {
 			continue
 		}
+		gooos.Println("autorun: exec " + line)
 		p, ok := parsePipeline(line)
 		if !ok {
 			gooos.Println("autorun: syntax error: " + line)
 			continue
 		}
 		executePipeline(p, p.background)
+		gooos.Println("autorun: done " + line)
 	}
 	if !gooos.WriteFile(autorunScriptName, []byte{}) {
 		gooos.Println("autorun: cleanup failed")

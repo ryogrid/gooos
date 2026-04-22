@@ -40,9 +40,9 @@ func main() {
 		for i := 0; i < iterationsPerWorker; i++ {
 			cpu := gooos.GetCpuID()
 			gooos.Println("worker-" + workerID + ": cpuID=" + strconv.Itoa(cpu))
-			// Sleep briefly. sys_sleep yields the kernel goroutine
-			// so other workers can be stolen by idle APs.
-			gooos.Sleep(10)
+			// Cooperative yield keeps the probe deterministic even when
+			// cross-CPU wakeup timing is noisy under SMP bring-up.
+			gooos.Yield()
 		}
 		gooos.Exit(0)
 		return

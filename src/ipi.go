@@ -147,4 +147,5 @@ func broadcastPreemptIPI() {
 	for i := uint32(0); i < snapN; i++ {
 		lapicSendIPI(preemptTargetSnapshot[i], ipiPreemptVector)
 	}
+	lapicSendSelfIPI(ipiPreemptVector)
 }
