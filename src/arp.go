@@ -118,7 +118,7 @@ func arpLookup(ip uint32) ([6]byte, bool) {
 	}
 	arpLock.Release(flags)
 	statsInc(&netStats.ArpMisses)
-	return zeroMAC, false
+	return [6]byte{}, false
 }
 
 // arpLearn inserts or refreshes an (ip, mac) entry. When the cache is
@@ -159,8 +159,8 @@ func arpSendRequest(targetIP uint32) {
 	if !e1000Found {
 		return
 	}
-	payload := arpBuild(arpOpRequest, e1000MAC, ourIP, zeroMAC, targetIP)
-	frame := ethernetBuild(broadcastMAC, e1000MAC, etherTypeARP, payload)
+	payload := arpBuild(arpOpRequest, e1000MAC, ourIP, [6]byte{}, targetIP)
+	frame := ethernetBuild(broadcastMACAddr(), e1000MAC, etherTypeARP, payload)
 	if e1000Transmit(frame) {
 		statsInc(&netStats.ArpRequestsSent)
 	}
@@ -186,8 +186,8 @@ func arpSendGratuitous() {
 	if !e1000Found || ourIP == 0 {
 		return
 	}
-	payload := arpBuild(arpOpReply, e1000MAC, ourIP, broadcastMAC, ourIP)
-	frame := ethernetBuild(broadcastMAC, e1000MAC, etherTypeARP, payload)
+	payload := arpBuild(arpOpReply, e1000MAC, ourIP, broadcastMACAddr(), ourIP)
+	frame := ethernetBuild(broadcastMACAddr(), e1000MAC, etherTypeARP, payload)
 	if e1000Transmit(frame) {
 		statsInc(&netStats.ArpRepliesSent)
 	}
@@ -229,7 +229,7 @@ func arpResolve(ip uint32) ([6]byte, bool) {
 			if mac, ok := arpLookup(ip); ok {
 				return mac, true
 			}
-			return zeroMAC, false
+			return [6]byte{}, false
 		default:
 		}
 		if mac, ok := arpLookup(ip); ok {

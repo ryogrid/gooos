@@ -100,7 +100,7 @@ $(RT_ASM_O): $(RT_ASM_S) | $(TMP_DIR)
 	$(AS) --64 $(RT_ASM_S) -o $(RT_ASM_O)
 
 $(KERNEL_GO_O): $(GO_SRCS) $(TARGET_JSON) | $(TMP_DIR)
-	$(TINYGO) build -target=$(TARGET_JSON) -o $(KERNEL_GO_O) ./$(SRC_DIR)
+	$(TINYGO) build -interp-timeout=10m -target=$(TARGET_JSON) -o $(KERNEL_GO_O) ./$(SRC_DIR)
 
 $(KERNEL_BIN): $(BOOT_O) $(STUBS_O) $(ISR_O) $(SWITCH_O) $(TRAMP_O) $(TASK_O) $(RT_ASM_O) $(KERNEL_GO_O) $(LINKER_LD)
 	$(LD) -m elf_x86_64 -n -T $(LINKER_LD) -o $(KERNEL_BIN) $(BOOT_O) $(STUBS_O) $(ISR_O) $(SWITCH_O) $(TRAMP_O) $(TASK_O) $(RT_ASM_O) $(KERNEL_GO_O)

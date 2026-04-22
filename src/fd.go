@@ -218,10 +218,22 @@ func (f *fileFd) Close() fdErr { return fdErrOK }
 // Package-scope singletons. Inherited by fork/exec via shallow
 // Process.fds copy.
 var (
-	stdinFD  FileDesc = consoleStdin{}
-	stdoutFD FileDesc = consoleStdout{toVGA: true}
-	stderrFD FileDesc = consoleStdout{toVGA: false}
+	stdinFD  FileDesc
+	stdoutFD FileDesc
+	stderrFD FileDesc
 )
+
+func ensureStdioFDs() {
+	if stdinFD == nil {
+		stdinFD = consoleStdin{}
+	}
+	if stdoutFD == nil {
+		stdoutFD = consoleStdout{toVGA: true}
+	}
+	if stderrFD == nil {
+		stderrFD = consoleStdout{toVGA: false}
+	}
+}
 
 // --- Process.fds helpers --------------------------------------------------
 
@@ -307,6 +319,7 @@ func procDup2(p *Process, oldfd, newfd int) (int, fdErr) {
 // elfExec / elfSpawn (phase 4) inherit from the parent
 // instead.
 func procInitStdio(p *Process) {
+	ensureStdioFDs()
 	p.fds[0] = stdinFD
 	p.fds[1] = stdoutFD
 	p.fds[2] = stderrFD

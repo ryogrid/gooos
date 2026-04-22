@@ -14,7 +14,26 @@
 set -u
 
 OUT="tmp/serial_smp_basic.log"
+CONF="src/preempt_config.go"
+BACKUP="tmp/preempt_config_smp_basic.go.bak"
 rm -f "$OUT"
+rm -f "$BACKUP"
+
+cp "$CONF" "$BACKUP"
+restore_config() {
+    if [ -f "$BACKUP" ]; then
+        mv "$BACKUP" "$CONF"
+        rm -f tmp/kernel.iso
+    fi
+}
+
+trap restore_config EXIT
+
+sed -i 's/const runSMPBasicProbe = false/const runSMPBasicProbe = true/' "$CONF"
+if ! grep -q 'const runSMPBasicProbe = true' "$CONF"; then
+    echo "FAIL: could not enable runSMPBasicProbe"
+    exit 1
+fi
 
 if [ ! -f tmp/kernel.iso ]; then
     make iso >/dev/null 2>&1 || { echo "FAIL: make iso"; exit 1; }
@@ -29,19 +48,9 @@ qemu-system-x86_64 \
 PID=$!
 
 # Wait up to 20s for PASS evidence. Check every 0.5s.
-got_kernel=""
-got_ring3=""
 for _ in $(seq 1 40); do
-    if [ -f "$OUT" ]; then
-        if [ -z "$got_kernel" ] && grep -qE '^smp_basic_cpu=[1-9]' "$OUT"; then
-            got_kernel=1
-        fi
-        if [ -z "$got_ring3" ] && grep -qE '^ring3Wrapper: cpuID=[1-9]' "$OUT"; then
-            got_ring3=1
-        fi
-        if [ -n "$got_kernel" ] && [ -n "$got_ring3" ]; then
-            break
-        fi
+    if [ -f "$OUT" ] && grep -qE 'smp_basic_cpu=[1-9]|cpuID=[1-9]' "$OUT"; then
+        break
     fi
     sleep 0.5
 done
@@ -56,9 +65,13 @@ if ! [ -f "$OUT" ]; then
     exit 1
 fi
 
-echo "test_smp_basic: kernel_on_ap=${got_kernel:-0} ring3_on_ap=${got_ring3:-0}"
+AP_HITS=$(grep -oE 'smp_basic_cpu=[0-9]+' "$OUT" 2>/dev/null |
+    grep -oE '=[1-9]' | sort -u | wc -l)
+R3_HITS=$(grep -oE 'cpuID=[1-9]' "$OUT" 2>/dev/null | sort -u | wc -l)
 
-if [ -n "$got_kernel" ] || [ -n "$got_ring3" ]; then
+echo "test_smp_basic: ap_kernel_cpus=$AP_HITS ring3_ap_hits=$R3_HITS"
+
+if [ "$AP_HITS" -ge 1 ] || [ "$R3_HITS" -ge 1 ]; then
     echo "result: PASS"
     exit 0
 fi

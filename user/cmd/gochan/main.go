@@ -4,8 +4,9 @@
 //	$ gochan
 //
 // Two mini-demos:
-//  1. A 3-stage pipeline (producer → squarer → printer) threaded on
-//     three goroutines joined by unbuffered channels.
+//  1. A 3-stage pipeline (producer → squarer → printer). The producer
+//     and squarer run on goroutines; the main goroutine acts as the
+//     printer so the demo stays stable on the current TinyGo target.
 //  2. A `select` over two tickers that fire at different intervals.
 //
 // Unlike goprobe (which is a PASS/FAIL probe), this command prints
@@ -24,9 +25,8 @@ import (
 func main() {
 	gooos.Println("gochan: pipeline demo (5 items across 3 goroutines)")
 
-	source := make(chan int)
-	squared := make(chan int)
-	done := make(chan struct{})
+	source := make(chan int, 1)
+	squared := make(chan int, 1)
 
 	// Stage 1: emit 1..5 with a short gap between items.
 	go func() {
@@ -34,26 +34,21 @@ func main() {
 			source <- i
 			time.Sleep(10 * time.Millisecond)
 		}
-		close(source)
 	}()
 
 	// Stage 2: square every input.
 	go func() {
-		for n := range source {
+		for i := 0; i < 5; i++ {
+			n := <-source
 			squared <- n * n
 		}
-		close(squared)
 	}()
 
-	// Stage 3: print + signal done.
-	go func() {
-		for v := range squared {
-			gooos.Println("gochan: squared=" + strconv.Itoa(v))
-		}
-		done <- struct{}{}
-	}()
-
-	<-done
+	// Stage 3 runs on main goroutine: print five squared values.
+	for i := 0; i < 5; i++ {
+		v := <-squared
+		gooos.Println("gochan: squared=" + strconv.Itoa(v))
+	}
 
 	gooos.Println("gochan: select over two tickers (alpha/beta)")
 	a := make(chan string, 1)

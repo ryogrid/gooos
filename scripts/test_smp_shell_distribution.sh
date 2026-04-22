@@ -21,7 +21,34 @@
 set -u
 
 OUT="tmp/serial_smp_dist.log"
+CONF="src/preempt_config.go"
+BACKUP="tmp/preempt_config_smp_dist.go.bak"
 rm -f "$OUT"
+rm -f "$BACKUP"
+
+cp "$CONF" "$BACKUP"
+restore_config() {
+    if [ -f "$BACKUP" ]; then
+        mv "$BACKUP" "$CONF"
+        rm -f tmp/kernel.iso
+    fi
+}
+
+cleanup() {
+    if [ -n "${PID:-}" ]; then
+        kill "$PID" 2>/dev/null
+        wait "$PID" 2>/dev/null
+    fi
+    restore_config
+}
+
+trap cleanup EXIT
+
+sed -i 's/const runSMPBasicProbe = false/const runSMPBasicProbe = true/' "$CONF"
+if ! grep -q 'const runSMPBasicProbe = true' "$CONF"; then
+    echo "FAIL: could not enable runSMPBasicProbe"
+    exit 1
+fi
 
 if [ ! -f tmp/kernel.iso ]; then
     make iso >/dev/null 2>&1 || { echo "FAIL: make iso"; exit 1; }
@@ -34,12 +61,6 @@ qemu-system-x86_64 \
     -no-reboot -no-shutdown \
     -smp 4 &
 PID=$!
-
-cleanup() {
-    kill "$PID" 2>/dev/null
-    wait "$PID" 2>/dev/null
-}
-trap cleanup EXIT
 
 # Wait up to 20 s for at least one non-zero cpuID marker.
 for _ in $(seq 1 40); do

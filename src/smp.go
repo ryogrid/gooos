@@ -317,6 +317,12 @@ func apEntry(apIndex uint64) {
 	// reads can transiently return 0 on some boots.
 	percpuLatchAPICIDCurrent()
 
+	// Mask AP-side LINT0/LINT1. BSP keeps PIC pass-through on LINT0;
+	// APs must not accept ExtINT/NMI through local LINT lines or
+	// legacy PIC IRQ routing becomes flaky.
+	*(*uint32)(unsafe.Pointer(uintptr(0xFEE00350))) = 0x10000 // LVT LINT0
+	*(*uint32)(unsafe.Pointer(uintptr(0xFEE00360))) = 0x10000 // LVT LINT1
+
 	// Enter the TinyGo scheduler loop on this AP.
 	sti()
 	markAPSchedulerEntered()

@@ -116,18 +116,27 @@ var (
 	// procByTask maps a goroutine's *task.Task (as uintptr) to its
 	// *Process. Populated by ring3Wrapper; consulted by any syscall
 	// handler or kernel helper that needs the current process.
-	procByTask = make(map[uintptr]*Process)
+	procByTask map[uintptr]*Process
 
 	// procByPID maps a PID to its *Process. Populated by elfSpawn,
 	// removed by processWait (after the parent has reaped). Lets
 	// sys_wait(pid) find the right child.
-	procByPID = make(map[uint32]*Process)
+	procByPID map[uint32]*Process
 
 	// nextPID is the monotonic PID allocator. Wraps at 2^32 which
 	// is irrelevant for shell workloads. PID 0 is reserved as
 	// "invalid".
 	nextPID uint32 = 1
 )
+
+func ensureProcMaps() {
+	if procByTask == nil {
+		procByTask = make(map[uintptr]*Process)
+	}
+	if procByPID == nil {
+		procByPID = make(map[uint32]*Process)
+	}
+}
 
 // allocPID returns a fresh PID and bumps the counter.
 // Caller must hold procLock.
@@ -175,6 +184,7 @@ const userStackBase = uintptr(0x7FFF0000)
 // Protected by procLock.
 func currentProc() *Process {
 	flags := procLock.Acquire()
+	ensureProcMaps()
 	p := procByTask[taskCurrent()]
 	procLock.Release(flags)
 	return p
@@ -185,6 +195,7 @@ func currentProc() *Process {
 // Protected by procLock.
 func setCurrentProc(proc *Process) {
 	flags := procLock.Acquire()
+	ensureProcMaps()
 	procByTask[taskCurrent()] = proc
 	procLock.Release(flags)
 }
@@ -194,6 +205,7 @@ func setCurrentProc(proc *Process) {
 // Protected by procLock.
 func clearCurrentProc() {
 	flags := procLock.Acquire()
+	ensureProcMaps()
 	delete(procByTask, taskCurrent())
 	procLock.Release(flags)
 }
@@ -300,6 +312,8 @@ func elfSpawn(filename, args string, parent *Process) (*Process, bool) {
 	child.pml4 = newProcPML4()
 	{
 		fl := procLock.Acquire()
+		ensureProcMaps()
+		ensurePSMaps()
 		child.pid = allocPID()
 		procByPID[child.pid] = child
 		setProcName(child.pid, filename) // feature 2.5: ps-command name column

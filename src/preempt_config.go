@@ -37,6 +37,11 @@ const runUserPreemptProbe = false
 // negatives in scripts/test_smp_shell_preempt.sh.
 const runSMPShellPreemptProbe = false
 
+// runSMPBasicProbe gates the boot-time kernel goroutine distribution probe.
+// Off by default so normal SMP boots do not flood serial output or perturb
+// early shell/input bring-up. SMP distribution harnesses temporarily flip it.
+const runSMPBasicProbe = false
+
 // runSMPProbeShellTest writes a one-shot shell autorun script at boot
 // (`.autorun.sh`) so SMP `smpprobe` validation can execute through the
 // real shell parser/exec/wait path without HMP sendkey injection.

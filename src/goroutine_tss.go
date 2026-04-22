@@ -40,7 +40,13 @@ var gInfoLock Spinlock
 // gInfoByTask maps task pointers to Ring-3 mapping entries. Only
 // goroutines that execute Ring-3 code (i.e., ring3Wrapper) register
 // here. Protected by gInfoLock under SMP.
-var gInfoByTask = make(map[uintptr]*gInfo)
+var gInfoByTask map[uintptr]*gInfo
+
+func ensureGInfoMap() {
+	if gInfoByTask == nil {
+		gInfoByTask = make(map[uintptr]*gInfo)
+	}
+}
 
 // taskCurrent bridges to internal/task.Current(). The TinyGo scheduler
 // exposes the current task pointer through this function.
@@ -105,6 +111,7 @@ func registerRing3G() {
 		return
 	}
 	fl := gInfoLock.Acquire()
+	ensureGInfoMap()
 	gInfoByTask[t] = &gInfo{stackTop: taskStackTop(t)}
 	gInfoLock.Release(fl)
 }
@@ -122,6 +129,7 @@ func registerRing3GWithStack(stackTop uintptr, proc *Process) {
 		return
 	}
 	fl := gInfoLock.Acquire()
+	ensureGInfoMap()
 	gInfoByTask[t] = &gInfo{stackTop: stackTop, proc: proc}
 	gInfoLock.Release(fl)
 }
@@ -132,6 +140,7 @@ func unregisterRing3G() {
 		return
 	}
 	fl := gInfoLock.Acquire()
+	ensureGInfoMap()
 	delete(gInfoByTask, t)
 	gInfoLock.Release(fl)
 }

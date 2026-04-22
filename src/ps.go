@@ -55,13 +55,14 @@ var _ [1]byte = [unsafe.Sizeof(ProcInfo{}) - 63]byte{}
 // PID for cheap access from fillProcInfo without adding a Name field
 // to Process (which would bloat the struct for a single-consumer
 // feature).
-var procNameByPID = make(map[uint32][32]byte)
+var procNameByPID map[uint32][32]byte
 
 // setProcName records the ELF name for pid. Called from elfSpawn
 // under procLock. Truncates to 31 chars plus NUL.
 //
 // Caller must hold procLock.
 func setProcName(pid uint32, name string) {
+	ensurePSMaps()
 	var buf [32]byte
 	n := len(name)
 	if n > 31 {
@@ -81,7 +82,16 @@ func clearProcName(pid uint32) {
 
 // processStartTick is populated by elfSpawn under procLock. Cleared
 // alongside procNameByPID.
-var processStartTick = make(map[uint32]uint64)
+var processStartTick map[uint32]uint64
+
+func ensurePSMaps() {
+	if procNameByPID == nil {
+		procNameByPID = make(map[uint32][32]byte)
+	}
+	if processStartTick == nil {
+		processStartTick = make(map[uint32]uint64)
+	}
+}
 
 // fillProcInfo populates dst from proc. Zero-initialises dst first
 // so padding bytes never leak uninitialised kernel memory to user.

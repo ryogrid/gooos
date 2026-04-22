@@ -563,29 +563,25 @@ func main() {
 	vgaWriteLine(14, "Scheduler: TinyGo goroutines active")
 	serialPrintln("Scheduler: TinyGo goroutines active")
 
-	// Signal APs that BSP boot is complete. All services are
-	// running, filesystem populated. APs will now enter the
-	// scheduler and begin work-stealing.
+	// Load shell and jump to Ring 3. Does not return.
+	setupUserspace()
+}
+
+var bootPostShellReadyDone uint32
+
+func bootActivatePostShellReady() {
+	if bootPostShellReadyDone != 0 {
+		return
+	}
+	bootPostShellReadyDone = 1
+
 	bspBootDone = 1
 
-	// M3-7: SMP goroutine distribution probe. Spawn a long-running
-	// kernel goroutine that loops reporting which CPU it runs on.
-	// Under -smp >= 2 with stealWork live, an AP eventually picks
-	// it up and `smp_basic_cpu=N` with N != 0 lands in the serial
-	// log. scripts/test_smp_basic.sh greps for that.
-	go smpBasicProbe()
+	if runSMPBasicProbe {
+		go smpBasicProbe()
+	}
 
-	// Feature 2.1 kernel-preemption probe. Gated by preemptEnabled
-	// (src/preempt_config.go). Spawns a pair of goroutines under
-	// -smp 4: `kpHog` runs a tight counter loop with NO cooperative
-	// yield, `kpMarker` prints a marker line and sleeps briefly.
-	// With preemption live, the BSP LAPIC tick broadcasts vector
-	// 0xFB to the AP where kpHog lands, the AP's handlePreemptIPI
-	// runs Gosched, and kpMarker gets its turn. Serial log greps
-	// for `preempt_probe_marker=N` in scripts/test_preempt_kernel.sh.
 	if preemptEnabled && runSMPShellPreemptProbe {
-		// Feature 2.3 harness auto-launch — spawn cpuhog.elf and
-		// markerprint.elf without shell sendkey injection.
 		serialPrintln("preempt_probe: waiting for AP launcher for cpuhog+markerprint")
 		n := uint32(numCoresOnline)
 		if n == 0 {
@@ -599,23 +595,11 @@ func main() {
 
 	if preemptEnabled && runPreemptProbe {
 		serialPrintln("preempt_probe: spawning kpMarker + kpHog")
-		// Spawn kpMarker FIRST so it sits ahead of kpHog in BSP's
-		// runqueue. The BSP scheduler picks kpMarker first, it prints
-		// marker=0 then parks on afterTicks; BSP then picks kpHog
-		// which enters the tight loop. Every 50 ms afterTicks wakes
-		// kpMarker (enqueued to the timer wheel's CPU — not BSP),
-		// an AP picks it up via work-stealing, kpMarker prints
-		// another marker, parks again.
-		//
-		// Preemption kicks in when kpMarker and kpHog end up on
-		// the same AP's runqueue (after migration). Then the BSP
-		// timer's preempt IPI to that AP is what frees kpMarker.
 		go kpMarker()
 		go kpHog()
 	}
 
-	// Load shell and jump to Ring 3. Does not return.
-	setupUserspace()
+	preemptPhaseAdvance(preemptPhaseSchedReady)
 }
 
 // kpHog is a tight compute loop with zero cooperative-yield points.

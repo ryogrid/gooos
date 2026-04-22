@@ -183,10 +183,17 @@ type fsResponse struct {
 }
 
 // fsReqCh serializes all FS access through the single fsTask goroutine.
-var fsReqCh = make(chan *fsRequest, 8)
+var fsReqCh chan *fsRequest
+
+func ensureFSReqCh() {
+	if fsReqCh == nil {
+		fsReqCh = make(chan *fsRequest, 8)
+	}
+}
 
 // fsTask is the FS service goroutine. Spawned from main() via `go`.
 func fsTask() {
+	ensureFSReqCh()
 	fsTaskHandle = taskCurrent()
 	for req := range fsReqCh {
 		resp := &fsResponse{}
@@ -209,30 +216,35 @@ func fsTask() {
 }
 
 func fsSendCreate(name string) bool {
+	ensureFSReqCh()
 	reply := make(chan *fsResponse, 1)
 	fsReqCh <- &fsRequest{op: fsOpCreate, name: name, reply: reply}
 	return (<-reply).ok
 }
 
 func fsSendWrite(name string, data []byte) bool {
+	ensureFSReqCh()
 	reply := make(chan *fsResponse, 1)
 	fsReqCh <- &fsRequest{op: fsOpWrite, name: name, data: data, reply: reply}
 	return (<-reply).ok
 }
 
 func fsSendRead(name string) []byte {
+	ensureFSReqCh()
 	reply := make(chan *fsResponse, 1)
 	fsReqCh <- &fsRequest{op: fsOpRead, name: name, reply: reply}
 	return (<-reply).data
 }
 
 func fsSendList() []string {
+	ensureFSReqCh()
 	reply := make(chan *fsResponse, 1)
 	fsReqCh <- &fsRequest{op: fsOpList, reply: reply}
 	return (<-reply).names
 }
 
 func fsSendDelete(name string) bool {
+	ensureFSReqCh()
 	reply := make(chan *fsResponse, 1)
 	fsReqCh <- &fsRequest{op: fsOpDelete, name: name, reply: reply}
 	return (<-reply).ok

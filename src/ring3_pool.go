@@ -25,7 +25,7 @@ type ring3StackSlot struct {
 
 var (
 	ring3StackPool   [maxRing3Procs]ring3StackSlot
-	ring3StackPoolCh = make(chan int, maxRing3Procs) // free slot indices
+	ring3StackPoolCh chan int // free slot indices
 
 	// procByPoolSlot is the inverse of Process.poolIdx — indexed by
 	// ring3 pool slot, pointing at the Process that owns it. Used by
@@ -57,6 +57,9 @@ func clearProcByPoolSlot(idx int) {
 // ring3StackPoolInit allocates every slot's kernel stack and seeds
 // the free channel. Called once after vmInit() during boot.
 func ring3StackPoolInit() {
+	if ring3StackPoolCh == nil {
+		ring3StackPoolCh = make(chan int, maxRing3Procs)
+	}
 	for i := range ring3StackPool {
 		ring3StackPool[i].base = allocPagesContig(2)
 		ring3StackPoolCh <- i

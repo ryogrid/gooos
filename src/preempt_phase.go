@@ -12,7 +12,7 @@ const (
 	preemptPhaseOperational
 )
 
-var preemptPhase uint32 = preemptPhaseBootInit
+var preemptPhase uint32
 
 // apSchedEnteredCount counts APs that reached scheduler handoff.
 var apSchedEnteredCount uint32

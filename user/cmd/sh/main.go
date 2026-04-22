@@ -23,9 +23,11 @@ func main() {
 	gooos.Println("Type 'help' for available commands.")
 	gooos.Println("")
 	if gooos.Args() == "--autorun" {
+		gooos.ShellReady()
 		runAutorunIfPresent()
+	} else {
+		gooos.ShellReady()
 	}
-	gooos.ShellReady()
 
 	for {
 		reapBackgroundJobs()

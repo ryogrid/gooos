@@ -292,6 +292,7 @@ func udpSendRaw(srcIP, dstIP uint32, srcPort, dstPort uint16, data []byte) bool 
 
 	totalLen := ipv4HeaderMinSize + udpLen
 	frame := make([]byte, ethernetHeaderSize+totalLen)
+	broadcastMAC := broadcastMACAddr()
 	copy(frame[0:6], broadcastMAC[:])
 	copy(frame[6:12], e1000MAC[:])
 	frame[12] = byte(etherTypeIPv4 >> 8)

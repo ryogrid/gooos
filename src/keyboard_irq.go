@@ -28,7 +28,7 @@ var (
 
 // keyboardCh delivers scancode+ASCII events to sysReadHandler. Buffer
 // of 16 absorbs typing bursts without forcing the pump to park.
-var keyboardCh = make(chan uint32, 16)
+var keyboardCh chan uint32
 
 // keyboardIRQSend is invoked from the ISR (handleKeyboard). It must
 // not allocate and must not call any Go-runtime operation that could

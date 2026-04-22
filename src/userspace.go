@@ -329,7 +329,6 @@ func sysExecHandler(frame *SyscallFrame) {
 		argBuf[i] = *(*byte)(unsafe.Pointer(frame.RDX + i))
 	}
 	args := string(argBuf[:argLen])
-
 	exitCode, ok := elfExec(filename, args, parent)
 	if !ok {
 		frame.RAX = 0xFFFFFFFFFFFFFFFF
@@ -616,7 +615,7 @@ func sysGetcpuidHandler(frame *SyscallFrame) {
 // Signals that shell userspace reached interactive-ready state.
 // Preempt fanout is enabled from this explicit control point.
 func sysShellReadyHandler(frame *SyscallFrame) {
-	preemptPhaseAdvance(preemptPhaseSchedReady)
+	bootActivatePostShellReady()
 	frame.RAX = 0
 }
 
