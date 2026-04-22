@@ -37,7 +37,7 @@ const (
 	idtEntries        = 256
 	kernelCS          = 0x08 // GDT64_CODE selector (second GDT entry)
 	gateInterrupt     = 0x8E // Present=1 | DPL=0 | Type=0xE (64-bit interrupt gate)
-	gateInterruptUser = 0xEE // Present=1 | DPL=3 | Type=0xE (Ring 3 callable)
+	gateTrapUser      = 0xEF // Present=1 | DPL=3 | Type=0xF (Ring 3 trap gate)
 )
 
 var (
@@ -85,10 +85,13 @@ func idtInit() {
 	lidt(uintptr(unsafe.Pointer(&idtDesc[0])))
 }
 
-// setGateDPL3 changes the DPL of an IDT entry to Ring 3, allowing
-// user-mode software to trigger the interrupt via the int instruction.
+// setGateDPL3 changes an IDT entry to a Ring-3-callable trap gate.
+// syscalls must preserve IF while the handler runs: several handlers
+// legitimately block on channels/afterTicks, and using an interrupt
+// gate here would clear IF until iretq, deadlocking PIT/keyboard IRQ
+// delivery under shell ReadLine()/Sleep() paths.
 func setGateDPL3(vector int) {
-	idtTable[vector].TypeAttr = gateInterruptUser
+	idtTable[vector].TypeAttr = gateTrapUser
 }
 
 // idtLoadAP loads the (already-populated) IDT into this AP's IDTR.

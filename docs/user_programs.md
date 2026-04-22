@@ -7,10 +7,11 @@ in the `user/cmd/` tree. Networking demos (UDP/TCP/DHCP) live in
 ## gochan — native userspace goroutines + channels
 
 `gochan` is a shell-invokable user program that exercises native
-userspace goroutines + channels end-to-end: a three-stage pipeline
-(producer → squarer → printer, joined by unbuffered `chan int`)
-followed by a `select` race between two tickers that fire at 20 ms
-and 30 ms.
+userspace goroutines + channels end-to-end in a stable form for the
+current SMP userspace runtime: a small pipeline where the main
+goroutine enqueues five integers, a worker goroutine squares them,
+and the main goroutine prints the results. It finishes with a `select`
+over two ready channels (`alpha` / `beta`).
 
 Boot gooos (`make run` or `make iso` then QEMU) and at the shell
 prompt:
@@ -22,24 +23,28 @@ $ gochan
 Expected serial / VGA output (`PF=0` throughout):
 
 ```
-gochan: pipeline demo (5 items across 3 goroutines)
+gochan: pipeline demo (5 items across 2 goroutines + main)
 gochan: squared=1
 gochan: squared=4
 gochan: squared=9
 gochan: squared=16
 gochan: squared=25
-gochan: select over two tickers (alpha/beta)
+gochan: select over two ready channels (alpha/beta)
 gochan: got alpha
 gochan: got beta
 gochan: finished
 ```
 
 - Source: `user/cmd/gochan/main.go`.
-- Automated harness: `tmp/test_gochan.sh` — boots the kernel ISO
-  in headless QEMU, sends `gochan` to the shell via monitor
-  sendkey, and asserts every squared value, both select
-  branches, the `finished` marker, and `PF=0`. Prints
-  `result: PASS` on success.
+- Automated harnesses:
+  - `tmp/test_gochan.sh` — boots the kernel ISO in headless QEMU,
+    sends `gochan` to the shell via monitor sendkey, and asserts
+    the squared values, both select branches, the `finished`
+    marker, and `PF=0`.
+  - `tmp/test_smp_shell_sequence.sh` — rewrites the deterministic
+    shell autorun path to `hello -> gochan -> hello` and verifies
+    that the shell survives `gochan` and continues executing the
+    next command.
 
 ## tinyc — Tiny C interpreter
 
@@ -109,7 +114,7 @@ The full roster of programs embedded in the kernel ISO:
 | `wc FILE` | word / line / byte counts |
 | `fdprobe` | fd-table syscall verification probe |
 | `goprobe` | userspace goroutines / channels probe |
-| `gochan` | pipeline + select demo (above) |
+| `gochan` | stable pipeline + select demo (above) |
 | `smpprobe` | SMP worker-distribution probe (`Spawn` + `Wait`); workers emit CPU IDs with cooperative `Yield` between samples. Deterministic shell-path harness: `scripts/test_smp_shell_smpprobe.sh` |
 | `tinyc` | Tiny C interpreter (above) |
 | `edit` | vi-like editor (above) |

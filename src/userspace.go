@@ -811,22 +811,21 @@ func sysWaitpidHandler(frame *SyscallFrame) {
 		frame.RAX = sysFail(fdErrBad)
 		return
 	}
-	select {
-	case exitCode := <-child.exitCh:
-		if statusVaddr != 0 {
-			writeU32Through(activePML4ForProc(parent), statusVaddr, uint32(exitCode))
-		}
-		fl := procLock.Acquire()
-		if procByPID[child.pid] == child {
-			delete(procByPID, child.pid)
-			clearProcName(child.pid)
-			delete(processStartTick, child.pid)
-		}
-		procLock.Release(fl)
-		frame.RAX = uintptr(pid)
-	default:
+	if child.Exited == 0 {
 		frame.RAX = 0 // still running
+		return
 	}
+	if statusVaddr != 0 {
+		writeU32Through(activePML4ForProc(parent), statusVaddr, uint32(child.ExitCode))
+	}
+	fl = procLock.Acquire()
+	if procByPID[child.pid] == child {
+		delete(procByPID, child.pid)
+		clearProcName(child.pid)
+		delete(processStartTick, child.pid)
+	}
+	procLock.Release(fl)
+	frame.RAX = uintptr(pid)
 }
 
 // activePML4ForProc returns a valid PML4 address for walking user

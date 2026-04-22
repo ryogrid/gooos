@@ -31,6 +31,7 @@ const userHeapLimit = 2 * 1024 * 1024
 // task.Task pointer to its *Process.
 type Process struct {
 	ExitCode    uintptr
+	Exited      uint32
 	ArgString   [256]byte
 	ArgLen      int
 	UserPages   [maxUserPages]uintptr
@@ -438,7 +439,10 @@ func processWait(proc *Process) uintptr {
 			" wait=" + utoa(uint64(waitPID)))
 	}
 	setForegroundProc(proc)
-	exitCode := <-proc.exitCh
+	for proc.Exited == 0 {
+		gooosSchedulerYield()
+	}
+	exitCode := proc.ExitCode
 	setForegroundProc(prevForeground)
 	serialPrintln("MARKER: M6 processWait post-exitCh-recv")
 	if runSMPProbeShellTest {
@@ -512,6 +516,7 @@ func processExit(exitCode uintptr) {
 	}
 	proc.UserPageCnt = 0
 	proc.ExitCode = exitCode
+	proc.Exited = 1
 	serialPrintln("MARKER: M3 processExit post-freePage")
 
 	if proc.parent != nil {

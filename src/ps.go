@@ -102,10 +102,13 @@ func fillProcInfo(dst *ProcInfo, proc *Process, now uint64) {
 		dst.PPID = proc.parent.pid
 	}
 	dst.State = psSleeping // default; refined below
+	if proc.Exited != 0 {
+		dst.State = psExited
+	}
 	// Any process currently assigned to a per-CPU CurrentPoolIdx is
 	// classified as Running. Cheap and approximate; see
 	// impldoc/shell_ps_command.md §2.2.
-	for i := uint32(0); i < maxCPUs; i++ {
+	for i := uint32(0); i < maxCPUs && dst.State != psExited; i++ {
 		if perCPUBlocks[i].CurrentPoolIdx >= 0 &&
 			perCPUBlocks[i].CurrentPoolIdx == int32(proc.poolIdx) {
 			dst.State = psRunning

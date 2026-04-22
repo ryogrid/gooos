@@ -13,6 +13,7 @@ Policy notes:
 - [x] Phase 4: Add deterministic harness and execute Tier-0/Tier-1 verification matrix.
 - [x] Phase 5: Run reviewer subagent, fix findings, update `README.md` and linked docs, and reconcile unresolved TODO/FIXME markers.
 - [x] Post-phase hotfix: switch preempt operational transition to shell-driven event (`sys_shell_ready`) for deterministic startup control.
+- [x] Post-phase hotfix: run `int 0x80` as a Ring-3 trap gate and harden shell waits on `Process.Exited` so blocking syscalls and foreground command return remain live under SMP.
 
 Deferred scope memo:
 

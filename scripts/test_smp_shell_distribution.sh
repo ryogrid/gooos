@@ -50,9 +50,7 @@ if ! grep -q 'const runSMPBasicProbe = true' "$CONF"; then
     exit 1
 fi
 
-if [ ! -f tmp/kernel.iso ]; then
-    make iso >/dev/null 2>&1 || { echo "FAIL: make iso"; exit 1; }
-fi
+make iso >/dev/null 2>&1 || { echo "FAIL: make iso"; exit 1; }
 
 qemu-system-x86_64 \
     -cdrom tmp/kernel.iso \
