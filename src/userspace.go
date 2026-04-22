@@ -89,6 +89,7 @@ const (
 	sysSigaction = 35 // 2.2: install SIGALRM handler for user preempt
 	sysSigreturn = 36 // 2.2: restore user context after SIGALRM handler
 	sysListprocs = 37 // 2.5: enumerate process table (backs ps)
+	sysShellReady = 38 // deterministic startup gate for preempt fanout
 )
 
 // jumpToRing3 transitions the CPU to Ring 3 user mode via iretq.
@@ -177,6 +178,8 @@ func syscallDispatch(frame *SyscallFrame) {
 		sysSigactionHandler(frame)
 	case sysSigreturn:
 		sysSigreturnHandler(frame)
+	case sysShellReady:
+		sysShellReadyHandler(frame)
 	default:
 		frame.RAX = 0xFFFFFFFFFFFFFFFF // -1 for invalid syscall
 	}
@@ -607,6 +610,14 @@ func sysVgaSetCursorHandler(frame *SyscallFrame) {
 
 func sysGetcpuidHandler(frame *SyscallFrame) {
 	frame.RAX = uintptr(cpuID())
+}
+
+// --- Syscall 38: sys_shell_ready ---
+// Signals that shell userspace reached interactive-ready state.
+// Preempt fanout is enabled from this explicit control point.
+func sysShellReadyHandler(frame *SyscallFrame) {
+	preemptPhaseAdvance(preemptPhaseSchedReady)
+	frame.RAX = 0
 }
 
 // --- Syscall 12: sys_open ---

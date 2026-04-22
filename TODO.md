@@ -12,6 +12,7 @@ Policy notes:
 - [x] Phase 3: Implement deterministic shell `smpprobe` path (probe gate + autorun path + foreground ownership diagnostics).
 - [x] Phase 4: Add deterministic harness and execute Tier-0/Tier-1 verification matrix.
 - [x] Phase 5: Run reviewer subagent, fix findings, update `README.md` and linked docs, and reconcile unresolved TODO/FIXME markers.
+- [x] Post-phase hotfix: switch preempt operational transition to shell-driven event (`sys_shell_ready`) for deterministic startup control.
 
 Deferred scope memo:
 

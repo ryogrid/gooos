@@ -16,11 +16,11 @@ An experimental x86_64 operating system written in **Go (TinyGo) + GNU assembly*
 | PS/2 keyboard driver | Done | IRQ1 handler, scancode set 1 → ASCII, lock-free SPSC ring buffer drained by `keyboardPump` goroutine |
 | Virtual memory management | Done | Page fault handler, `mapPage`/`unmapPage` with 4 KiB granularity, bump + LIFO free stack with `allocPagesContig` for kernel stacks |
 | Scheduler | Done (preemptive) | **TinyGo native goroutines** (`scheduler=cores` — multi-core, per-CPU runqueues + work-stealing, **preemptive**). BSP's 100 Hz LAPIC timer broadcasts preempt IPI vector 0xFB to every AP (feature 2.1); each AP's `handlePreemptIPI` checks safe-points then calls `runtime.Gosched()`. Ring-3 user goroutines preempted via kernel-delivered SIGALRM (feature 2.2, iretq-frame rewrite). TSS.RSP0 updated per-Ring-3-goroutine via the `gooosOnResume` hook |
-| Userspace | Done | Ring 3 execution via `iretq`, TSS for privilege transitions, `int 0x80` syscall interface (38 syscalls — see the Syscall ABI row below and `current_impl_doc/syscalls.md`); each user process is a `ring3Wrapper` goroutine; user goroutines are preemptive via kernel-delivered SIGALRM (feature 2.2, `impldoc/preempt_user_goroutines.md`) |
+| Userspace | Done | Ring 3 execution via `iretq`, TSS for privilege transitions, `int 0x80` syscall interface (39 syscalls — see the Syscall ABI row below and `current_impl_0421_night/05_process_elf_ring3_syscalls_signals.md`); each user process is a `ring3Wrapper` goroutine; user goroutines are preemptive via kernel-delivered SIGALRM (feature 2.2, `impldoc/preempt_user_goroutines.md`) |
 | Filesystem | Done | In-memory flat filesystem: `Create`/`Write`/`Read`/`List`/`Delete` (32 entries, 256 KiB each); served by `fsTask` goroutine over native `chan *fsRequest` |
 | SMP | Done (v2 on TinyGo 0.40.1, multi-core `scheduler=cores`) | **Multi-processor scheduling.** Per-CPU storage (`IA32_GS_BASE`), per-CPU GDT/TSS/IDT, per-CPU runqueues (`runqueues[cpuID()]`), LAPIC timer (BSP), IPI wakeup vector 0xFC, spinlocks (page allocator, process maps, Queue, sleep/timer queues), per-CPU `cpuTasks`/`systemStack` via `runtime.systemStackPtr`. APs boot via INIT-SIPI-SIPI, load their own IDT/GDT/TSS, then enter TinyGo's scheduler (`runtime.apScheduler`) after `bspBootDone`. `stealWork` is **wired live**: when an AP's local queue is empty it steals from peers. `scheduleTask` broadcasts an IPI via `schedulerWake → gooosWakeupCPU` so idle APs wake and drain work. Observed: kernel goroutines and the Ring-3 shell goroutine routinely migrate to AP 1/3 (verified by `scripts/test_smp_basic.sh`). **Preemption**: feature 2.1 — BSP broadcasts preempt IPI vector 0xFB at every 100 Hz LAPIC tick; each AP's `handlePreemptIPI` safe-point-checks and calls `runtime.Gosched()`. A tight compute-bound kernel goroutine on an AP gets ~10 ms quantum. Ring-3 user goroutines are preempted via kernel-delivered SIGALRM (feature 2.2). **Known gap**: the AP LAPIC timer's per-CPU tick remains deferred (second-order hang, see `impldoc/smp_deferred_and_known_issues.md §2.2`); 2.1 chose BSP-broadcast IPI which gives coarser IPI-latency quantum without the hang. See `impldoc/smp_unblock_overview.md` for the M2/M3/M4 unblock write-up and `impldoc/smp_migration_overview.md` for the 0.33.0 → 0.40.1 migration background |
 | Channel IPC + select | Done | **Native Go `chan` and `select`** in Ring 0. `fsReqCh`, `keyboardCh`, per-process `exitCh` are all `make(chan ...)` constructed by the TinyGo runtime |
-| Syscall ABI | Done | 38-syscall register-based dispatch (all numbered; see `current_impl_doc/syscalls.md` for the canonical table). Base set: `sys_exit`, `sys_write`, `sys_read`, `sys_exec`, `sys_fs_read/write/list`, `sys_yield`, `sys_sleep`, `sys_getargs`, `sys_sbrk`, `sys_vga_clear`, `sys_open`, `sys_close`, `sys_dup2`, `sys_spawn`, `sys_wait`, `sys_pipe`, `sys_read_key`, `sys_vga_write_at`, `sys_vga_set_cursor`, `sys_getcpuid`. Net stack adds `sys_socket`/`sys_bind`/`sys_sendto`/`sys_recvfrom`/`sys_net_config`/`sys_sendto_bcast` (Phase 5) and `sys_listen`/`sys_accept`/`sys_connect`/`sys_tcp_send`/`sys_tcp_recv`/`sys_shutdown` (TCP phases). Preempt+shell batch adds `sys_waitpid` (#34, WNOHANG-only non-blocking wait; feature 2.4), `sys_sigaction` (#35, register SIGALRM handler; feature 2.2), `sys_sigreturn` (#36, restore context after SIGALRM; feature 2.2) and `sys_listprocs` (#37, process-table snapshot; feature 2.5). |
+| Syscall ABI | Done | 39-syscall register-based dispatch (all numbered; see `current_impl_0421_night/05_process_elf_ring3_syscalls_signals.md` for the canonical table and dispatch notes). Base set: `sys_exit`, `sys_write`, `sys_read`, `sys_exec`, `sys_fs_read/write/list`, `sys_yield`, `sys_sleep`, `sys_getargs`, `sys_sbrk`, `sys_vga_clear`, `sys_open`, `sys_close`, `sys_dup2`, `sys_spawn`, `sys_wait`, `sys_pipe`, `sys_read_key`, `sys_vga_write_at`, `sys_vga_set_cursor`, `sys_getcpuid`. Net stack adds `sys_socket`/`sys_bind`/`sys_sendto`/`sys_recvfrom`/`sys_net_config`/`sys_sendto_bcast` (Phase 5) and `sys_listen`/`sys_accept`/`sys_connect`/`sys_tcp_send`/`sys_tcp_recv`/`sys_shutdown` (TCP phases). Preempt+shell batch adds `sys_waitpid` (#34, WNOHANG-only non-blocking wait; feature 2.4), `sys_sigaction` (#35, register SIGALRM handler; feature 2.2), `sys_sigreturn` (#36, restore context after SIGALRM; feature 2.2), `sys_listprocs` (#37, process-table snapshot; feature 2.5) and `sys_shell_ready` (#38, event-driven startup gate for preempt fanout). |
 | ELF64 loader | Done | Parse ELF64 headers, map PT_LOAD segments, per-process page tracking, parent page save/restore for exec |
 | BusyBox-style shell | Done | Interactive shell (`sh.elf`) with built-in commands (help, echo, clear, exit) and external ELF commands (ls, cat, wc, hello, fdprobe, goprobe, gochan, tinyc, edit, ps, cpuhog, markerprint, plus net-stack demos `udpecho`, `dhcp`, `tcpecho`, `tcpcli`, `smpprobe`) compiled with TinyGo; supports `<`/`>`/`>>` redirection, N-stage `\|` pipes, and `&` background execution with a 16-slot jobs table (feature 2.4, `impldoc/shell_background_jobs.md`). `ps` enumerates the process table via `sys_listprocs` (feature 2.5, `impldoc/shell_ps_command.md`). Deterministic SMP shell-command probing can be enabled with `runSMPProbeShellTest` and exercised by `scripts/test_smp_shell_smpprobe.sh`. |
 | File descriptor table | Done | Per-process `Process.fds [16]` of `FileDesc`; `consoleStdin` / `consoleStdout` / `fileFd` / `pipeReader` / `pipeWriter` / `socketFd` impls; inheritance on exec; refcounted close on pipe ends |
@@ -33,7 +33,7 @@ An experimental x86_64 operating system written in **Go (TinyGo) + GNU assembly*
 | Allocation-free fatal handlers | Done | `handlePageFault`/`handleDivisionError` format CR2/RIP/errcode into a `.bss` `panicHexBuf` via no-alloc `appendHex`/`appendStr` helpers (`src/panic.go`); `//go:nosplit` |
 | Stack-overflow diagnostic | Done | Patched `task.Pause()` calls `gooosStackOverflow(t)` on canary mismatch — prints task pointer + stack-top + canary address before halting, no allocation |
 | Boot stack-size audit | Done | `stackSizeAudit()` (gated by `const runStackAudit`) reports per-goroutine high-water-mark usage on serial; off in release builds |
-| `time.After` replacement | Done | `afterTicks(d uint64) <-chan struct{}` in `src/afterticks.go` — local stand-in because the TinyGo `time` package needs SSE we keep disabled. Backed by a **single-dispatcher timer wheel** (one long-lived goroutine draining a fixed-size `[256]timerEntry` list under lock-rank 12) so repeated callers no longer allocate per-call `Task` structs in the patched TinyGo runtime — see `current_impl_doc/known_issues.md` §"afterTicks single-dispatcher timer wheel" and `tcp_problem_review2/` for the bug this fixed. |
+| `time.After` replacement | Done | `afterTicks(d uint64) <-chan struct{}` in `src/afterticks.go` — local stand-in because the TinyGo `time` package needs SSE we keep disabled. Backed by a **single-dispatcher timer wheel** (one long-lived goroutine draining a fixed-size `[256]timerEntry` list under lock-rank 12) so repeated callers no longer allocate per-call `Task` structs in the patched TinyGo runtime — see `current_impl_0421_night/10_test_harnesses_and_instability_map.md` and `tcp_problem_review2/` for the late-timing RX-stall context this fixed. |
 | Raw keyboard input | Done | `sys_read_key` (syscall 18) delivers single keystrokes with modifier flags (Shift/Ctrl/Alt) and extended-key prefix (arrow keys, Home/End/Delete). Keyboard driver (`src/keyboard.go`) tracks Ctrl + Alt make/break and consumes 0xE0 prefix. Backward compatible with line-buffered `sys_read` |
 | VGA cell + cursor control | Done | `sys_vga_write_at` (19) writes a character with color attribute at (row, col); `sys_vga_set_cursor` (20) programs the hardware cursor via CRT controller. Enables full-screen editors and TUI programs |
 | Text editor (vi-like) | Done | `edit.elf` — modal text editor with Normal/Insert/Command modes. Navigate with h/j/k/l or arrow keys, insert text with `i`/`a`/`o`, save with `:w`, quit with `:q`. 5 Go source files under `user/cmd/edit/`. See `impldoc/editor_overview.md` |
@@ -155,7 +155,8 @@ gooos/
 ├── README.md / CLAUDE.md / Makefile / go.mod / LICENSE
 ├── TODO_NET4.md                 # current-session fix checklist (prior ones in pasttodos/)
 ├── docs/                        # README-companion walkthroughs (networking, user programs, layout)
-├── current_impl_doc/            # 8 as-built reference docs (overview, syscalls, scheduler, memory, ipc, userland, glossary, known_issues)
+├── current_impl_0421_night/     # current implementation reference set (authoritative)
+├── current_impl_doc/            # legacy reference set (stale; kept for historical context)
 ├── impldoc/                     # ~55 design docs (English)
 ├── pasttodos/                   # completed TODO checklists (NET1, NET2, NET3)
 ├── tcp_problem/                 # handoff package for the late-timing RX stall (pre-fix)
@@ -417,19 +418,24 @@ Hello, World from gooos userspace!
   separately.
 ## Documentation
 
-Reference docs live under `current_impl_doc/` (as-built) and
-`impldoc/` (design). Companion walkthroughs under `docs/`.
+Reference docs live under `current_impl_0421_night/` (current,
+authoritative) and `impldoc/` (design notes). Companion walkthroughs
+under `docs/`.
 
-As-built reference (start here):
+Current implementation reference (start here):
 
-- [Architecture Overview](current_impl_doc/overview.md) — boot flow, memory map, task model
-- [Syscall ABI](current_impl_doc/syscalls.md) — 34-syscall reference
-- [Scheduler](current_impl_doc/scheduler.md) — task states, context switch, process lifecycle
-- [Memory](current_impl_doc/memory.md) — page allocator, page tables, linker layout
-- [IPC](current_impl_doc/ipc.md) — channels, service tasks, `afterTicks` timer wheel
-- [Userland](current_impl_doc/userland.md) — SDK, build system, user programs
-- [Glossary](current_impl_doc/glossary.md) — terminology and goroutine kinds
-- [Known Issues](current_impl_doc/known_issues.md) — workarounds, limitations, resolved bugs
+- [00 Index](current_impl_0421_night/00_index.md) — scope, reading order, invariants
+- [01 Boot and Init](current_impl_0421_night/01_boot_and_kernel_init.md)
+- [02 Descriptors/Traps](current_impl_0421_night/02_cpu_descriptors_traps_interrupts.md)
+- [03 SMP/LAPIC/IPI](current_impl_0421_night/03_smp_lapic_timer_ipi.md)
+- [04 Scheduler/Preemption](current_impl_0421_night/04_scheduler_runtime_preemption.md)
+- [05 Process/ELF/Syscalls](current_impl_0421_night/05_process_elf_ring3_syscalls_signals.md)
+- [06 Memory/VM/GC](current_impl_0421_night/06_memory_vm_allocator_gc.md)
+- [07 FS/FD/Shell I/O](current_impl_0421_night/07_filesystem_fd_shell_io.md)
+- [08 Network Driver-to-Socket](current_impl_0421_night/08_network_stack_driver_to_socket.md)
+- [09 Userland ABI + Embedded ELFs](current_impl_0421_night/09_userland_abi_and_embedded_elves.md)
+- [10 Harnesses + Instability Map](current_impl_0421_night/10_test_harnesses_and_instability_map.md)
+- [11 Traceability Matrix](current_impl_0421_night/11_traceability_matrix.md)
 
 Design docs (deeper dives — many superseded by as-builts; see
 `docs/repo_layout.md` for a staleness-aware map):

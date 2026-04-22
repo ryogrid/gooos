@@ -67,7 +67,7 @@ Wrapper does not return in normal execution; process exits via syscall path.
 
 - Syscall vector: `0x80`.
 - Dispatch entry: `syscallDispatch(frame *SyscallFrame)`.
-- Syscall range currently covers `0..37` with explicit handlers for each supported operation.
+- Syscall range currently covers `0..38` with explicit handlers for each supported operation.
 
 Notable numbers:
 
@@ -75,6 +75,7 @@ Notable numbers:
 - `35`: `sysSigaction`
 - `36`: `sysSigreturn`
 - `37`: `sysListprocs`
+- `38`: `sysShellReady` (shell interactive-ready event gate for preempt fanout)
 
 ## Signal Delivery Mechanics (`src/user_signal.go`)
 

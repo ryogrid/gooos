@@ -104,6 +104,7 @@ const WNOHANG = 1
 
 // sysWaitpid is syscall 34. Mirrors src/userspace.go:sysWaitpid.
 const sysWaitpid = 34
+const sysShellReady = 38
 
 // Waitpid is the non-blocking sibling of Wait. If WNOHANG is set in
 // options and the child is still running, returns (0, false). On reap,
@@ -126,4 +127,10 @@ func Waitpid(pid int, options uint32) (int, bool) {
 		return 0, false
 	}
 	return int(status), true
+}
+
+// ShellReady tells the kernel that the shell reached interactive-ready
+// state and preempt fanout may now transition to operational.
+func ShellReady() {
+	syscall0(sysShellReady)
 }

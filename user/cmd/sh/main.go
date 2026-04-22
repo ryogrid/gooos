@@ -25,6 +25,7 @@ func main() {
 	if gooos.Args() == "--autorun" {
 		runAutorunIfPresent()
 	}
+	gooos.ShellReady()
 
 	for {
 		reapBackgroundJobs()
