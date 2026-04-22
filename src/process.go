@@ -415,7 +415,7 @@ func elfSpawn(filename, args string, parent *Process) (*Process, bool) {
 // Background processes (those whose parent is not waiting on
 // them) see EOF on stdin reads.
 func processWait(proc *Process) uintptr {
-	prevForeground := foregroundProc
+	prevForeground := getForegroundProc()
 	if runSMPProbeShellTest {
 		prevPID := uint32(0)
 		if prevForeground != nil {
@@ -430,8 +430,8 @@ func processWait(proc *Process) uintptr {
 	}
 	setForegroundProc(proc)
 	exitCode := <-proc.exitCh
-	serialPrintln("MARKER: M6 processWait post-exitCh-recv")
 	setForegroundProc(prevForeground)
+	serialPrintln("MARKER: M6 processWait post-exitCh-recv")
 	if runSMPProbeShellTest {
 		after := getForegroundProc()
 		afterPID := uint32(0)
