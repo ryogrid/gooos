@@ -35,6 +35,10 @@ func main() {
 	c2 := make(chan int, 1)
 	go func() { c1 <- 1 }()
 	go func() { c2 <- 2 }()
+	// Brief sleep to allow queued goroutines to execute before select blocks.
+	// TinyGo user-space scheduler may not run goroutines on demand without
+	// a yield point. This sleep provides a small scheduling window.
+	time.Sleep(1 * time.Millisecond)
 	sum := 0
 	for i := 0; i < 2; i++ {
 		select {
