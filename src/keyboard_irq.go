@@ -23,6 +23,12 @@ var (
 	gooosKbdTail uint32 // reader (pump) — monotonically increments
 )
 
+// kbdRingDrops counts events dropped because the ring was full at
+// ISR time. Normally zero. Exposed by netDiag so a bursty-paste or
+// lost-consumer bug becomes visible without an ISR serial print.
+// E1 per TODO_FIX.md.
+var kbdRingDrops uint32
+
 // keyboardIRQSend is invoked from the ISR (handleKeyboard). It must
 // not allocate and must not call any Go-runtime operation that could
 // park or take a lock. `//go:nosplit` keeps TinyGo from inserting a
@@ -33,7 +39,8 @@ var (
 func keyboardIRQSend(event uint32) {
 	h := gooosKbdHead
 	if h-gooosKbdTail >= kbdRingSize {
-		return // full, drop
+		kbdRingDrops++ // full, drop (diagnostic, racey increment OK)
+		return
 	}
 	gooosKbdRing[h&(kbdRingSize-1)] = event
 	gooosKbdHead = h + 1

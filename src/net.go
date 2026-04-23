@@ -209,6 +209,12 @@ func netDiag() {
 	} else {
 		serialPrintln("kbdIRQ:never")
 	}
+	if kbdRingDrops != 0 {
+		serialPrintln("kbdRing:drops=" + utoa(uint64(kbdRingDrops)))
+	}
+	if kernelThreadSpawnDrops != 0 {
+		serialPrintln("kt:spawn_drops=" + utoa(uint64(kernelThreadSpawnDrops)))
+	}
 	tcpDiag()
 	serialPrintln("=== end ===")
 }
