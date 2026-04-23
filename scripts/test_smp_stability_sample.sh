@@ -78,10 +78,16 @@ fi
 # so late boot diagnostics and initial ReadLine parking can settle.
 sleep 5
 
-# Same backspace guard used by existing HMP harnesses: the first post-boot key
-# can be lost, and a leading backspace is harmless on an empty line buffer.
+# For this timing-sensitive harness, default to human-like typing without an
+# automatic leading backspace. Existing HMP tests use a backspace guard to
+# absorb a swallowed first key, but here that extra keypress can perturb the
+# exact input path under investigation. Re-enable only when explicitly needed.
+if [ "${HMP_LEADING_BACKSPACE:-0}" = "1" ]; then
+    hmp_send_many 'sendkey backspace'
+    sleep 1
+fi
+
 hmp_send_many \
-    'sendkey backspace' \
     'sendkey g' \
     'sendkey o' \
     'sendkey c' \
@@ -112,8 +118,12 @@ if [ "$GOCHAN_FINISH" -eq 1 ]; then
     # Preserve another human-scale think time before the next command.
     sleep 4
 
+    if [ "${HMP_LEADING_BACKSPACE:-0}" = "1" ]; then
+        hmp_send_many 'sendkey backspace'
+        sleep 1
+    fi
+
     hmp_send_many \
-        'sendkey backspace' \
         'sendkey s' \
         'sendkey m' \
         'sendkey p' \
