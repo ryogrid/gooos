@@ -17,6 +17,7 @@ package main
 
 import (
 	"strconv"
+	"time"
 
 	"github.com/ryogrid/gooos/user/gooos"
 )
@@ -51,6 +52,8 @@ func main() {
 	b := make(chan string, 1)
 	go func() { a <- "alpha" }()
 	go func() { b <- "beta" }()
+	// Brief sleep to allow goroutines to execute before select blocks
+	time.Sleep(1 * time.Millisecond)
 	for i := 0; i < 2; i++ {
 		select {
 		case v := <-a:
