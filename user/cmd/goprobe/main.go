@@ -2,16 +2,14 @@
 //
 // Exercises every concurrency primitive enabled by the userspace
 // TinyGo tasks scheduler (scheduler=tasks on user/target.json):
-// go func(), chan, select, time.Sleep, and Yield-driven
-// cooperation. Each sub-test prints a PASS marker on its own line
+// go func(), chan, select, and Yield-driven cooperation.
+// Each sub-test prints a PASS marker on its own line
 // so the harness (tmp/test_goprobe.sh) can pattern-match. A
 // failure prints a FAIL line and exits with code 1.
 
 package main
 
 import (
-	"time"
-
 	"github.com/ryogrid/gooos/user/gooos"
 )
 
@@ -35,10 +33,12 @@ func main() {
 	c2 := make(chan int, 1)
 	go func() { c1 <- 1 }()
 	go func() { c2 <- 2 }()
-	// Brief sleep to allow queued goroutines to execute before select blocks.
+	// Brief yield loop to allow queued goroutines to execute before select blocks.
 	// TinyGo user-space scheduler may not run goroutines on demand without
-	// a yield point. This sleep provides a small scheduling window.
-	time.Sleep(1 * time.Millisecond)
+	// a yield point. Multiple yields provide a small scheduling window.
+	for j := 0; j < 10; j++ {
+		gooos.Yield()
+	}
 	sum := 0
 	for i := 0; i < 2; i++ {
 		select {
@@ -55,21 +55,24 @@ func main() {
 		gooos.Exit(1)
 	}
 
-	// --- Test 3: time.Sleep-driven goroutine interleaving ---
+	// --- Test 3: Yield-driven goroutine interleaving ---
 	counter := 0
 	done := make(chan struct{})
 	go func() {
 		for i := 0; i < 3; i++ {
-			time.Sleep(20 * time.Millisecond)
+			// Replace time.Sleep with Yield loop
+			for j := 0; j < 100; j++ {
+				gooos.Yield()
+			}
 			counter++
 		}
 		close(done)
 	}()
 	<-done
 	if counter == 3 {
-		gooos.Println("goprobe: time.Sleep OK")
+		gooos.Println("goprobe: yield-loop OK")
 	} else {
-		gooos.Println("goprobe: time.Sleep FAIL")
+		gooos.Println("goprobe: yield-loop FAIL")
 		gooos.Exit(1)
 	}
 

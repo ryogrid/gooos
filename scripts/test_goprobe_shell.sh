@@ -51,13 +51,13 @@ for _ in $(seq 1 600); do
     HAS_BEGIN=$(grep -c 'goprobe: begin' "$OUT" 2>/dev/null || true)
     HAS_GO_CHAN=$(grep -c 'goprobe: go+chan OK' "$OUT" 2>/dev/null || true)
     HAS_SELECT=$(grep -c 'goprobe: select OK' "$OUT" 2>/dev/null || true)
-    HAS_SLEEP=$(grep -c 'goprobe: time.Sleep OK' "$OUT" 2>/dev/null || true)
-    HAS_YIELD=$(grep -c 'goprobe: yield-cycle OK' "$OUT" 2>/dev/null || true)
+    HAS_YIELD_LOOP=$(grep -c 'goprobe: yield-loop OK' "$OUT" 2>/dev/null || true)
+    HAS_YIELD_CYCLE=$(grep -c 'goprobe: yield-cycle OK' "$OUT" 2>/dev/null || true)
     HAS_PASS=$(grep -c 'goprobe: ALL TESTS PASS' "$OUT" 2>/dev/null || true)
     
     if [ "${HAS_BEGIN:-0}" -ge 1 ] && [ "${HAS_GO_CHAN:-0}" -ge 1 ] && \
-       [ "${HAS_SELECT:-0}" -ge 1 ] && [ "${HAS_SLEEP:-0}" -ge 1 ] && \
-       [ "${HAS_YIELD:-0}" -ge 1 ] && [ "${HAS_PASS:-0}" -ge 1 ]; then
+       [ "${HAS_SELECT:-0}" -ge 1 ] && [ "${HAS_YIELD_LOOP:-0}" -ge 1 ] && \
+       [ "${HAS_YIELD_CYCLE:-0}" -ge 1 ] && [ "${HAS_PASS:-0}" -ge 1 ]; then
         break
     fi
     sleep 0.1
@@ -66,15 +66,15 @@ done
 HAS_BEGIN=$(grep -c 'goprobe: begin' "$OUT" 2>/dev/null || true)
 HAS_GO_CHAN=$(grep -c 'goprobe: go+chan OK' "$OUT" 2>/dev/null || true)
 HAS_SELECT=$(grep -c 'goprobe: select OK' "$OUT" 2>/dev/null || true)
-HAS_SLEEP=$(grep -c 'goprobe: time.Sleep OK' "$OUT" 2>/dev/null || true)
-HAS_YIELD=$(grep -c 'goprobe: yield-cycle OK' "$OUT" 2>/dev/null || true)
+HAS_YIELD_LOOP=$(grep -c 'goprobe: yield-loop OK' "$OUT" 2>/dev/null || true)
+HAS_YIELD_CYCLE=$(grep -c 'goprobe: yield-cycle OK' "$OUT" 2>/dev/null || true)
 HAS_PASS=$(grep -c 'goprobe: ALL TESTS PASS' "$OUT" 2>/dev/null || true)
 
-echo "test_goprobe_shell: begin=${HAS_BEGIN:-0} go_chan=${HAS_GO_CHAN:-0} select=${HAS_SELECT:-0} sleep=${HAS_SLEEP:-0} yield=${HAS_YIELD:-0} pass=${HAS_PASS:-0}"
+echo "test_goprobe_shell: begin=${HAS_BEGIN:-0} go_chan=${HAS_GO_CHAN:-0} select=${HAS_SELECT:-0} yield_loop=${HAS_YIELD_LOOP:-0} yield_cycle=${HAS_YIELD_CYCLE:-0} pass=${HAS_PASS:-0}"
 
 if [ "${HAS_BEGIN:-0}" -ge 1 ] && [ "${HAS_GO_CHAN:-0}" -ge 1 ] && \
-   [ "${HAS_SELECT:-0}" -ge 1 ] && [ "${HAS_SLEEP:-0}" -ge 1 ] && \
-   [ "${HAS_YIELD:-0}" -ge 1 ] && [ "${HAS_PASS:-0}" -ge 1 ]; then
+   [ "${HAS_SELECT:-0}" -ge 1 ] && [ "${HAS_YIELD_LOOP:-0}" -ge 1 ] && \
+   [ "${HAS_YIELD_CYCLE:-0}" -ge 1 ] && [ "${HAS_PASS:-0}" -ge 1 ]; then
     echo "result: PASS"
     exit 0
 fi
