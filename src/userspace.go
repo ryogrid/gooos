@@ -453,11 +453,6 @@ func sysSleepHandler(frame *SyscallFrame) {
 	if ticks > 0 {
 		<-afterTicks(ticks)
 	}
-	// After waking from afterTicks, the scheduler may have migrated
-	// this Ring-3 goroutine to a different CPU (via work-stealing).
-	// Re-invoke gooosOnResume to ensure TSS.RSP0 and CR3 are correct
-	// for the new CPU context, preventing kernel stack corruption.
-	gooosOnResume()
 	frame.RAX = 0
 }
 
