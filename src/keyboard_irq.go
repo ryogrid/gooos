@@ -21,8 +21,6 @@ var (
 	gooosKbdRing [kbdRingSize]uint32
 	gooosKbdHead uint32 // writer (ISR) — monotonically increments
 	gooosKbdTail uint32 // reader (pump) — monotonically increments
-	kbdEventsDropped uint32 // count of dropped events
-	kbdEventsRead uint32 // count of events successfully read
 )
 
 // keyboardIRQSend is invoked from the ISR (handleKeyboard). It must
@@ -35,7 +33,6 @@ var (
 func keyboardIRQSend(event uint32) {
 	h := gooosKbdHead
 	if h-gooosKbdTail >= kbdRingSize {
-		kbdEventsDropped++
 		return // full, drop
 	}
 	gooosKbdRing[h&(kbdRingSize-1)] = event
@@ -53,7 +50,6 @@ func keyboardIRQRecv() (uint32, bool) {
 	}
 	event := gooosKbdRing[t&(kbdRingSize-1)]
 	gooosKbdTail = t + 1
-	kbdEventsRead++
 	return event, true
 }
 
@@ -100,13 +96,6 @@ func keyboardReadEventBlocking() uint32 {
 				return ev
 			}
 			sti()
-			// Critical: re-check ring after sti() but before hlt().
-			// If an IRQ1 arrives between sti() and hlt(), we need to
-			// see the event, otherwise hlt() might sleep forever.
-			if ev, ok := keyboardIRQRecv(); ok {
-				markKeyboardDrainCPU()
-				return ev
-			}
 			hlt()
 			continue
 		}
