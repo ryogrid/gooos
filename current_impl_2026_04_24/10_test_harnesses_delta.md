@@ -123,7 +123,19 @@ User processes reliably hang on the second or third `time.Sleep`/`gooos.Sleep` c
 
 ## Open Questions / Known Gaps
 
-- `test_smp_shell_preempt.sh` produces `markers_observed=0..5` across runs with no deterministic predictor. The harness is kept for diagnostic signal, not as a gating check.
-- `test_sleeptest_shell.sh` is deliberately a *reproducer*, not a pass-gate. "Expected fail" under current kernel behavior.
-- Harness hygiene: every autorun harness mutates `src/preempt_config.go` via `sed`. A crashed harness leaves the flag flipped; next `make build` exhibits unexpected behavior. All current harnesses `trap ... EXIT` the revert, but a hard `kill -9` on the harness will leak the flip.
-- `scripts/test_net_tap.sh` exists but is not listed under core regression in baseline. Unclear if it's production-ready; check its header comment before using.
+- **Deferred (G1)**: `test_smp_shell_preempt.sh` still flaky
+  (`markers_observed=0..5` across runs). Improvements from B2
+  (AP LAPIC timer) + F1 (netRxLoop kernel-thread removal)
+  should help; a re-gating as a release-blocking harness is
+  deferred until B1 (ring3Wrapper distribution) lands.
+- **Deferred (G2)**: `test_sleeptest_shell.sh` is partially
+  passing (Sleep 1 + 2 reliably, Sleep 3 intermittently hangs).
+  Re-gating to "regression" is deferred until the F1
+  follow-up (channel-wakeup cross-CPU audit) closes.
+- **Closed (G3)**: `scripts/harness_lib.sh` now provides
+  `harness_recover_stale_backup`, sourced from all eight
+  autorun-style harnesses. A leaked `kill -9` that left a
+  backup in `tmp/` is restored automatically at the next run.
+- **Closed (G4)**: `test_net_tap.sh` — out of scope (not in
+  the delta doc-set's Open Questions list originally; noted
+  as "check header before using").

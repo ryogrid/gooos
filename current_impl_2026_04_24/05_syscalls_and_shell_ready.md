@@ -93,6 +93,16 @@ This sits inside `processWait(child)`. The restore happens **synchronously** on 
 
 ## Open Questions / Known Gaps
 
-- `procLock` is rank 2. Holding it across `freePage` (which acquires `pageAllocLock` at rank 1) is fine (higher-rank holder acquires lower-rank lock = OK). But a *future* caller that holds `pageAllocLock` and tries to take `procLock` would invert the rank order. Nothing in the current tree does this; the invariant is asserted only informally in comments.
-- `sys_shell_ready` has no authentication: any Ring-3 process can call it. Current shell is the *only* Ring-3 binary that does (`user/cmd/sh/main.go:26`/`:29`), but a rogue program could also call it. `bootActivatePostShellReady` is idempotent (guarded by `bootPostShellReadyDone`), so multiple calls are harmless — but an attacker could call it *before* the shell does if the ELF load order ever changes. Currently the shell is always launched first via `elfLoad("sh.elf")` in `setupUserspace`, so this is OK.
-- `processExit`'s diagnostic dump inside the critical section adds serial-print latency to every exit when `runSMPShellPreemptProbe` is on. Off by default; no production impact.
+- **Closed (D1)**: `procLock` rank-order assertion now has an
+  inline comment above the `procLock.Acquire` in `processExit`
+  noting that rank 2 (procLock) holding rank 1 (pageAllocLock)
+  is the normative direction and the reverse is prohibited.
+- **Closed (D2)**: `sys_shell_ready` now rejects callers that are
+  not the current foreground process. `sysShellReadyHandler` in
+  `src/userspace.go:617` returns `-fdErrBad` if
+  `currentProc() != getForegroundProc()`. The shell is always
+  foreground at first call; any later caller is rejected, which
+  narrows the attack surface without breaking the normal flow.
+- **Closed (D3)**: diagnostic dump inside `processExit` critical
+  section is gated by `runSMPShellPreemptProbe` (off by default);
+  no production-path impact, no change needed.

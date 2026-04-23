@@ -86,7 +86,20 @@ Replaces the following description in baseline **§IPI Paths**:
 
 ## Open Questions / Known Gaps
 
-- In observed SMP runs, `smpprobe` workers can still all report `cpuID=0` even with `preemptPhaseOperational` reached and the preempt IPI targets snapped correctly. See `smp_preempt_problem/README.md §3` — current hypothesis is that the failure is post-shell runtime/scheduling-side (work-stealing not effective) rather than IPI delivery. The AP-scheduler-entered counter confirms APs reach `apSchedulerEntry`, so `preemptPhase` is reaching `Operational`.
-- The investigation snapshot `252a96b` added the `APIDSTAT` / `PRESTAT` diagnostics used during `processExit`; those survive today but the root cause they were introduced to find is still open.
-- `preemptTargetSnapshotN` is per-call and overwritten every tick. A racing reader during a tick sees a torn snapshot; this is fine for the diagnostic path (`dumpPreemptCounters`), but if any future code tries to consume the snapshot for policy it will need explicit synchronization.
-- AP LAPIC timer enablement (baseline's §Known Unstable/Deferred SMP Surfaces) still deferred; the hypothetical AP-preempt path remains unused by this phase gate.
+- **Closed (B2)**: AP LAPIC timer enablement. Landed in commit
+  `dd295e4` — `lapicTimerInit()` is now called in `apEntry` after
+  the existing calibration wait. AP branch of `handleLAPICTimer`
+  is `//go:nosplit` and only sets `WantReschedule` + EOI, so
+  adding a per-AP 100 Hz tick introduces no new lock pressure.
+  Preempt IPI fanout stays BSP-only via the phase gate.
+- `smpprobe` workers still report a narrow CPU distribution even
+  with AP timer active and `preemptPhaseOperational` reached. The
+  remaining hypothesis is that work-stealing under `scheduler=cores`
+  does not pull newly-spawned `ring3Wrapper` goroutines off BSP's
+  local runqueue aggressively enough. Tracked as B1 in `TODO_FIX.md`
+  and deferred to a future session. See `smp_preempt_problem/README.md §3`.
+- The investigation snapshot `252a96b` added the `APIDSTAT` /
+  `PRESTAT` diagnostics used during `processExit`; those survive
+  today but the distribution question is still open.
+- `preemptTargetSnapshotN` — racey-read comment now lives in
+  `src/ipi.go`. Diagnostic-only; no code change needed.

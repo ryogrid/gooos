@@ -43,5 +43,13 @@ Inserted in `src/main.go:367`, immediately before `smpInit()` (baseline step 7).
 
 ## Open Questions / Known Gaps
 
-- `bootActivatePostShellReady()` runs in the syscall ISR context of the shell's very first `int 0x80` to #38. It does heavy work (serial prints, spawn of diagnostic goroutines, phase-lock acquire). No reported faults, but the combination of "late boot transitions + first-ever ISR from Ring 3" is the same narrow window that exposed the original keyboard-IRQ race — see `smp_preempt_problem/README.md §3` for the open hypothesis.
-- IOAPIC path (`ioapicActive == true`) is untested by the virtual-wire-restore mitigation; the current QEMU profile runs the non-IOAPIC path. If an IOAPIC deployment ever exhibits a similar late-boot IRQ loss, a symmetric restore for the IO-APIC RTEs will need to be added.
+- **Deferred (A1)**: `bootActivatePostShellReady()` runs in the
+  syscall ISR context of the shell's very first `int 0x80` to
+  #38. Moving the heavy work (serial prints, goroutine spawns,
+  phase-lock acquire) to a dedicated boot-finalize kernel
+  thread needs Phase 4.4 context switching; until then the
+  current path is working with no reported faults.
+- **Closed (A2)**: IOAPIC path symmetric virtual-wire restore
+  — not needed for the supported QEMU profile, which uses the
+  non-IOAPIC path. Left as a documented sketch for future
+  hardware.

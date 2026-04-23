@@ -92,11 +92,22 @@ The baseline's eight invariants (see `current_impl_0421_night/00_index.md`) stil
 
 ## Non-Goals (Delta)
 
-- The user-space `time.Sleep` hang at Ring 3 under SMP is **not
-  fixed**; a `Yield`-loop workaround is documented
-  (`09_user_programs_sleep_vs_yield.md`).
-- AP-targeted preempt IPI delivery remains **unreliable** in
-  `smpprobe` scenarios (workers can still all observe `cpuID=0`);
-  investigation artifacts are in `smp_preempt_problem/README.md`
-  and are not duplicated here.
-- AP LAPIC timer remains deferred; no change from baseline.
+- **Updated 2026-04-24** (see `TODO_FIX.md`): several of the
+  bullets below have moved from "non-goal" to "partially
+  closed" in the 2026-04-24 fix cycle:
+- The user-space `time.Sleep` hang at Ring 3 under SMP is
+  **partially fixed**: the dominant root cause (a Phase 4.3
+  `kernelThreadSpawn(0, netRxLoop)` that hijacked the timer
+  dispatcher) was resolved; `sleeptest.elf` now typically
+  completes 2 of 3 Sleep(10) calls. A residual Sleep-3
+  intermittent hang remains open — see
+  `09_user_programs_sleep_vs_yield.md §Open Questions`.
+- AP-targeted preempt IPI delivery improvements: the AP LAPIC
+  timer is now enabled (B2 — see
+  `03_smp_preempt_phase_gating.md §Open Questions`). The
+  residual `smpprobe` cpuID=0 distribution issue (ring3Wrapper
+  round-robin) remains deferred to a future session.
+- Phase 4.4 of the kernel-thread abstraction (real context
+  switching) is **not** landed in this cycle; it is the
+  prerequisite for migrating long-lived kernel services off
+  TinyGo's goroutine scheduler. See `TODO_FIX.md §Deferred`.

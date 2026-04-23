@@ -91,7 +91,30 @@ Four sub-tests: go+chan round-trip, two-channel select, Yield-driven goroutine i
 
 ## Open Questions / Known Gaps
 
-- **`sys_sleep` at Ring 3 under SMP is unresolved.** No root-cause theory survives the reverted `332a7a1` attempt. Candidates: TinyGo task's `<-afterTicks(...)` wakeup may not rebind TSS.RSP0 correctly when the waker is on a different CPU than the parked goroutine; alternative theory is work-stealing leaving stale CR3 after wake. Neither is proven. `yieldtest.elf` confirms the syscall dispatch itself is not the defect.
-- **Is `Yield`-loop a sustainable workaround?** For `smpprobe` / `goprobe` it works because the tests don't need wall-clock duration precision. For any real program that needs `Sleep(N ms)` semantics, the workaround fails — no alternative is shipped.
-- Until Phase 4.4 of the kernel-thread abstraction (see `04_scheduler_and_kernel_thread.md`), user-process scheduling at Ring 3 remains subject to whatever the TinyGo task scheduler does. The Sleep-vs-Yield asymmetry might resolve itself, or become more visible, depending on how Phase 4.4 lands.
-- The handoff doc `smp_preempt_problem/README.md` enumerates this as part of the broader "post-shell SMP runtime boundary" issue. Treat this file and that doc as complementary: this one describes the Ring-3-visible contract; the handoff describes the open hypothesis space.
+- **Partially closed (F1)**: the dominant root cause of the
+  Ring-3 `sys_sleep` hang was Phase 4.3's
+  `kernelThreadSpawn(0, netRxLoop)` call — `kernelThreadSwitch`
+  direct-invocation of that infinite loop stranded
+  `timerDispatcher` and stopped every `afterTicks` deadline.
+  Removed in the 2026-04-24 cycle (see
+  `04_scheduler_and_kernel_thread.md` correction). Pass rate of
+  `scripts/test_sleeptest_shell.sh` under `-smp 4` went from 0%
+  to ~20% immediately, and further improved with B2 (AP LAPIC
+  timer enable). Typical behavior now: Sleep 1 and Sleep 2
+  complete reliably, Sleep 3 intermittently hangs.
+- **Deferred (F1-follow-up)**: the residual Sleep-3 hang is
+  suspected to live in the channel-wakeup cross-CPU path —
+  `timerDispatcher` does `ch <- struct{}{}` on a buffered
+  channel; `scheduleTask(waiter)` pushes the waiter to the
+  dispatcher's CPU runqueue + `schedulerWake` IPIs all APs;
+  under some timing the waiter is never re-scheduled. A proper
+  fix likely requires auditing TinyGo's channel-wakeup primitive
+  or replacing `afterTicks` with a direct per-CPU timer
+  mechanism (needs Phase 4.4).
+- **Deferred (F2)**: "is Yield-loop a sustainable workaround?"
+  is moot once the Sleep-3 hang closes. `gooos.Sleep` remains
+  usable with the known flakiness; programs that need strict
+  wall-clock semantics should not rely on it yet.
+- `smp_preempt_problem/README.md` remains the canonical open
+  handoff for the broader post-shell SMP runtime boundary
+  problem.

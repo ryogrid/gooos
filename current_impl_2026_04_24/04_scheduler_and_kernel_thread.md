@@ -59,9 +59,18 @@ Orthogonal to the TinyGo scheduler. Gives kernel-internal services a **per-CPU, 
 | `src/afterticks.go:119` | `kernelYield()` | Inside `timerDispatcher`'s per-iteration `runtime.Gosched()` sibling — drains any ready kernel thread on the current CPU. |
 | `src/net.go:73` | `kernelYield()` | Same pattern inside `netRxLoop`'s per-iteration poll. |
 
-Because `kernelThreadSwitch` is direct invocation, the first `kernelYield()` call on CPU 0 pops `netRxLoop` and **calls it inline** — which loops forever. This is benign: `netRxLoop` already runs forever as a goroutine, so the inline call never returns control to the outer `timerDispatcher`/`netRxLoop` site that invoked `kernelYield`, **but that caller is itself an infinite loop**. In effect the ready-queue slot is drained exactly once per boot and the kernel-thread path becomes a no-op thereafter.
-
-This is the design intent of Phase 4.3: land the data structures and call sites without changing runtime semantics. Phase 4.4 (not yet implemented) is where `SavedContext` + a real context switch will change behavior.
+**2026-04-24 correction**: the original "benign" reasoning above was
+incorrect. Because `kernelThreadSwitch` direct-invokes the entry
+function, a long-running kernel thread like `netRxLoop` hijacks the
+caller's stack and never returns control. In practice that caused
+`timerDispatcher` to freeze at its first `kernelYield()` call,
+stranding every `afterTicks` deadline and every Ring-3
+`sys_sleep` (F1 per `current_impl_2026_04_24/TODO_FIX.md`). The
+`kernelThreadSpawn(0, netRxLoop)` call at `src/net.go:52` was
+therefore removed; the ready queue is empty by default and
+`kernelYield()` is currently a safe no-op. Phase 4.4 must land
+real context switching before `kernelThreadSpawn` can be used for
+long-lived services.
 
 ## Current Implementation Details
 
@@ -79,6 +88,20 @@ This is the design intent of Phase 4.3: land the data structures and call sites 
 
 ## Open Questions / Known Gaps
 
-- Phase 4.4 (context switching via `SavedContext` + a stack-swap stub) is not landed. Until it is, `kernelYield()` at `src/kernel_thread.go:143` is a one-shot drain — not a true yield.
-- The `kernelThreadSpawn` allocation path is an `ISR-unsafe` allocation; if a future caller spawns from an ISR, the lint will catch it, but there is no runtime assertion.
-- The "kernel thread" abstraction overlaps conceptually with TinyGo's own task queues. The intent (per commit message and in-source comments) is to provide **deterministic** per-CPU scheduling that work-stealing cannot perturb. Until Phase 4.4, this intent is unproven.
+- **Deferred (C1/C3)**: Phase 4.4 (context switching via
+  `SavedContext` + a stack-swap stub) is not landed. Without it
+  `kernelYield()` cannot safely direct-invoke a long-running
+  function — so there is currently no caller of
+  `kernelThreadSpawn` in the tree (F1 landed the removal). Real
+  per-CPU scheduling for `timerDispatcher`, `netRxLoop`,
+  `tcpRTOScannerLoop`, `fsTask` requires Phase 4.4 first. See
+  `TODO_FIX.md §Deferred`.
+- **Closed (C2)**: `kernelThreadSpawn` is now allocation-free.
+  Uses a static `ktPool[128]` with per-slot `inUse` flag; each
+  spawn pops a free slot and a terminated thread's slot returns
+  on return. Pool-exhaustion bumps `kernelThreadSpawnDrops`
+  visible in `netDiag`. `//go:nosplit`-compatible.
+- The "kernel thread" abstraction overlaps conceptually with
+  TinyGo's own task queues. The intent (deterministic per-CPU
+  scheduling that work-stealing cannot perturb) is unproven
+  until Phase 4.4.

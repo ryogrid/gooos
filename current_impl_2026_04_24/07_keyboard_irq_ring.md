@@ -119,7 +119,19 @@ Covers the empirically-observed case where late SMP boot transitions leave legac
 
 ## Open Questions / Known Gaps
 
-- Keyboard reliability is improved but **not fully deterministic**. Observed behavior per `smp_preempt_problem/README.md §Confirmed Current Status`: the first interactive input succeeds more often than before, but not 100%. Remaining failure modes are believed to be scheduler/runtime-layer (post-shell SMP scheduling path) rather than keyboard-ring issues.
-- The ring drops on full. At 100 Hz PIT and typical typing rates this never happens, but a bursty paste via QEMU `sendkey` can plausibly fill 64 slots — untested.
-- `netDiag` still reports `pump:NNNN` per-CPU counts even though the pump goroutine is gone; the name is preserved for continuity with older test-harness grep patterns.
-- `gooosSchedulerYield` on APs is a tight loop around ring-check + yield; a blocking stdin reader migrated to an AP with an empty ring will burn ~100% CPU on that AP until a keystroke arrives. No mitigation today — in practice the reader is always on BSP.
+- **Partially closed (E2)**: keyboard reliability is improved by
+  the B2 (AP LAPIC timer) and F1 (netRxLoop kernel-thread
+  removal) fixes landed in this cycle; interactive input is
+  more reliable than in the 2026-04-21 baseline but not yet
+  100% deterministic.
+- **Closed (E1)**: ring-full drops now bump `kbdRingDrops` at
+  `src/keyboard_irq.go:42`; `netDiag` prints
+  `kbdRing:drops=<N>` when non-zero. Visible without ISR-path
+  serial prints.
+- **Closed (E3)**: `netDiag` `pump:NNNN` per-CPU counts remain
+  for continuity with older test-harness grep patterns; name
+  preservation is intentional, no code change.
+- **Closed (E4)**: AP-hosted reader now uses `afterTicks(1)`
+  (10 ms bounded sleep) instead of a tight
+  `gooosSchedulerYield` loop. Prevents the theoretical
+  100%-CPU burn on an AP if a reader ever migrates there.
