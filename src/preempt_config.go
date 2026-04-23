@@ -46,3 +46,8 @@ const runSMPBasicProbe = false
 // (`.autorun.sh`) so SMP `smpprobe` validation can execute through the
 // real shell parser/exec/wait path without HMP sendkey injection.
 const runSMPProbeShellTest = false
+
+// runGoprobeTest writes a one-shot shell autorun script at boot
+// (`.autorun.sh`) so userspace `goprobe` validation can execute through the
+// real shell parser/exec/wait path without HMP sendkey injection.
+const runGoprobeTest = false

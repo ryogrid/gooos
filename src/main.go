@@ -552,6 +552,13 @@ func main() {
 		fsWrite(".autorun.sh", []byte("smpprobe\necho POST_SMPPROBE_OK\n"))
 		bootShellArgs = "--autorun"
 		serialPrintln("preempt_probe: prepared .autorun.sh for smpprobe shell test")
+	} else if runGoprobeTest {
+		// One-shot shell autorun path for deterministic goprobe userspace tests.
+		// Executed by user/cmd/sh/main.go before the interactive prompt.
+		fsCreate(".autorun.sh")
+		fsWrite(".autorun.sh", []byte("goprobe\necho POST_GOPROBE_OK\n"))
+		bootShellArgs = "--autorun"
+		serialPrintln("preempt_probe: prepared .autorun.sh for goprobe shell test")
 	} else if preemptEnabled && runUserPreemptProbe {
 		// Feature 2.2 harness auto-launch via shell autorun path to keep
 		// user process startup deterministic without HMP sendkey.
