@@ -496,6 +496,10 @@ func processExit(exitCode uintptr) {
 		}
 	}
 
+	// Serialize processExit across CPUs to avoid concurrent freePage calls
+	// which can cause page allocator lock contention
+	flags := procLock.Acquire()
+
 	serialPrintln("MARKER: M2 processExit pre-freePage")
 	if runSMPShellPreemptProbe {
 		for i := uint32(0); i < uint32(numCoresOnline); i++ {
@@ -515,6 +519,8 @@ func processExit(exitCode uintptr) {
 	proc.ExitCode = exitCode
 	proc.Exited = 1
 	serialPrintln("MARKER: M3 processExit post-freePage")
+
+	procLock.Release(flags)
 
 	if proc.parent != nil {
 		serialPrintln("processExit: child exit code " + utoa(uint64(exitCode)) +

@@ -37,6 +37,11 @@ func main() {
 	// Worker mode: args starts with "worker-N"
 	if len(args) >= 8 && args[:7] == "worker-" {
 		workerID := args[7:]
+		// Extract worker number from "N" (last char)
+		var id int
+		if len(workerID) > 0 && workerID[0] >= '0' && workerID[0] <= '9' {
+			id = int(workerID[0] - '0')
+		}
 		for i := 0; i < iterationsPerWorker; i++ {
 			cpu := gooos.GetCpuID()
 			gooos.Println("worker-" + workerID + ": cpuID=" + strconv.Itoa(cpu))
@@ -45,6 +50,9 @@ func main() {
 			// while keeping output compact.
 			gooos.Sleep(10)
 		}
+		// Stagger worker exits to avoid simultaneous processExit calls
+		// which can cause pageAllocLock contention or freePage issues
+		gooos.Sleep(1 + id*2)
 		gooos.Exit(0)
 		return
 	}
