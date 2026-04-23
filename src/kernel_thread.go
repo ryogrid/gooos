@@ -45,10 +45,8 @@ const kernelStackSize = 16 * pageSize // 64 KiB per CPU (if allocated)
 // kernelThreadInit initializes the kernel thread system.
 // Called during boot before APs are started.
 func kernelThreadInit() {
-	// Ready queues start empty
-	for cpu := 0; cpu < maxCPUs; cpu++ {
-		kernelReadyQueues[cpu] = nil
-	}
+	// No explicit initialization needed - arrays are zero-initialized
+	// This is a no-op, but kept for future reference (Phase 4.4+)
 }
 
 // kernelThreadSpawn queues fn to run on the specified CPU.
