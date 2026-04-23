@@ -46,10 +46,17 @@ func netInit() {
 
 	arpSendGratuitous()
 
-	// Phase 4.3: Launch netRxLoop as both:
-	// 1. Kernel thread on CPU 0 (for deterministic scheduling)
-	// 2. TinyGo goroutine (for backward compatibility, in case kernel thread scheduling fails)
-	kernelThreadSpawn(0, netRxLoop)
+	// netRxLoop runs as a TinyGo goroutine. It used to also be
+	// registered via kernelThreadSpawn(0, netRxLoop) (Phase 4.3)
+	// but that was harmful: Phase 4.3 kernelThreadSwitch is a
+	// direct invocation, so a long-running kernel thread like
+	// netRxLoop would hijack any caller of kernelYield()
+	// permanently — including timerDispatcher, which then stops
+	// firing afterTicks deadlines and strands every sys_sleep at
+	// Ring 3. F1 per TODO_FIX.md. Re-enable via
+	// kernelThreadSpawn once Phase 4.4 lands a real
+	// context switch that suspends the thread at its next
+	// yield point rather than running it to completion.
 	go netRxLoop()
 	serialPrintln("NET: RX dispatch goroutine started")
 
