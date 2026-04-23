@@ -159,7 +159,7 @@ func main() {
 	vgaWriteLine(3, "PIT: 100 Hz timer started")
 	serialPrintln("PIT: 100 Hz timer started")
 
-	// Initialize keyboard channel and register IRQ1 handler (vector 33).
+	// Initialize keyboard translation tables and register IRQ1 handler (vector 33).
 	keyboardInit()
 	registerHandler(33, handleKeyboard)
 	vgaWriteLine(4, "Keyboard: ready")
@@ -435,11 +435,10 @@ func main() {
 	checkTaskOffset()
 
 	go fsTask()
-	go keyboardPump()
 	runtime.Gosched()
 
-	vgaWriteLine(13, "Services: fsTask + keyboardPump running")
-	serialPrintln("Services: fsTask + keyboardPump running")
+	vgaWriteLine(13, "Services: fsTask running")
+	serialPrintln("Services: fsTask running")
 
 	// Run boot-time stack-size audit if enabled (compile-time
 	// const). Service goroutines have parked at least once after
@@ -574,6 +573,10 @@ func bootActivatePostShellReady() {
 		return
 	}
 	bootPostShellReadyDone = 1
+
+	if !ioapicActive {
+		restoreBSPVirtualWire()
+	}
 
 	bspBootDone = 1
 

@@ -149,7 +149,8 @@ func allocPID() uint32 {
 
 // foregroundProc is the process that owns the keyboard right
 // now. consoleStdin.Read returns EOF to any other process,
-// preventing two Ring-3 processes from racing on keyboardCh.
+// preventing two Ring-3 processes from racing on the shared
+// keyboard IRQ ring.
 //
 // Set initially by elfLoad (boot shell). Switched in
 // processWait — the about-to-block parent transfers ownership

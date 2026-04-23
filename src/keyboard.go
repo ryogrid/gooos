@@ -2,9 +2,8 @@
 //
 // The IRQ1 handler reads scancodes from port 0x60, packs them, and
 // publishes to the .bss ring buffer in src/keyboard_irq.go via
-// keyboardIRQSend. keyboardPump (a goroutine) drains the ring and
-// forwards into the native channel keyboardCh, consumed by
-// sysReadHandler in src/userspace.go.
+// keyboardIRQSend. Blocking stdin readers drain that ring directly so
+// the keyboard path does not depend on a cross-CPU Go-channel wakeup.
 //
 // Event encoding (32-bit):
 //   bits  0– 7: scancode (make code, 0x80 stripped)
@@ -14,8 +13,11 @@
 
 package main
 
-// PS/2 keyboard I/O port.
-const kbdDataPort = 0x60
+// PS/2 keyboard I/O ports.
+const (
+	kbdDataPort   = 0x60
+	kbdStatusPort = 0x64
+)
 
 // scancodeToASCII maps scancode set 1 make codes to ASCII characters.
 // Index = scancode, value = ASCII (0 means unmapped).
@@ -45,15 +47,9 @@ var altHeld uint8
 // scancode is an extended key (arrow, Home, End, Delete, etc.).
 var extendedPrefix bool
 
-// keyboardInit is retained so the boot path can construct keyboardCh
-// lazily instead of at package-init time.
-// call site in main.go, so the call remains valid. The function can
-// be deleted along with the corresponding call once we are sure no
-// other code references it.
+// keyboardInit is retained so the boot path can initialize the
+// scancode tables lazily instead of at package-init time.
 func keyboardInit() {
-	if keyboardCh == nil {
-		keyboardCh = make(chan uint32, 16)
-	}
 	if scancodeToASCII[0x02] == 0 {
 		scancodeToASCII = [128]byte{
 			0x02: '1', 0x03: '2', 0x04: '3', 0x05: '4', 0x06: '5',
@@ -100,20 +96,10 @@ func keyboardInit() {
 // whether the keyboard IRQ is reaching the kernel at all after $
 // reappears.
 var kbdIRQSeen uint32
+var kbdPollSeen uint32
 
 //go:nosplit
-func handleKeyboard(vector uint64) {
-	scancode := inb(kbdDataPort)
-	if kbdIRQSeen == 0 {
-		kbdIRQSeen = 1
-		serialPrintln("MARKER: M8 handleKeyboard first entry")
-	}
-	if ioapicActive {
-		lapicSendEOI()
-	} else {
-		picSendEOI(1)
-	}
-
+func processKeyboardScancode(scancode uint8) {
 	// Extended key prefix (0xE0): consume and set flag for the
 	// next scancode. Arrow keys, Home, End, Delete, right-Ctrl
 	// and right-Alt all send 0xE0 before the actual scancode.
@@ -188,4 +174,38 @@ func handleKeyboard(vector uint64) {
 	// Pack: scancode[0:7] | ascii[8:15] | mods[16:23] | flags[24:31]
 	event := uint32(scancode) | uint32(ascii)<<8 | uint32(mods)<<16 | uint32(flags)<<24
 	keyboardIRQSend(event)
+}
+
+//go:nosplit
+func handleKeyboard(vector uint64) {
+	scancode := inb(kbdDataPort)
+	if kbdIRQSeen == 0 {
+		kbdIRQSeen = 1
+		serialPrintln("MARKER: M8 handleKeyboard first entry")
+	}
+	if ioapicActive {
+		lapicSendEOI()
+	} else {
+		picSendEOI(1)
+	}
+	processKeyboardScancode(scancode)
+}
+
+// pollKeyboardFallback drains one pending PS/2 byte without relying on
+// IRQ1 delivery. Used only on boots where no keyboard IRQ has been seen.
+//
+//go:nosplit
+func pollKeyboardFallback() bool {
+	if kbdIRQSeen != 0 {
+		return false
+	}
+	if inb(kbdStatusPort)&0x01 == 0 {
+		return false
+	}
+	if kbdPollSeen == 0 {
+		kbdPollSeen = 1
+		serialPrintln("MARKER: M8P keyboard poll fallback first entry")
+	}
+	processKeyboardScancode(inb(kbdDataPort))
+	return true
 }

@@ -106,6 +106,20 @@ func lapicSendEOI() {
 	lapicWrite(lapicRegEOI, 0)
 }
 
+// restoreBSPVirtualWire reasserts BSP-side PIC pass-through after late
+// boot transitions. On affected SMP boots, keyboard IRQ1 can stop
+// arriving once the shell reaches ShellReady and AP release begins even
+// though the original boot-time LAPIC/PIC setup succeeded. Rewriting the
+// BSP's virtual-wire state here is deterministic and low-risk: BSP keeps
+// ExtINT on LINT0, NMI on LINT1, and both PICs fully unmasked in the
+// non-IOAPIC path.
+func restoreBSPVirtualWire() {
+	lapicWrite(lapicRegLVT0, 0x00000700) // ExtINT, unmasked
+	lapicWrite(lapicRegLVT1, 0x00000400) // NMI, unmasked
+	outb(pic1Data, 0x00)
+	outb(pic2Data, 0x00)
+}
+
 // lapicWaitICR spins until the ICR delivery status bit (12) is idle,
 // with a bounded iteration cap. Nosplit because callers run from ISR
 // context (pitWakeAPs → handleTimer, broadcastPreemptIPI → handleLAPICTimer).

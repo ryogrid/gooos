@@ -445,7 +445,7 @@ func sysYieldHandler(frame *SyscallFrame) {
 // it from a goroutine body via time.Sleep blocks the CPU without
 // yielding to cooperative consumers. Same rationale as in
 // src/afterticks.go. A user program sleeping here leaves every
-// other kernel goroutine (fsTask, keyboardPump, sibling
+// other kernel goroutine (fsTask, sibling
 // ring3Wrappers) free to run.
 
 func sysSleepHandler(frame *SyscallFrame) {
@@ -534,7 +534,7 @@ func sysReadKeyHandler(frame *SyscallFrame) {
 		frame.RAX = 0xFFFFFFFFFFFFFFFF
 		return
 	}
-	event := <-keyboardCh
+	event := keyboardReadEventBlocking()
 	buf := frame.RDI
 	*(*uint8)(unsafe.Pointer(buf + 0)) = uint8(event & 0xFF)         // scancode
 	*(*uint8)(unsafe.Pointer(buf + 1)) = uint8((event >> 8) & 0xFF)  // ascii

@@ -198,6 +198,8 @@ func netDiag() {
 	serialPrintln("wake:" + string(wb[:]) + " pump:" + string(pb[:]))
 	if kbdIRQSeen != 0 {
 		serialPrintln("kbdIRQ:seen")
+	} else if kbdPollSeen != 0 {
+		serialPrintln("kbdIRQ:poll")
 	} else {
 		serialPrintln("kbdIRQ:never")
 	}

@@ -59,7 +59,7 @@ type consoleStdin struct{}
 func readKeyboardLine(buf []byte) int {
 	sysReadLineLen = 0
 	for {
-		event := <-keyboardCh
+		event := keyboardReadEventBlocking()
 		scancode := uint8(event & 0xFF)
 		ascii := byte((event >> 8) & 0xFF)
 

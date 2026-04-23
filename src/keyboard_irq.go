@@ -1,19 +1,16 @@
 // src/keyboard_irq.go — ISR-safe lock-free ring buffer for keyboard
-// scancode events + a pump goroutine that forwards into a native Go
-// channel.
+// scancode events plus a blocking reader helper for stdin syscalls.
 //
-// Design: single-producer (ISR: handleKeyboard) single-consumer (the
-// keyboardPump goroutine) bounded ring, size=64 uint32 slots. x86-TSO
-// guarantees all four required orderings via plain mov; no
-// atomic.Load/Store needed on BSP-only v1. See
+// Design: single-producer (ISR: handleKeyboard) single-consumer
+// bounded ring, size=64 uint32 slots. x86-TSO guarantees all four
+// required orderings via plain mov; no atomic.Load/Store needed on
+// BSP-only v1. See
 // impldoc/phase_b_keyboard_irq.md §3 for the memory-order proof.
 //
 // Event encoding (matches the existing handleKeyboard packing):
 //   uint32 event = (scancode & 0xFF) | ((ascii & 0xFF) << 8)
 
 package main
-
-import "runtime"
 
 // kbdRingSize is a power of two so `idx & mask` replaces modulo.
 // 64 slots is ample: PIT fires at 100 Hz, typical typing ≤10
@@ -25,10 +22,6 @@ var (
 	gooosKbdHead uint32 // writer (ISR) — monotonically increments
 	gooosKbdTail uint32 // reader (pump) — monotonically increments
 )
-
-// keyboardCh delivers scancode+ASCII events to sysReadHandler. Buffer
-// of 16 absorbs typing bursts without forcing the pump to park.
-var keyboardCh chan uint32
 
 // keyboardIRQSend is invoked from the ISR (handleKeyboard). It must
 // not allocate and must not call any Go-runtime operation that could
@@ -46,8 +39,8 @@ func keyboardIRQSend(event uint32) {
 	gooosKbdHead = h + 1
 }
 
-// keyboardIRQRecv is called by keyboardPump. Non-blocking; returns
-// false when the ring is empty.
+// keyboardIRQRecv is called by blocking keyboard readers.
+// Non-blocking; returns false when the ring is empty.
 //
 //go:nosplit
 func keyboardIRQRecv() (uint32, bool) {
@@ -60,63 +53,52 @@ func keyboardIRQRecv() (uint32, bool) {
 	return event, true
 }
 
-// keyboardPump forwards ring events into keyboardCh. On empty ring
-// it yields via Gosched repeatedly until it is running on the BSP,
-// and only then parks on sti+hlt. Reason: the keyboard IRQ (IRQ1
-// via PIC pass-through) only ever fires on the BSP (LVT0 ExtINT
-// unmasked on BSP only; APs have LVT0 masked). If work-stealing
-// parks the pump on an AP's hlt it will never wake, stalling the
-// whole keyboard → shell path. Staying in a Gosched loop on APs
-// lets the scheduler migrate the pump back onto BSP (the BSP is
-// always runnable thanks to PIT / LAPIC-timer ticks), where the
-// hlt is safely serviced by IRQ1.
-// kbdPumpCpuSeen[i] is set to 1 the FIRST time keyboardPump
-// drains an event while running on CPU i (M9). Flag array, not a
-// counter. netDiag reports it as "pump:NNNN" alongside wake:NNNN
-// so the user can tell which CPU the pump actually drains from.
+// kbdPumpCpuSeen[i] is set to 1 the FIRST time a blocking keyboard
+// reader drains an event while running on CPU i (M9). Flag array, not
+// a counter. netDiag reports it as "pump:NNNN" for continuity with the
+// existing diagnostics even though the dedicated pump goroutine is gone.
 var kbdPumpCpuSeen [maxCPUs]uint32
 
-func keyboardPump() {
-	keyboardPumpHandle = taskCurrent()
+func markKeyboardDrainCPU() {
+	c := cpuID()
+	if c >= maxCPUs || kbdPumpCpuSeen[c] != 0 {
+		return
+	}
+	kbdPumpCpuSeen[c] = 1
+	switch c {
+	case 0:
+		serialPrintln("MARKER: M9 pump:drained-on-cpu0")
+	case 1:
+		serialPrintln("MARKER: M9 pump:drained-on-cpu1")
+	case 2:
+		serialPrintln("MARKER: M9 pump:drained-on-cpu2")
+	case 3:
+		serialPrintln("MARKER: M9 pump:drained-on-cpu3")
+	}
+}
+
+// keyboardReadEventBlocking waits until one keyboard event is available.
+// The wait path is intentionally channel-free: stdin syscalls poll the
+// shared IRQ ring directly, yielding on APs and only hlt-parking on BSP
+// where legacy IRQ1 can actually wake the CPU.
+func keyboardReadEventBlocking() uint32 {
 	for {
-		ev, ok := keyboardIRQRecv()
-		if ok {
-			c := cpuID()
-			if c < maxCPUs && kbdPumpCpuSeen[c] == 0 {
-				kbdPumpCpuSeen[c] = 1
-				switch c {
-				case 0:
-					serialPrintln("MARKER: M9 pump:drained-on-cpu0")
-				case 1:
-					serialPrintln("MARKER: M9 pump:drained-on-cpu1")
-				case 2:
-					serialPrintln("MARKER: M9 pump:drained-on-cpu2")
-				case 3:
-					serialPrintln("MARKER: M9 pump:drained-on-cpu3")
-				}
+		if ev, ok := keyboardIRQRecv(); ok {
+			markKeyboardDrainCPU()
+			return ev
+		}
+		if cpuID() == 0 {
+			if pollKeyboardFallback() {
+				continue
 			}
-			keyboardCh <- ev
+			if ev, ok := keyboardIRQRecv(); ok {
+				markKeyboardDrainCPU()
+				return ev
+			}
+			sti()
+			hlt()
 			continue
 		}
-		// If we're on an AP, just yield and spin — do NOT park on
-		// sti+hlt because IRQ1 won't wake us here.
-		if cpuID() != 0 {
-			runtime.Gosched()
-			continue
-		}
-		// Empty ring on BSP. Yield so fsTask / shell / ring3Wrapper
-		// can run first. If still empty after scheduler round-trip,
-		// park on sti+hlt — IRQ1 on BSP wakes us directly.
-		runtime.Gosched()
-		if _, again := keyboardIRQRecv(); again {
-			continue
-		}
-		if cpuID() != 0 {
-			// Migrated off BSP mid-round — loop back to the
-			// on-AP path rather than hlt here.
-			continue
-		}
-		sti()
-		hlt()
+		gooosSchedulerYield()
 	}
 }

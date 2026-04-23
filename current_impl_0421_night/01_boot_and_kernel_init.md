@@ -53,9 +53,8 @@ The initialization sequence is linear and intentionally staged around interrupt 
    - `e1000EnableInterrupts()`
    - `netInit()`
 10. Services and userspace artifacts:
-   - `go fsTask()`
-   - `go keyboardPump()`
-   - user ELF blobs written into in-memory FS (`sh.elf`, `ls.elf`, `tcpcli.elf`, etc.)
+    - `go fsTask()`
+    - user ELF blobs written into in-memory FS (`sh.elf`, `ls.elf`, `tcpcli.elf`, etc.)
 11. SMP scheduler release:
    - `bspBootDone = 1`
 12. Optional preempt probes gated by constants in `src/preempt_config.go`.
