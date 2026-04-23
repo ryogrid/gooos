@@ -196,7 +196,6 @@ func netDiag() {
 		}
 	}
 	serialPrintln("wake:" + string(wb[:]) + " pump:" + string(pb[:]))
-	serialPrintln("kbd:status=" + utoa(uint64(kbdStatusCode)))
 	if kbdIRQSeen != 0 {
 		serialPrintln("kbdIRQ:seen")
 	} else if kbdPollSeen != 0 {
