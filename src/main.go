@@ -362,6 +362,10 @@ func main() {
 		serialPrintln("afterTicks: OK")
 	}()
 
+	// Initialize kernel thread system (Phase 4.1)
+	// Must be done before SMP init so per-CPU ready queues are prepared
+	kernelThreadInit()
+
 	// Boot Application Processors via INIT-SIPI-SIPI.
 	// smpInit maps the LAPIC MMIO page, so per-CPU init must follow.
 	smpInit()
