@@ -96,8 +96,7 @@ func percpuInitBSPEarly() {
 func percpuInitBSPLate() {
 	perCPUBlocks[0].APICID = lapicRead(lapicRegID) >> 24
 	addr := uint64(uintptr(unsafe.Pointer(&perCPUBlocks[0])))
-	serialPrint("SMP: BSP cpuID=0 gsbase=0x")
-	serialPrintln(utoa(addr))
+	serialPrintln("SMP: BSP cpuID=0 gsbase=0x" + hextoa(addr))
 }
 
 // percpuInitAP initializes per-CPU storage for an AP.

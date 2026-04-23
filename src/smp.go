@@ -169,15 +169,12 @@ func smpInit() {
 	lapicWrite(lapicRegSVR, svr|(1<<8)|0xFF)
 
 	bspID := lapicRead(lapicRegID) >> 24
-	serialPrint("SMP: BSP APIC ID=")
-	serialPrintln(utoa(uint64(bspID)))
+	serialPrintln("SMP: BSP APIC ID=" + utoa(uint64(bspID)))
 
 	// Try ACPI MADT to learn expected AP count.
 	expectedAPs := detectAPsFromACPI(bspID)
 	if expectedAPs > 0 {
-		serialPrint("SMP: MADT reports ")
-		serialPrint(utoa(uint64(expectedAPs)))
-		serialPrintln(" APs")
+		serialPrintln("SMP: MADT reports " + utoa(uint64(expectedAPs)) + " APs")
 	} else {
 		serialPrintln("SMP: MADT not found, using broadcast")
 	}
@@ -306,22 +303,9 @@ func apEntry(apIndex uint64) {
 	// M2-4 Deferred in TODO_SMP4.md. APs continue to wake via IPI.
 	// lapicTimerInit()
 
-	serialPutChar('A')
-	serialPutChar('P')
-	serialPutChar(' ')
-	if apIndex >= 10 {
-		serialPutChar(byte('0' + apIndex/10))
-	}
-	serialPutChar(byte('0' + apIndex%10))
-	serialPutChar(' ')
-	serialPutChar('o')
-	serialPutChar('n')
-	serialPutChar('l')
-	serialPutChar('i')
-	serialPutChar('n')
-	serialPutChar('e')
-	serialPutChar('\r')
-	serialPutChar('\n')
+	// Per-AP "online" chatter races heavily under SMP and tends to
+	// obscure the later shell/autorun diagnostics. The BSP summary
+	// line ("SMP: N cores online") remains the authoritative signal.
 
 	// Wait for BSP to complete its full boot sequence.
 	for bspBootDone == 0 {

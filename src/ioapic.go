@@ -73,12 +73,9 @@ func ioapicInit() {
 	ver := ioapicRead(0x01)
 	maxRedir := (ver >> 16) & 0xFF
 
-	serialPrint("IOAPIC: base=0x")
-	serialPrint(hextoa(uint64(ioapicBase)))
-	serialPrint(" ver=")
-	serialPrint(utoa(uint64(ver & 0xFF)))
-	serialPrint(" max_redir=")
-	serialPrintln(utoa(uint64(maxRedir)))
+	serialPrintln("IOAPIC: base=0x" + hextoa(uint64(ioapicBase)) +
+		" ver=" + utoa(uint64(ver&0xFF)) +
+		" max_redir=" + utoa(uint64(maxRedir)))
 
 	// Mask all entries first.
 	for i := uint32(0); i <= maxRedir; i++ {

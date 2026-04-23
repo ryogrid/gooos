@@ -251,8 +251,7 @@ func elfExecTrampoline() {
 // The pool slot is acquired here and released by processExit. See
 // impldoc/deferred_stack_reclaim.md.
 func ring3Wrapper(proc *Process) {
-	serialPrint("ring3Wrapper: cpuID=")
-	serialPrintln(utoa(uint64(cpuID())))
+	serialPrintln("ring3Wrapper: cpuID=" + utoa(uint64(cpuID())))
 	ring3WrapperHandle = taskCurrent()
 	idx, kernelStackTop := ring3StackAcquire()
 	serialPrintln("ring3Wrapper: stackAcquired")

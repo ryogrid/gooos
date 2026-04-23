@@ -44,9 +44,9 @@ const (
 
 // PCI Command register bits.
 const (
-	pciCmdIOSpace     = uint16(1 << 0)
-	pciCmdMemSpace    = uint16(1 << 1)
-	pciCmdBusMaster   = uint16(1 << 2)
+	pciCmdIOSpace   = uint16(1 << 0)
+	pciCmdMemSpace  = uint16(1 << 1)
+	pciCmdBusMaster = uint16(1 << 2)
 )
 
 // Intel e1000 (82540EM) identifiers.
@@ -168,14 +168,8 @@ func pciRecordE1000(bus, dev, fn uint8, vendor, device uint16) {
 	}
 	e1000Found = true
 
-	serialPrint("PCI: found e1000 at ")
-	serialPrint(utoa(uint64(bus)))
-	serialPrint(":")
-	serialPrint(utoa(uint64(dev)))
-	serialPrint(".")
-	serialPrint(utoa(uint64(fn)))
-	serialPrint(" BAR0=0x")
-	serialPrint(hextoa(uint64(bar0Base)))
-	serialPrint(" IRQ=")
-	serialPrintln(utoa(uint64(irqLine)))
+	serialPrintln("PCI: found e1000 at " + utoa(uint64(bus)) + ":" +
+		utoa(uint64(dev)) + "." + utoa(uint64(fn)) +
+		" BAR0=0x" + hextoa(uint64(bar0Base)) +
+		" IRQ=" + utoa(uint64(irqLine)))
 }

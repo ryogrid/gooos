@@ -58,9 +58,7 @@ func lapicTimerCalibrate() {
 
 	lapicCalibratedInitCnt = elapsed
 
-	serialPrint("LAPIC timer: ")
-	serialPrint(utoa(uint64(elapsed)))
-	serialPrintln(" ticks/10ms")
+	serialPrintln("LAPIC timer: " + utoa(uint64(elapsed)) + " ticks/10ms")
 }
 
 // lapicTimerInit programs this CPU's LAPIC timer in periodic

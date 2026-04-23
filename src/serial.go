@@ -50,16 +50,28 @@ func serialPutChar(c byte) {
 	outb(com1Data, c)
 }
 
-// serialPrint sends a string to COM1.
-func serialPrint(s string) {
+//go:nosplit
+func serialWriteStringUnlocked(s string) {
 	for i := 0; i < len(s); i++ {
 		serialPutChar(s[i])
 	}
 }
 
+//go:nosplit
+func serialWriteBytesUnlocked(b []byte) {
+	for i := 0; i < len(b); i++ {
+		serialPutChar(b[i])
+	}
+}
+
+// serialPrint sends a string to COM1.
+func serialPrint(s string) {
+	serialWriteStringUnlocked(s)
+}
+
 // serialPrintln sends a string followed by a newline to COM1.
 func serialPrintln(s string) {
-	serialPrint(s)
+	serialWriteStringUnlocked(s)
 	serialPutChar('\r')
 	serialPutChar('\n')
 }
@@ -70,8 +82,5 @@ func serialPrintln(s string) {
 //
 //go:nosplit
 func serialPrintBytes(b []byte) {
-	for i := 0; i < len(b); i++ {
-		serialPutChar(b[i])
-	}
+	serialWriteBytesUnlocked(b)
 }
-
