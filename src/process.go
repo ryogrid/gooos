@@ -440,10 +440,7 @@ func processWait(proc *Process) uintptr {
 			" wait=" + utoa(uint64(waitPID)))
 	}
 	setForegroundProc(proc)
-	for proc.Exited == 0 {
-		gooosSchedulerYield()
-	}
-	exitCode := proc.ExitCode
+	exitCode := <-proc.exitCh
 	setForegroundProc(prevForeground)
 	serialPrintln("MARKER: M6 processWait post-exitCh-recv")
 	if runSMPProbeShellTest {

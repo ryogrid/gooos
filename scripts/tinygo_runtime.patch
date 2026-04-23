@@ -1030,8 +1030,12 @@ index e45eaf39..aecf6568 100644
 +//go:nosplit
 +func stealWork() *task.Task {
 +	me := gooosCpuID()
-+	for i := uint32(1); i < numCPU; i++ {
-+		peer := (me + i) % numCPU
++	n := numCoresOnline
++	if n == 0 {
++		n = 1
++	}
++	for i := uint32(1); i < n; i++ {
++		peer := (me + i) % n
 +		if t := runqueues[peer].Pop(); t != nil {
 +			return t
 +		}
