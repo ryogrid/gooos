@@ -21,6 +21,9 @@ var (
 	gooosKbdRing [kbdRingSize]uint32
 	gooosKbdHead uint32 // writer (ISR) — monotonically increments
 	gooosKbdTail uint32 // reader (pump) — monotonically increments
+	
+	// Diagnostics: track crash location
+	kbdStatusCode uint32 // 0=start, 1=after-recv-1, 2=after-poll, 3=after-recv-2, 4=after-sti, 5=before-hlt, 6=after-hlt
 )
 
 // keyboardIRQSend is invoked from the ISR (handleKeyboard). It must
@@ -83,20 +86,26 @@ func markKeyboardDrainCPU() {
 // where legacy IRQ1 can actually wake the CPU.
 func keyboardReadEventBlocking() uint32 {
 	for {
+		kbdStatusCode = 1
 		if ev, ok := keyboardIRQRecv(); ok {
 			markKeyboardDrainCPU()
 			return ev
 		}
 		if cpuID() == 0 {
+			kbdStatusCode = 2
 			if pollKeyboardFallback() {
 				continue
 			}
+			kbdStatusCode = 3
 			if ev, ok := keyboardIRQRecv(); ok {
 				markKeyboardDrainCPU()
 				return ev
 			}
+			kbdStatusCode = 4
 			sti()
+			kbdStatusCode = 5
 			hlt()
+			kbdStatusCode = 6
 			continue
 		}
 		gooosSchedulerYield()
