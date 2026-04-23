@@ -115,6 +115,8 @@ func timerDispatcher() {
 			}
 		}
 		runtime.Gosched()
+		// Phase 4.2: Also yield to any kernel threads queued on this CPU
+		kernelYield()
 	}
 }
 
