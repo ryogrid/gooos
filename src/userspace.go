@@ -614,7 +614,18 @@ func sysGetcpuidHandler(frame *SyscallFrame) {
 // --- Syscall 38: sys_shell_ready ---
 // Signals that shell userspace reached interactive-ready state.
 // Preempt fanout is enabled from this explicit control point.
+//
+// Caller gate (D2 per TODO_FIX.md): only the current foreground
+// process may call this. At boot that is always the shell — no
+// other Ring-3 program has run yet. This narrows the attack
+// surface against a hypothetical rogue program that later tries
+// to perturb the preempt-phase state machine.
 func sysShellReadyHandler(frame *SyscallFrame) {
+	proc := currentProc()
+	if proc == nil || proc != getForegroundProc() {
+		frame.RAX = sysFail(fdErrBad)
+		return
+	}
 	bootActivatePostShellReady()
 	frame.RAX = 0
 }

@@ -114,6 +114,10 @@ func keyboardReadEventBlocking() uint32 {
 			hlt()
 			continue
 		}
-		gooosSchedulerYield()
+		// AP path: use a bounded sleep rather than a tight yield loop,
+		// so a reader stranded on an AP against an empty ring does not
+		// monopolize the AP. 10 ms is 1 PIT tick — the same quantum
+		// LAPIC preemption uses elsewhere. E4 per TODO_FIX.md.
+		<-afterTicks(1)
 	}
 }

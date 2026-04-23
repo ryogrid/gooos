@@ -108,11 +108,13 @@ Deferred section at end of this file), or **CLOSE-AS-WONTFIX**
   KernelThreads using `SavedContext` + a `kernel_thread_swap.S`
   stub modeled after `tinygo_swapTask`. Per-CPU stack pool
   (lazy-allocated on first yield).
-- [ ] **C2 FIX**: `kernelThreadSpawn` allocates from ISR path
+- [x] **C2 FIX**: `kernelThreadSpawn` allocates from ISR path
   without lint coverage. Replace the `&KernelThread{}`
   allocation with a bounded static pool (`[maxCPUs*8]KernelThread`)
   and convert `kernelThreadSpawn` to an allocation-free
   slot-pop — ISR-safe. Add a `//go:nosplit` annotation.
+  *Landed in commit `e346305`; pool size 128; ISR-safe drop counter
+  `kernelThreadSpawnDrops`.*
 - [ ] **C3 FIX**: migrate long-lived kernel services from
   TinyGo goroutines to KernelThreads once C1 lands. Concrete
   targets: `timerDispatcher`, `netRxLoop`, `tcpRTOScannerLoop`,
@@ -136,9 +138,10 @@ Deferred section at end of this file), or **CLOSE-AS-WONTFIX**
 
 ### Group E — `07_keyboard_irq_ring.md §Open Questions`
 
-- [ ] **E1 FIX**: Ring drops on full without warning. Add a
+- [x] **E1 FIX**: Ring drops on full without warning. Add a
   diagnostic counter (`kbdRingDrops uint32`) incremented on the
   drop branch; reported by `netDiag`.
+  *Landed in commit `e346305`.*
 - [ ] **E2 CLOSE-AS-WONTFIX**: keyboard reliability not 100% —
   covered by B2 (AP LAPIC timer) and C3 (kernel service
   migration); this bullet closes when those land.

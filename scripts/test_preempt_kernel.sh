@@ -26,6 +26,11 @@ set -u
 OUT="tmp/serial_preempt_kernel.log"
 CONF="src/preempt_config.go"
 BACKUP="tmp/preempt_config.go.bak"
+
+# shellcheck source=harness_lib.sh
+. "$(dirname "$0")/harness_lib.sh"
+harness_recover_stale_backup "$CONF"
+
 rm -f "$OUT" "$BACKUP"
 
 # runPreemptProbe is OFF in release because kpHog breaks other

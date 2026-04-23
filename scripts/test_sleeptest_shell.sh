@@ -6,6 +6,11 @@ set -u
 OUT="tmp/serial_sleeptest_shell.log"
 CONF="src/preempt_config.go"
 BACKUP="tmp/preempt_config_sleeptest.go.bak"
+
+# shellcheck source=harness_lib.sh
+. "$(dirname "$0")/harness_lib.sh"
+harness_recover_stale_backup "$CONF"
+
 rm -f "$OUT" "$BACKUP"
 
 cp "$CONF" "$BACKUP"

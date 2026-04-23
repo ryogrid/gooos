@@ -18,6 +18,11 @@ OUT="tmp/serial_preempt_user.log"
 MON_SOCK="tmp/test_preempt_user.mon.sock"
 CONF="src/preempt_config.go"
 BACKUP="tmp/preempt_config_user.go.bak"
+
+# shellcheck source=harness_lib.sh
+. "$(dirname "$0")/harness_lib.sh"
+harness_recover_stale_backup "$CONF"
+
 rm -f "$OUT" "$MON_SOCK" "$BACKUP"
 
 # runUserPreemptProbe auto-launches userpreempt.elf from bspBootDone
