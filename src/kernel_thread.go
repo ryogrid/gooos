@@ -126,22 +126,20 @@ func kernelThreadPopReady() *KernelThread {
 var currentKernelThread [maxCPUs]*KernelThread
 
 // kernelThreadSwitch switches from current thread to 'next' thread.
-// Saves CPU registers and stack state, then jumps to next thread.
-// This is a simplified implementation that doesn't do full context switching
-// (we defer complex assembly to Phase 4.4). For now, we just invoke the function directly.
+// Phase 4.3: Direct invocation (no context switching - will be Phase 4.4).
+// 
+// Executes next thread's entry function directly until it yields.
 func kernelThreadSwitch(next *KernelThread) {
 	if next == nil || next.entryFn == nil {
 		return
 	}
 	
-	// For Phase 4.2: Direct invocation (not true context switching)
-	// The function will run until it yields or calls sys_* that blocks
+	// Direct invocation - thread runs until it yields or completes
 	next.entryFn()
 }
 
 // kernelYield yields the current kernel thread to the next ready thread on this CPU.
-// Phase 4.2: Direct sequential invocation of queued functions.
-// Phase 4.4: Full context switching with register save/restore.
+// Phase 4.3: Direct sequential invocation of queued functions.
 func kernelYield() {
 	cpu := cpuID()
 	if cpu >= uint32(maxCPUs) {
@@ -155,5 +153,6 @@ func kernelYield() {
 		currentKernelThread[cpu] = next
 		// Execute next thread's function
 		kernelThreadSwitch(next)
+		// After thread completes or yields, we continue here
 	}
 }
