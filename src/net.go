@@ -46,6 +46,10 @@ func netInit() {
 
 	arpSendGratuitous()
 
+	// Phase 4.3: Launch netRxLoop as both:
+	// 1. Kernel thread on CPU 0 (for deterministic scheduling)
+	// 2. TinyGo goroutine (for backward compatibility, in case kernel thread scheduling fails)
+	kernelThreadSpawn(0, netRxLoop)
 	go netRxLoop()
 	serialPrintln("NET: RX dispatch goroutine started")
 
@@ -65,6 +69,8 @@ func netRxLoop() {
 		drainRxRing()
 		statsInc(&netStats.NetRxLoopWakes) // counts iterations
 		runtime.Gosched()
+		// Phase 4.2: Yield to any kernel threads on this CPU
+		kernelYield()
 	}
 }
 
