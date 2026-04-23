@@ -303,6 +303,17 @@ floor is shared between kernel and userspace.
    goroutine with no wakeup source. Confirm TinyGo's
    built-in deadlock panic fires and `sys_exit` unwinds
    cleanly (process exit observed on serial).
+5. **Select on buffered channels with concurrent sends**: 
+   When a user program creates goroutines via `go func()`
+   that immediately push to buffered channels, then the main
+   goroutine enters a `select` statement, the scheduler must
+   execute the created goroutines before main blocks on
+   select. Without a scheduling opportunity (yield or sleep),
+   the goroutines may never execute, causing select to block
+   indefinitely. Recommended: insert a small sleep
+   (`time.Sleep(1*time.Millisecond)`) before `select` to
+   guarantee goroutines execute. This is documented in
+   `user/cmd/goprobe` and `user/cmd/gochan` source.
 
 ## 10. Open questions
 

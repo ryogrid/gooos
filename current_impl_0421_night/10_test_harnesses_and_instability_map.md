@@ -66,3 +66,19 @@ Many probes rely on serial line grep markers. Under interrupt-heavy runs, output
 - Harness-generated config flips must be reverted in all exit paths.
 - Marker format literals in scripts must match current code output strings exactly.
 - `tmp/` log path ownership and cleanup must remain stable to avoid stale-read false positives.
+
+## Stability Fixes Applied
+
+### goprobe/gochan select hang (April 2026)
+
+**Issue**: Both `goprobe` and `gochan` would intermittently hang with truncated output like `goprobe: select O` (output cut mid-word). Cause: TinyGo user-space scheduler does not execute queued goroutines on demand when main goroutine immediately enters `select` block.
+
+**Fix**: Added 1ms `time.Sleep()` before `select` statements in both programs to provide scheduling window for goroutines to execute and push values to buffered channels before main goroutine blocks.
+
+**Commits**: 
+- `61b89d0` Fix goprobe select hang with pre-select sleep
+- `de0ab96` Fix gochan select hang with pre-select sleep
+
+**Testing**: Both probes now pass all tests when run sequentially via shell autorun (`scripts/test_smp_shell_smpprobe.sh` variant pattern).
+
+**Implication**: User programs that spawn goroutines and immediately block on channels should include a small sleep/yield to guarantee goroutines execute. See `impldoc/userspace_scheduler_integration.md §9.5` for details.
