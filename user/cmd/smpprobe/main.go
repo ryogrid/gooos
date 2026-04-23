@@ -30,6 +30,7 @@ import (
 
 const numWorkers = 4
 const iterationsPerWorker = 3
+const yieldsPerIteration = 100  // Replace Sleep(10) with 100 Yield calls
 
 func main() {
 	args := gooos.Args()
@@ -40,10 +41,11 @@ func main() {
 		for i := 0; i < iterationsPerWorker; i++ {
 			cpu := gooos.GetCpuID()
 			gooos.Println("worker-" + workerID + ": cpuID=" + strconv.Itoa(cpu))
-			// Sleep to allow scheduler work-stealing to migrate this worker
-			// to other CPU cores. 10ms is enough to trigger a reschedule
-			// while keeping output compact.
-			gooos.Sleep(10)
+			// Yield loop to allow scheduler work-stealing to migrate this worker
+			// to other CPU cores. Multiple yields trigger reschedule similar to Sleep.
+			for j := 0; j < yieldsPerIteration; j++ {
+				gooos.Yield()
+			}
 		}
 		gooos.Exit(0)
 		return
