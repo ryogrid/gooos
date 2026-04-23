@@ -167,19 +167,20 @@ Deferred section at end of this file), or **CLOSE-AS-WONTFIX**
 
 ### Group F — `09_user_programs_sleep_vs_yield.md §Open Questions`
 
-- [ ] **F1 FIX**: Ring-3 `sys_sleep` hang under SMP. Root cause
-  per the Phase-1 survey: a ring3Wrapper that parks on
-  `<-afterTicks(d)` may be woken on any CPU, and while
-  `gooosOnResume` updates TSS.RSP0 / CR3 correctly, the
-  scheduler can resume the wrapper on a CPU where the previous
-  syscall ISR frame on the ring3Wrapper's kernel stack is
-  *stale* (the wakeup replays the old iretq-frame which points
-  at a different user context). Fix: bind Ring-3 wrappers to
-  their origin CPU for the duration of a blocking syscall —
-  set `proc.PinnedCPU = cpuID()` before `<-afterTicks` in
-  `sysSleepHandler`, clear after return; extend the
-  scheduler-integration hook (`gooosOnResume`) to re-target the
-  runqueue if the current CPU doesn't match `PinnedCPU`.
+- [x] **F1 FIX (partial)**: Ring-3 `sys_sleep` hang under SMP.
+  The dominant root cause was unrelated to the original hypothesis:
+  Phase 4.3's `kernelThreadSpawn(0, netRxLoop)` call at
+  `src/net.go:52` put an infinite-loop function on the ready
+  queue; `timerDispatcher`'s `kernelYield` then direct-invoked
+  it and never returned, stranding every `afterTicks` deadline.
+  Removed the call; sleeptest pass rate went 0% → ~20% under
+  -smp 4. Landed in commit above (post-`6b910fb`).
+  **Residual flakiness** (tracked as F1-follow):
+  - Some runs complete only the first 1–2 of three Sleep(10)
+    calls in the diagnostic before hanging. Under -smp 1 the
+    hang is not reproducible in hand-testing; the remaining
+    failure mode is believed to live in the channel-wakeup
+    cross-CPU path. Deferred below.
 - [ ] **F2 DEFER**: "is Yield-loop a sustainable workaround" —
   moot once F1 lands. Updates userland contract doc once F1
   passes verification.
