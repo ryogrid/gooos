@@ -528,6 +528,10 @@ func main() {
 	fsWrite("userpreempt.elf", userElf_userpreempt[:])
 	serialPrintln("  userpreempt.elf: " + utoa(uint64(len(userElf_userpreempt))) + " bytes")
 
+	fsCreate("sleeptest.elf")
+	fsWrite("sleeptest.elf", userElf_sleeptest[:])
+	serialPrintln("  sleeptest.elf: " + utoa(uint64(len(userElf_sleeptest))) + " bytes")
+
 	// Store a test file for cat/wc demos.
 	fsCreate("hello.txt")
 	fsWrite("hello.txt", []byte("Hello from the gooos filesystem!\nThis is a test file.\n"))
@@ -559,6 +563,13 @@ func main() {
 		fsWrite(".autorun.sh", []byte("goprobe\necho POST_GOPROBE_OK\n"))
 		bootShellArgs = "--autorun"
 		serialPrintln("preempt_probe: prepared .autorun.sh for goprobe shell test")
+	} else if runSleeputestTest {
+		// One-shot shell autorun path for deterministic sleeptest validation.
+		// Executed by user/cmd/sh/main.go before the interactive prompt.
+		fsCreate(".autorun.sh")
+		fsWrite(".autorun.sh", []byte("sleeptest\necho POST_SLEEPTEST_OK\n"))
+		bootShellArgs = "--autorun"
+		serialPrintln("preempt_probe: prepared .autorun.sh for sleeptest shell test")
 	} else if preemptEnabled && runUserPreemptProbe {
 		// Feature 2.2 harness auto-launch via shell autorun path to keep
 		// user process startup deterministic without HMP sendkey.

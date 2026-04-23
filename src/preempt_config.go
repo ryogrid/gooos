@@ -51,3 +51,8 @@ const runSMPProbeShellTest = false
 // (`.autorun.sh`) so userspace `goprobe` validation can execute through the
 // real shell parser/exec/wait path without HMP sendkey injection.
 const runGoprobeTest = false
+
+// runSleeputestTest writes a one-shot shell autorun script at boot
+// (`.autorun.sh`) so userspace `sleeptest` validation can execute through the
+// real shell parser/exec/wait path without HMP sendkey injection.
+const runSleeputestTest = false
