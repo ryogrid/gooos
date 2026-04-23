@@ -16,12 +16,23 @@
 
 package main
 
+// SavedContext holds saved CPU register state for context switching.
+type SavedContext struct {
+	rax, rbx, rcx, rdx uintptr
+	rsi, rdi, rbp      uintptr
+	r8, r9, r10, r11   uintptr
+	r12, r13, r14, r15 uintptr
+	rip, rsp           uintptr
+	// Note: We don't save segment registers (CS, DS, SS, etc) - they're static in kernel
+}
+
 // KernelThread represents a Ring 0 service thread bound to a specific CPU.
 type KernelThread struct {
-	cpuID     uint32
-	entryFn   func()
-	state     ThreadState
+	cpuID    uint32
+	entryFn  func()
+	state    ThreadState
 	nextReady *KernelThread
+	context  SavedContext // CPU state for context switching
 }
 
 // ThreadState enum
@@ -111,9 +122,38 @@ func kernelThreadPopReady() *KernelThread {
 	return kt
 }
 
-// kernelYield is a placeholder for kernel thread yielding.
-// Phase 4.2+: Will switch to next kernel thread on current CPU.
-// For now: just returns (threads run sequentially or get preempted by TinyGo).
+// Per-CPU current kernel thread tracking
+var currentKernelThread [maxCPUs]*KernelThread
+
+// kernelThreadSwitch switches from current thread to 'next' thread.
+// Saves CPU registers and stack state, then jumps to next thread.
+// This is a simplified implementation that doesn't do full context switching
+// (we defer complex assembly to Phase 4.4). For now, we just invoke the function directly.
+func kernelThreadSwitch(next *KernelThread) {
+	if next == nil || next.entryFn == nil {
+		return
+	}
+	
+	// For Phase 4.2: Direct invocation (not true context switching)
+	// The function will run until it yields or calls sys_* that blocks
+	next.entryFn()
+}
+
+// kernelYield yields the current kernel thread to the next ready thread on this CPU.
+// Phase 4.2: Direct sequential invocation of queued functions.
+// Phase 4.4: Full context switching with register save/restore.
 func kernelYield() {
-	// TODO: Phase 4.4 - implement context switch to next ready kernel thread
+	cpu := cpuID()
+	if cpu >= uint32(maxCPUs) {
+		return
+	}
+	
+	// Get next ready kernel thread on this CPU
+	next := kernelThreadPopReady()
+	if next != nil {
+		// Track current thread
+		currentKernelThread[cpu] = next
+		// Execute next thread's function
+		kernelThreadSwitch(next)
+	}
 }
