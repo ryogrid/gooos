@@ -497,7 +497,13 @@ func processExit(exitCode uintptr) {
 	}
 
 	// Serialize processExit across CPUs to avoid concurrent freePage calls
-	// which can cause page allocator lock contention
+	// which can cause page allocator lock contention.
+	//
+	// Lock-order note (D1 per TODO_FIX.md): procLock is rank 2;
+	// freePage acquires pageAllocLock at rank 1. Higher-rank holder
+	// acquiring lower-rank lock is the normative direction; the
+	// reverse (pageAllocLock holder taking procLock) is prohibited.
+	// No current caller violates this.
 	flags := procLock.Acquire()
 
 	serialPrintln("MARKER: M2 processExit pre-freePage")

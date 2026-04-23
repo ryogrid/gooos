@@ -68,11 +68,13 @@ Deferred section at end of this file), or **CLOSE-AS-WONTFIX**
   `int 0x80` ISR context. Factor heavy work out of ISR — handler
   sets a latch + wakes a dedicated boot-finalize kernel thread
   that does the rest on its own stack.
-- [ ] **A2 CLOSE-AS-WONTFIX**: IOAPIC-path virtual-wire restore
+- [x] **A2 CLOSE-AS-WONTFIX**: IOAPIC-path virtual-wire restore
   untested. IOAPIC path is not used in the supported QEMU run
   (`make run-smp` uses the non-IOAPIC path). Document the
   symmetric restore sketch under `07_keyboard_irq_ring.md §Open
   Questions` but do not implement until hardware demands it.
+  *Already documented in `01_boot_and_init_delta.md §Open
+  Questions`; no code change.*
 
 ### Group B — `03_smp_preempt_phase_gating.md §Open Questions`
 
@@ -94,8 +96,9 @@ Deferred section at end of this file), or **CLOSE-AS-WONTFIX**
   `perCPUBlocks[idx].WantReschedule = 1` and sends EOI. That is
   safe. Enable `lapicTimerInit()` in `apEntry` and add an
   AP-side yield site (`runtime.Gosched()` on `WantReschedule`).
-- [ ] **B3 CLOSE-AS-WONTFIX**: `preemptTargetSnapshotN` racy
+- [x] **B3 CLOSE-AS-WONTFIX**: `preemptTargetSnapshotN` racy
   read is diagnostic-only. Add a comment; no code change.
+  *Comment added in `src/ipi.go`.*
 - [ ] **B4 DEFER**: investigation-checkpoint `252a96b`
   diagnostics (`APIDSTAT`, `PRESTAT`) remain in tree behind
   `runSMPShellPreemptProbe`. Keep as-is; not in the delta-doc
@@ -124,17 +127,20 @@ Deferred section at end of this file), or **CLOSE-AS-WONTFIX**
 
 ### Group D — `05_syscalls_and_shell_ready.md §Open Questions`
 
-- [ ] **D1 CLOSE-AS-WONTFIX**: `procLock` rank-2 holding across
+- [x] **D1 CLOSE-AS-WONTFIX**: `procLock` rank-2 holding across
   `freePage` (rank 1) — correct rank-order (higher holding
   lower is OK); add an explicit assertion comment above the
   critical section.
-- [ ] **D2 FIX**: `sys_shell_ready` has no caller
+  *Comment added above the `procLock.Acquire` in `processExit`.*
+- [x] **D2 FIX**: `sys_shell_ready` has no caller
   authentication. Gate it to callers with `proc == foregroundProc`
   at the time of the syscall — this narrows the attack surface
   to the interactive shell without breaking the current flow.
-- [ ] **D3 CLOSE-AS-WONTFIX**: `processExit` diagnostic dump
+  *Landed in commit `74afce5`.*
+- [x] **D3 CLOSE-AS-WONTFIX**: `processExit` diagnostic dump
   inside critical section is `runSMPShellPreemptProbe`-gated
   and off by default — no change needed.
+  *Recorded as-is; no code change.*
 
 ### Group E — `07_keyboard_irq_ring.md §Open Questions`
 
@@ -142,19 +148,22 @@ Deferred section at end of this file), or **CLOSE-AS-WONTFIX**
   diagnostic counter (`kbdRingDrops uint32`) incremented on the
   drop branch; reported by `netDiag`.
   *Landed in commit `e346305`.*
-- [ ] **E2 CLOSE-AS-WONTFIX**: keyboard reliability not 100% —
-  covered by B2 (AP LAPIC timer) and C3 (kernel service
-  migration); this bullet closes when those land.
-- [ ] **E3 CLOSE-AS-WONTFIX**: `pump:NNNN` netDiag name is
+- [ ] **E2 CLOSE-AS-WONTFIX (pending B2/C3)**: keyboard
+  reliability not 100% — covered by B2 (AP LAPIC timer) and
+  C3 (kernel service migration); this bullet closes when those
+  land.
+- [x] **E3 CLOSE-AS-WONTFIX**: `pump:NNNN` netDiag name is
   historical — rename cost isn't worth the break in test-harness
   grep patterns that match this string; document in
   `07_keyboard_irq_ring.md`.
-- [ ] **E4 FIX**: AP-hosted blocking keyboard reader burns 100%
+  *Existing doc already notes this; no code change.*
+- [x] **E4 FIX**: AP-hosted blocking keyboard reader burns 100%
   CPU yielding against an empty ring. Fix: use `afterTicks(1)`
   (10 ms) as a bounded-sleep fallback on the AP path instead of
   raw `gooosSchedulerYield()`. That path is unreachable in
   practice today (readers are BSP-originated) but the fix is
   one line and closes the open question.
+  *Landed in commit `74afce5`.*
 
 ### Group F — `09_user_programs_sleep_vs_yield.md §Open Questions`
 
@@ -185,14 +194,18 @@ Deferred section at end of this file), or **CLOSE-AS-WONTFIX**
 - [ ] **G2 FIX**: `test_sleeptest_shell.sh` is a deliberate
   reproducer. After F1 lands, flip its header to
   "regression — expected PASS" and add to the stability sampler.
-- [ ] **G3 FIX**: harness sed-leak on kill -9. Add a stronger
+- [x] **G3 FIX**: harness sed-leak on kill -9. Add a stronger
   trap — write the original flag value to `tmp/.<script>.flag`
   at start, restore from it on exit. Covers all autorun-style
   harnesses.
-- [ ] **G4 CLOSE-AS-WONTFIX**: `test_net_tap.sh` status unclear.
+  *Landed in commit `74afce5` via `scripts/harness_lib.sh` +
+  `harness_recover_stale_backup` sourced from all eight
+  flag-flipping harnesses.*
+- [x] **G4 CLOSE-AS-WONTFIX**: `test_net_tap.sh` status unclear.
   Not an Open Question from the delta docs — already out of
   scope (mentions only "unclear if production-ready; check
   header").
+  *Recorded as-is; no code change.*
 
 ## Implementation sequence
 

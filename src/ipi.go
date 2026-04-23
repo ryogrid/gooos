@@ -74,6 +74,12 @@ var wakeFirstSeen [maxCPUs]uint32
 // preemptTargetSnapshot stores the latest BSP-selected APIC-ID fanout
 // set for vector 0xFB delivery. BSP timer path updates this every tick
 // in broadcastPreemptIPI; used for deterministic target selection.
+//
+// preemptTargetSnapshotN is written before the targeted-send loop each
+// tick and is only consumed by diagnostic paths (dumpPreemptCounters
+// under runSMPShellPreemptProbe). A torn read there is harmless — the
+// diagnostic reports at most one redundant/missing entry. Noted per
+// TODO_FIX.md B3 (CLOSE-AS-WONTFIX): diagnostic-only; no lock needed.
 var preemptTargetSnapshot [maxCPUs]uint8
 var preemptTargetSnapshotN uint32
 
