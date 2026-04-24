@@ -167,35 +167,40 @@ const (
 	fsOpDelete
 )
 
-// fsRequest travels from any caller to the fsTask goroutine.
+// fsRequest travels from any caller to the fsTask kernel thread.
+//
+// Route C M2: replaced the per-request `reply chan *fsResponse`
+// with an embedded KEvent + owned `resp *fsResponse`. The caller
+// allocates a req on its own stack (or heap), pushes it onto
+// fsReqQ, Waits on req.ev, then reads req.resp. fsTask processes
+// requests serially (single consumer), fills resp, and Signals.
 type fsRequest struct {
-	op    fsOp
-	name  string
-	data  []byte
-	reply chan *fsResponse
+	op   fsOp
+	name string
+	data []byte
+	resp *fsResponse
+	ev   KEvent
 }
 
-// fsResponse is sent back on req.reply.
+// fsResponse is produced by fsTask on behalf of a request.
 type fsResponse struct {
 	ok    bool
 	data  []byte
 	names []string
 }
 
-// fsReqCh serializes all FS access through the single fsTask goroutine.
-var fsReqCh chan *fsRequest
+// fsReqQ serializes all FS access through the single fsTask
+// kernel thread (§06 service #9). Replaces the Go-chan-based
+// `fsReqCh` with a bounded MPSC queue (src/kthread_queue.go).
+var fsReqQ fsReqQueue
 
-func ensureFSReqCh() {
-	if fsReqCh == nil {
-		fsReqCh = make(chan *fsRequest, 8)
-	}
-}
-
-// fsTask is the FS service goroutine. Spawned from main() via `go`.
+// fsTask is the FS service kernel thread. Spawned from main() via
+// `kschedSpawn("fsTask", fsTask)`. Blocks in fsReqQ.Pop(); processes
+// one request at a time; signals the caller's per-request KEvent.
 func fsTask() {
-	ensureFSReqCh()
 	fsTaskHandle = taskCurrent()
-	for req := range fsReqCh {
+	for {
+		req := fsReqQ.Pop()
 		resp := &fsResponse{}
 		switch req.op {
 		case fsOpCreate:
@@ -211,41 +216,42 @@ func fsTask() {
 		case fsOpDelete:
 			resp.ok = fsDelete(req.name)
 		}
-		req.reply <- resp
+		req.resp = resp
+		req.ev.Signal()
 	}
 }
 
 func fsSendCreate(name string) bool {
-	ensureFSReqCh()
-	reply := make(chan *fsResponse, 1)
-	fsReqCh <- &fsRequest{op: fsOpCreate, name: name, reply: reply}
-	return (<-reply).ok
+	req := &fsRequest{op: fsOpCreate, name: name}
+	fsReqQ.Push(req)
+	req.ev.Wait()
+	return req.resp.ok
 }
 
 func fsSendWrite(name string, data []byte) bool {
-	ensureFSReqCh()
-	reply := make(chan *fsResponse, 1)
-	fsReqCh <- &fsRequest{op: fsOpWrite, name: name, data: data, reply: reply}
-	return (<-reply).ok
+	req := &fsRequest{op: fsOpWrite, name: name, data: data}
+	fsReqQ.Push(req)
+	req.ev.Wait()
+	return req.resp.ok
 }
 
 func fsSendRead(name string) []byte {
-	ensureFSReqCh()
-	reply := make(chan *fsResponse, 1)
-	fsReqCh <- &fsRequest{op: fsOpRead, name: name, reply: reply}
-	return (<-reply).data
+	req := &fsRequest{op: fsOpRead, name: name}
+	fsReqQ.Push(req)
+	req.ev.Wait()
+	return req.resp.data
 }
 
 func fsSendList() []string {
-	ensureFSReqCh()
-	reply := make(chan *fsResponse, 1)
-	fsReqCh <- &fsRequest{op: fsOpList, reply: reply}
-	return (<-reply).names
+	req := &fsRequest{op: fsOpList}
+	fsReqQ.Push(req)
+	req.ev.Wait()
+	return req.resp.names
 }
 
 func fsSendDelete(name string) bool {
-	ensureFSReqCh()
-	reply := make(chan *fsResponse, 1)
-	fsReqCh <- &fsRequest{op: fsOpDelete, name: name, reply: reply}
-	return (<-reply).ok
+	req := &fsRequest{op: fsOpDelete, name: name}
+	fsReqQ.Push(req)
+	req.ev.Wait()
+	return req.resp.ok
 }

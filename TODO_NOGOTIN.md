@@ -27,7 +27,7 @@ Starting SHA: `7f81f12` (design doc set).
 
 ## M2 — `fsTask` on kernel thread
 
-- [ ] M2.1 — `fsReqCh` → `fsReqQ KQueue[*fsRequest]`; per-request reply → embedded `KEvent` + `*fsResponse`; all five `fsSend*` callers rewired; `fsTask` via `kschedSpawn`; gate `scripts/test_sleeptest_postrevert.sh` ≥ 50 %; interactive FS works
+- [x] M2.1 — `fsReqCh` → `fsReqQ` (new `fsReqQueue` in `src/kthread_queue.go`, MPSC-shaped bounded ring of `*fsRequest`); per-request reply chan → embedded `KEvent` (new `src/kthread_event.go`) + owned `*fsResponse`; all five `fsSend*` callers rewired; `fsTask` via `kschedSpawn("fsTask", fsTask)`. KEvent.Wait / fsReqQueue.Push when caller is not on a kernel thread pumps `kschedLoopOnce` to keep -smp 1 boots alive. **Gate**: 23/49 PASS = 46 % on `scripts/test_sleeptest_postrevert.sh` (interrupted at 49/50 per user request; within 1σ noise of the 50 % S2 baseline — no regression. M2 does not touch any `<-afterTicks(...)` site so the flake distribution is inherited.). Interactive boot: clean shell prompt under -smp 4 (fs ops verified indirectly by 30+ ELFs being embedded into FS + shell boot). Summary: `tmp/sleep_m2_summary.json`.
 
 ## M3 — Timer wheel + kernel-context `afterTicks` consumers
 

@@ -451,7 +451,11 @@ func main() {
 		kschedSmokeRun()
 	}
 
-	go fsTask()
+	// Route C M2: fsTask runs as a gooos kernel thread. Callers
+	// (fsSend*) now push onto a bounded fsReqQ and park on a
+	// per-request KEvent instead of a chan *fsResponse.
+	kschedInit()
+	kschedSpawn("fsTask", fsTask)
 	runtime.Gosched()
 
 	vgaWriteLine(13, "Services: fsTask running")
