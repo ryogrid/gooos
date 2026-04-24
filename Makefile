@@ -33,6 +33,7 @@ SWITCH_S    := $(SRC_DIR)/switch.S
 TRAMP_S     := $(SRC_DIR)/trampoline.S
 TASK_S      := $(SRC_DIR)/task_stack_amd64.S
 RT_ASM_S    := $(SRC_DIR)/runtime_asm_amd64.S
+KTHREAD_S   := $(SRC_DIR)/kthread_switch.S
 GO_SRCS     := $(wildcard $(SRC_DIR)/*.go)
 
 BOOT_O      := $(TMP_DIR)/boot.o
@@ -42,6 +43,7 @@ SWITCH_O    := $(TMP_DIR)/switch.o
 TRAMP_O     := $(TMP_DIR)/trampoline.o
 TASK_O      := $(TMP_DIR)/task_stack_amd64.o
 RT_ASM_O    := $(TMP_DIR)/runtime_asm_amd64.o
+KTHREAD_O   := $(TMP_DIR)/kthread_switch.o
 KERNEL_GO_O := $(TMP_DIR)/kernel_go.o
 KERNEL_BIN  := $(TMP_DIR)/kernel.bin
 KERNEL_ISO  := $(TMP_DIR)/kernel.iso
@@ -99,11 +101,14 @@ $(TASK_O): $(TASK_S) | $(TMP_DIR)
 $(RT_ASM_O): $(RT_ASM_S) | $(TMP_DIR)
 	$(AS) --64 $(RT_ASM_S) -o $(RT_ASM_O)
 
+$(KTHREAD_O): $(KTHREAD_S) | $(TMP_DIR)
+	$(AS) --64 $(KTHREAD_S) -o $(KTHREAD_O)
+
 $(KERNEL_GO_O): $(GO_SRCS) $(TARGET_JSON) | $(TMP_DIR)
 	$(TINYGO) build -interp-timeout=10m -target=$(TARGET_JSON) -o $(KERNEL_GO_O) ./$(SRC_DIR)
 
-$(KERNEL_BIN): $(BOOT_O) $(STUBS_O) $(ISR_O) $(SWITCH_O) $(TRAMP_O) $(TASK_O) $(RT_ASM_O) $(KERNEL_GO_O) $(LINKER_LD)
-	$(LD) -m elf_x86_64 -n -T $(LINKER_LD) -o $(KERNEL_BIN) $(BOOT_O) $(STUBS_O) $(ISR_O) $(SWITCH_O) $(TRAMP_O) $(TASK_O) $(RT_ASM_O) $(KERNEL_GO_O)
+$(KERNEL_BIN): $(BOOT_O) $(STUBS_O) $(ISR_O) $(SWITCH_O) $(TRAMP_O) $(TASK_O) $(RT_ASM_O) $(KTHREAD_O) $(KERNEL_GO_O) $(LINKER_LD)
+	$(LD) -m elf_x86_64 -n -T $(LINKER_LD) -o $(KERNEL_BIN) $(BOOT_O) $(STUBS_O) $(ISR_O) $(SWITCH_O) $(TRAMP_O) $(TASK_O) $(RT_ASM_O) $(KTHREAD_O) $(KERNEL_GO_O)
 
 check-multiboot: $(KERNEL_BIN)
 	grub-file --is-x86-multiboot $(KERNEL_BIN)

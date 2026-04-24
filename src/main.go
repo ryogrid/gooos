@@ -362,9 +362,10 @@ func main() {
 		serialPrintln("afterTicks: OK")
 	}()
 
-	// Initialize kernel thread system (Phase 4.1)
-	// Must be done before SMP init so per-CPU ready queues are prepared
-	kernelThreadInit()
+	// (Route C M0: the Phase 4.3 kernelThreadInit / ktPool machinery
+	// has been superseded by the gooos-owned kthread scheduler in
+	// src/kthread_*.go; it was dormant after commit 6a45e74 removed
+	// the netRxLoop spawn, so nothing to initialise here.)
 
 	// Boot Application Processors via INIT-SIPI-SIPI.
 	// smpInit maps the LAPIC MMIO page, so per-CPU init must follow.
@@ -437,6 +438,18 @@ func main() {
 	// Phase B self-test: verify the TinyGo Task struct layout
 	// assumed by src/goroutine_tss.go before anything depends on it.
 	checkTaskOffset()
+
+	// Route C M0 self-test: verify the KernelThread struct layout
+	// assumed by src/kthread_switch.S.
+	checkKernelThreadOffset()
+
+	// Route C M0 smoke test. Briefly enters the gooos kernel-thread
+	// scheduler to prove kschedSwitch works, then returns to the
+	// normal TinyGo boot path. Gated off by default; enabled by
+	// scripts/test_kthread_smoke.sh via sed + rebuild.
+	if runKthreadSmoke {
+		kschedSmokeRun()
+	}
 
 	go fsTask()
 	runtime.Gosched()

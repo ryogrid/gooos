@@ -69,3 +69,11 @@ const runYieldtestTest = false
 // audit harness scripts/test_sleeptest_longrun.sh flips it true
 // via sed + rebuild, same pattern as the other autorun gates.
 const runSleepAudit = false
+
+// runKthreadSmoke gates the M0 kernel-thread smoke test
+// (src/kthread_smoke.go). When true, main() briefly enters the
+// gooos kernel-thread scheduler after init, runs two demo threads
+// that round-robin print A/B, then returns to the normal TinyGo
+// boot path. scripts/test_kthread_smoke.sh flips this via sed +
+// rebuild.
+const runKthreadSmoke = false

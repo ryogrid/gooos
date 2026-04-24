@@ -76,8 +76,6 @@ func netRxLoop() {
 		drainRxRing()
 		statsInc(&netStats.NetRxLoopWakes) // counts iterations
 		runtime.Gosched()
-		// Phase 4.2: Yield to any kernel threads on this CPU
-		kernelYield()
 	}
 }
 
@@ -218,9 +216,6 @@ func netDiag() {
 	}
 	if kbdRingDrops != 0 {
 		serialPrintln("kbdRing:drops=" + utoa(uint64(kbdRingDrops)))
-	}
-	if kernelThreadSpawnDrops != 0 {
-		serialPrintln("kt:spawn_drops=" + utoa(uint64(kernelThreadSpawnDrops)))
 	}
 	if runSleepAudit {
 		sleepAuditDump()
