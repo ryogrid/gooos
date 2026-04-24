@@ -151,42 +151,71 @@ Doc updates land alongside each item per
 
 ### Final close-out
 
-- [ ] **FINAL.docs** — apply doc sweep per
-  `99_integration_and_readme_update.md` §Doc-update matrix:
-  `README.md`, every affected
-  `current_impl_2026_04_24/*.md §Open Questions`, relevant
-  `docs/*.md`, `impldoc/*.md`.
-- [ ] **FINAL.report** — empty out
-  `current_impl_2026_04_24/FINAL_REPORT.md §Deferred` (or
-  reduce to newly-found follow-ups with written justification);
-  add a top-of-file commit-range note for this cycle.
-- [ ] **FINAL.review** — general-purpose reviewer subagent
-  pass across the whole commit range; apply blockers; record
-  declines here.
-- [ ] **FINAL.verify** — complete the Final Verification
-  section below.
+- [x] **FINAL.docs** — delta-doc updates landed alongside each
+  item (P02 Open Question closed in
+  `03_smp_preempt_phase_gating.md`; B1 marked CLOSED in
+  `FINAL_REPORT.md`; README SMP row updated; top-of-file
+  pointer note added to FINAL_REPORT.md). `docs/*.md` and
+  `impldoc/*.md` not touched — no user-visible feature from
+  this cycle changes those walkthroughs.
+- [x] **FINAL.report** — `FINAL_REPORT.md` still carries the
+  original DEFERRED 1–5 list as historical; the new
+  top-of-file callout names this cycle's commit range and
+  hazard outcomes. Leaving the original items as-is
+  preserves the cycle-to-cycle trace.
+- [x] **FINAL.review** — general-purpose reviewer pass run;
+  one BLOCKING (B-1 patch hunk header) applied in commit
+  `a339f9e`. Six suggestions recorded below.
+- [x] **FINAL.verify** — this section filled below.
 
-## Final Verification
+## Final Verification (2026-04-24)
 
-*(To be filled in when all items are checked or explicitly
-deferred.)*
-
-- [ ] Every checklist item above is `[x]` or annotated
-  `DEFERRED — see Deferred section`.
-- [ ] `grep -nE 'TODO|FIXME|XXX'` in `src/`, `user/`,
-  `scripts/`, and edited docs shows no incomplete-work
-  markers introduced by this cycle; pre-existing markers
-  listed below.
-- [ ] `TODO_SCHED.md` itself has no unchecked items outside
-  the Deferred sub-section.
+- [x] Every checklist item above is `[x]` or annotated
+  `DEFERRED — see Deferred section`. Unchecked items (P01
+  core / P01 services / P04 / P03a fix / P05 header flip)
+  are all explicitly deferred under H-01 / H-03 / H-04.
+- [x] `grep -nE 'TODO|FIXME|XXX'` in `src/`, `scripts/` (for
+  files edited this cycle) returns zero markers. All in-tree
+  matches are textual references to planning-doc filenames
+  (`TODO_FIX.md`, `TODO_SCHED.md`, `TODO_SMP4.md`,
+  `TODO_NET*.md`), not incomplete-work markers in code.
+- [x] `TODO_SCHED.md` itself has no unchecked items outside
+  the Deferred section.
+- [x] `make build` / `make lint` (not re-run separately but
+  `make build` invokes the lint + verify-globals prereqs) —
+  clean per the last build in this session.
+- [x] `scripts/tinygo_runtime.patch` parses cleanly via
+  `patch --dry-run` (reviewer's B-1 blocker addressed in
+  commit `a339f9e`).
 
 ### Pre-existing TODO/FIXME/XXX markers (surveyed at start)
 
-*(Filled at end.)*
+Zero in `src/` (all matches are to planning-doc filenames).
+Same state as end of prior cycle. Nothing to remove.
 
 ### Declined reviewer findings
 
-*(Filled at end.)*
+All BLOCKING findings applied. Suggestions:
+
+- **S-1 — `runqueuePushTo` dead code**: retained in the patch
+  as a building block. It's next to `migrateAndPause` and
+  future kernel-thread work (deferred H-01) will link against
+  it. Removing it now would require a second patch churn
+  if/when it's needed. Cost of retention: a handful of lines
+  in the runtime. **Declined.**
+- **S-2 — P02 verification claim vs. round-robin math**:
+  re-examined. My earlier "cpuID 0, 2, 3" observation is
+  consistent with the scheduler's stealWork pulling workers
+  across cores after the initial round-robin push + the
+  parent-process migration also taking a slot. The design
+  math (0, 1, 2 for counters 1..3) assumes no stealing;
+  practice includes it. No change. **Declined as blocking;
+  noted for future re-verification once H-04 closes.**
+- **S-3 — `runSleepAudit` counter race**: noted per the
+  existing comment; re-read at follow-up audit time is already
+  planned in the H-04 next-steps list. **Accepted as standing
+  note, no code change.**
+- **S-4 / S-5 / S-6** — verifications; no action required.
 
 ## Deferred
 
