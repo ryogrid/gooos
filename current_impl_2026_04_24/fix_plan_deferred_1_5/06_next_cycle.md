@@ -183,6 +183,93 @@ commit per checklist item. No push without user instruction.
 - `scripts/test_goprobe_longrun.sh` (new, I-2 sampler)
 - Possibly `Makefile` (for I-3 if actionable)
 
+## I-1 mid-session finding (2026-04-24)
+
+Inspecting `tmp/sleep_audit_run_*.log` produced by the in-flight
+Option D sampler **during** its run (30/50 at the time) revealed
+that the "nobegin" failure class is **not a quiet wake-loss** as
+hypothesised in `03a_sleep_fix.md`. It is a **kernel panic
+during spawn-time migration**:
+
+- `sleep_audit_run_10.log`: page-fault at `addr=0xFFFFFFFFEFD2F05E
+  rip=0x00000006` (jump-to-near-zero — stack corruption / bad
+  function pointer).
+- `sleep_audit_run_4.log`: `nil pointer dereference at
+  0x00102d94`.
+- `sleep_audit_run_7.log`: `goroutine stack overflow at
+  0x0010101c`.
+- `sleep_audit_run_29.log`: `panic: sleeptest: begin` — the
+  user-program's banner string ended up formatted as a panic
+  message, consistent with heap/stack corruption causing the
+  runtime panic formatter to mis-route a serial print.
+- The remaining silent "nobegin" logs end with a half-written
+  `"p"` (truncated `"panic:"`), confirming all failing runs are
+  crashing; the quiet ones just got killed by the sampler
+  before their panic text finished.
+
+### Implication for Option D trace ring
+
+Option D was designed to discriminate "target AP never pops the
+bootstrap task" vs. "stealWork pulls bootstrap to the wrong
+CPU". Both presupposed **successful migration followed by
+hang**. The actual failure mode is **unsuccessful migration
+followed by crash**. The trace ring will likely record the push
+half but not the resume half (the kernel crashes before the
+target CPU's scheduler resumes the bootstrap), so the data it
+produces will only tell us "push happened, resume never did" —
+consistent with a crash blocking the resume rather than a race
+preventing it.
+
+### Revised root-cause hypothesis
+
+The `migrateAndPause` approach is fundamentally racy for
+cross-CPU task migration in TinyGo 0.40.1's task system:
+
+```go
+// Source CPU:
+schedulerLock.Lock()
+runqueues[targetCpu].Push(task.Current())  // Task now visible to target
+schedulerWake()                             // IPI broadcast
+task.PauseLocked()                          // Saves state.sp and releases lock
+```
+
+Between `runqueues[targetCpu].Push` and `task.PauseLocked`'s
+`state.pause()` call, the task is on the target's queue but the
+source CPU hasn't yet saved its SP into `state.sp`. If the
+target CPU's scheduler acquires `schedulerLock` immediately
+after source releases it (via `PauseLocked`'s unlock-and-
+pause), the target pops the bootstrap and calls `task.Resume`
+→ `swapTask(state.sp, ...)`. If `state.sp` was saved
+consistently, fine — but the ordering of "save SP" vs "release
+lock" inside `PauseLocked` is what makes this safe or not. At
+least one of the panics (`rip=0x6`) suggests `swapTask` popped
+garbage as the return address — meaning `state.sp` pointed
+somewhere corrupt.
+
+### Revised fix recommendation — Option G: revert P02
+
+Given:
+- The round-robin benefit (smpprobe workers on distinct CPUs)
+  was observed once but never statistically verified.
+- The cost is a 70 % crash rate on user-process spawn under
+  `-smp 4`.
+- The race window in `migrateAndPause`'s cross-CPU push +
+  PauseLocked is hard to close without a TinyGo-runtime fix.
+
+**Recommended next-session action**: **revert P02**
+(`051f534`) so `scheduleRing3Wrapper` becomes a no-op wrapper
+around `go ring3Wrapper(proc)`. Accept that smpprobe worker
+distribution falls back to stealWork-driven migration. File a
+successor design issue for "deterministic user-process spawn
+distribution that is SMP-safe" — likely requires TinyGo
+scheduler patches rather than a gooos-side bootstrap trick.
+
+Options B / C from `03a_sleep_fix.md` were predicated on the
+"successful-migration-but-wake-race" model and no longer apply.
+Option D instrumentation is still useful as background
+evidence but is not the right tool for diagnosing this crash
+class.
+
 ## Out of scope
 
 - H-01 (Plan-01 service-migration design). Separate design
