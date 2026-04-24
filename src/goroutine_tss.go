@@ -168,6 +168,18 @@ func tssSetRSP0ForCurrentG() {
 //go:linkname taskPause internal/task.Pause
 func taskPause()
 
+// migrateAndPause bridges runtime.migrateAndPause (added to the
+// patched TinyGo scheduler_cores.go). Atomically migrates the
+// current task onto the target CPU's runqueue and pauses; the
+// target CPU's scheduler later pops and resumes the task. Used by
+// elfSpawn's round-robin distribution path for new ring3Wrapper
+// goroutines. See
+// current_impl_2026_04_24/fix_plan_deferred_1_5/02_ring3wrapper_round_robin_distribution.md
+// for the lock-discipline proof. gooos DEFERRED 2 / B1.
+//
+//go:linkname migrateAndPause runtime.migrateAndPause
+func migrateAndPause(targetCpu uint32)
+
 // gooosOnResume is called from the patched internal/task.resume()
 // on every goroutine switch. If the goroutine being resumed is
 // Ring-3-bound, TSS.RSP0 is pointed at its kernel stack top and

@@ -1014,7 +1014,7 @@ index e45eaf39..aecf6568 100644
  	task.PauseLocked()
  }
  
-@@ -110,7 +119,36 @@ func removeTimer(t *timer) *timerNode {
+@@ -110,7 +119,80 @@ func removeTimer(t *timer) *timerNode {
  }
  
  func schedulerRunQueue() *task.Queue {
@@ -1041,6 +1041,46 @@ index e45eaf39..aecf6568 100644
 +		}
 +	}
 +	return nil
++}
++
++// runqueuePushTo pushes a task onto a specific CPU's runqueue and
++// wakes that CPU. Used by the gooos kernel for round-robin
++// distribution of ring3Wrapper goroutines at spawn time. The wake
++// ensures an idle target AP picks up the pushed task without the
++// caller needing to send its own IPI. gooos DEFERRED 2 / B1.
++//
++//go:nosplit
++func runqueuePushTo(t *task.Task, cpuIdx uint32) {
++	n := numCoresOnline
++	if n == 0 {
++		n = 1
++	}
++	if cpuIdx >= n {
++		cpuIdx = 0
++	}
++	runqueues[cpuIdx].Push(t)
++	schedulerWake()
++}
++
++// migrateAndPause atomically migrates the current task to the
++// target CPU's runqueue and pauses. Mirrors Gosched's lock
++// discipline (hold schedulerLock across Push + PauseLocked) but
++// targets a different CPU's queue instead of the caller's own.
++// PauseLocked unlocks schedulerLock atomically as it pauses the
++// current task; the target CPU's scheduler later pops the task.
++// gooos DEFERRED 2 / B1.
++func migrateAndPause(targetCpu uint32) {
++	n := numCoresOnline
++	if n == 0 {
++		n = 1
++	}
++	if targetCpu >= n {
++		targetCpu = 0
++	}
++	schedulerLock.Lock()
++	runqueues[targetCpu].Push(task.Current())
++	schedulerWake()
++	task.PauseLocked()
 +}
 +
 +// apScheduler is the TinyGo scheduler entry for AP cores. Called

@@ -247,7 +247,9 @@ func elfLoad(name string, args string) bool {
 
 	// Spawn the shell on its own goroutine. main() then blocks on
 	// proc.exitCh — if the shell ever exits, the kernel halts.
-	go ring3Wrapper(proc)
+	// The shell lands on target CPU = 0 via scheduleRing3Wrapper's
+	// round-robin counter (first spawn of the cycle).
+	scheduleRing3Wrapper(proc)
 	<-proc.exitCh
 	serialPrintln("ELF: boot shell exited, halting")
 	for {

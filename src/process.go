@@ -412,8 +412,37 @@ func elfSpawn(filename, args string, parent *Process) (*Process, bool) {
 	}
 
 	serialPrintln("elfSpawn: loaded " + filename)
-	go ring3Wrapper(child)
+	scheduleRing3Wrapper(child)
 	return child, true
+}
+
+// ring3SpawnCounter is a monotonic counter used to round-robin
+// new ring3Wrapper goroutines across online CPUs. Plain uint32
+// increment is acceptable: mis-sync only skews distribution by
+// one slot, which is harmless. gooos DEFERRED 2 / B1.
+var ring3SpawnCounter uint32
+
+// scheduleRing3Wrapper spawns ring3Wrapper(proc) onto a target
+// CPU selected round-robin across online cores. The bootstrap
+// goroutine's first action is to migrate itself to the target
+// via the patched runtime's `migrateAndPause`; the target CPU's
+// scheduler then pops the goroutine and runs `ring3Wrapper(proc)`
+// on that CPU. See
+// current_impl_2026_04_24/fix_plan_deferred_1_5/02_ring3wrapper_round_robin_distribution.md
+// for the lock-discipline reasoning.
+func scheduleRing3Wrapper(proc *Process) {
+	n := uint32(numCoresOnline)
+	if n == 0 {
+		n = 1
+	}
+	ring3SpawnCounter++
+	target := (ring3SpawnCounter - 1) % n
+	go func() {
+		if target != cpuID() {
+			migrateAndPause(target)
+		}
+		ring3Wrapper(proc)
+	}()
 }
 
 // processWait blocks the caller until proc exits and returns
