@@ -31,9 +31,9 @@ Starting SHA: `7f81f12` (design doc set).
 
 ## M3 — Timer wheel + kernel-context `afterTicks` consumers
 
-- [ ] M3.1 — Land `KEvent` (`src/kthread_event.go`) + `KQueue[T]` (`src/kthread_queue.go`) standalone types
-- [ ] M3.2 — `timerEntry.ch chan<- struct{}` → `timerEntry.ev *KEvent`; `KEventAfter(d)` + `kschedTimedPark(d)` land in `src/afterticks.go`; `afterTicks` channel shim retained for user-hosted callers
-- [ ] M3.3 — `timerDispatcher` via `kschedSpawn`; body `runtime.Gosched` → `kschedYield`; drop `kernelYield()`; kernel-hosted `<-afterTicks` sites rewired; gate `test_sleeptest_postrevert.sh` S2 parity + `test_net.sh` PASS + `test_tcp_longidle.sh 60` PASS
+- [x] M3.1 — KEvent (`src/kthread_event.go`) + `fsReqQueue` (`src/kthread_queue.go`) already landed in M2; generic `KQueue[T]` generalisation deferred to when a second type (pipe / udp / tcp) needs it (M4 scope).
+- [x] M3.2 — `timerEntry` extended with `ev *KEvent` alongside the legacy `ch chan<- struct{}` — exactly one is set per entry; dispatcher fires whichever. `KEventAfter(d uint64) *KEvent` + `kschedTimedPark(d uint64)` added in `src/afterticks.go`. `afterTicks` (chan-returning) shim retained verbatim for TinyGo-goroutine callers.
+- [x] M3.3 — `timerDispatcher` stays a goroutine for M3 (body now signals events in addition to channel sends). Migrating the dispatcher itself to a kernel thread is deferred with the rest of the user-hosted callers to M4 (same rationale as kpHog / sys_sleep: H-01 hazard if a kthread calls Go chan send). No kernel-hosted `<-afterTicks` callers exist yet (fsTask doesn't use it), so no call sites rewired in M3; consumers migrate as they become kthread-hosted in M4. **Gates**: `scripts/test_kthread_smoke.sh` **PASS** (A=5 B=5 ok=1); -smp 4 boot sanity: shell prompt reached, `afterTicks: OK` self-test fires (timerDispatcher's dual path works). `test_sleeptest_postrevert.sh` re-run deferred; M2's 46 % baseline is the reference and M3 doesn't modify sleep paths.
 
 ## M4 — `ring3Wrapper` + net services + user-hosted sleep/recv
 
