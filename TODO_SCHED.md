@@ -307,15 +307,24 @@ this session. Creating the outer-loop sampler
 is a pure harness addition. **Sampler landed** in commit
 `c3b0de8`; header-flip still deferred.
 
-### H-04 — P03a fix deferred pending follow-up sampler
+### H-04 — P03a fix deferred pending Option-D trace dump analysis
 
-10-iteration sampler (commits `4cd94e4`, `8c3c864`) revealed a
-failure-mode shift: pre-cycle the Sleep-3 hang was the
-dominant pattern; post-P02 round-robin the failures are
-concentrated at spawn-time "nobegin" (4/10) and Sleep-1-hangs
-(2/10) with Sleep-3 no longer isolable. Pass rate went from
-~50 % baseline to 40 %. Full analysis + recommended Option-A
-guard are in
+50-iteration sampler completed (`tmp/sleep_longrun_summary.json`):
+**16 % PASS**, **35/50 nobegin**, 3 Sleep-1 hangs, 1 Sleep-2
+hang, 3 Sleep-3 hangs. The failure-mode shift seen in the
+10-run probe is now definitive at 50 runs: P02 round-robin
+introduced a dominant new flake at spawn time, while the
+original F1 Sleep-3 pattern is still residual at 6 %.
+
+Option D `migrateAndPause` trace ring landed in `ebb7e1e` for
+the *next* audit cycle. With Option D enabled, the next
+sampler run will dump per-spawn `(srcCPU, targetCPU,
+resumeCPU, pushTick, resumeTick)` so the dominant nobegin
+mode can be discriminated:
+- target never popped → wake/IPI delivery bug;
+- resumed on wrong CPU → stealWork pulled the bootstrap.
+
+Full analysis in
 `current_impl_2026_04_24/fix_plan_deferred_1_5/03a_sleep_fix.md`.
 
 Why deferred:

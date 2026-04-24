@@ -22,7 +22,7 @@ and the recommended next-step fix.
 
 ## Result summary
 
-From `tmp/sleep_longrun_summary.json`:
+10-run sampler (initial probe):
 
 ```
 iterations:  10
@@ -35,9 +35,25 @@ breakdown:
   fail_afterS2:   0
 ```
 
+**50-run sampler (full plan)** from `tmp/sleep_longrun_summary.json`:
+
+```
+iterations:  50
+pass:         8   (16%)
+fail:        42
+breakdown:
+  fail_nobegin:  35   (sleeptest.elf never reached Ring-3 entry)
+  fail_beforeS1:  3
+  fail_afterS1:   1
+  fail_afterS2:   3   (original F1 Sleep-3 hang, still residual)
+```
+
 Pre-B2 baseline (reference): 0% PASS.
 Post-B2 baseline (Sleep-3 was the presenting symptom): ~50 % PASS
 with failures concentrated at Sleep 3.
+**Post-P02 baseline (this measurement)**: 16% PASS, dominant
+failure shifted to spawn-time "nobegin" (35/50 = 70%); original
+Sleep-3 pattern still residual at 3/50 = 6%.
 
 ## Failure-mode shift vs. prior cycle
 
@@ -145,16 +161,30 @@ affect the failing path.
 
 ## Status — DEFERRED
 
-- Audit instrumentation: **LANDED** (commits `4cd94e4`,
-  `8c3c864`).
-- 10-run sampler: **RUN** (`tmp/sleep_longrun_summary.json`).
-- 50-run sampler: **DEFERRED** (session time).
-- Root-cause isolation: **PARTIAL** — hypothesis ranking
-  shifted; concrete fix deferred pending follow-up
-  instrumentation on `migrateAndPause`.
+- Audit instrumentation (counters + IPI-timeout + sampler):
+  **LANDED** (commits `4cd94e4`, `8c3c864`).
+- 10-run sampler: **RUN** (initial signal).
+- 50-run sampler: **RUN** (`tmp/sleep_longrun_summary.json`,
+  `tmp/sleep_audit_run_*.log`).
+- Option D `migrateAndPause` trace ring: **LANDED** (commit
+  `ebb7e1e`) — instrumentation for the next audit cycle to
+  decisively discriminate "target never popped" vs. "wrong
+  CPU stole".
+- Root-cause isolation: **PARTIAL** — failure-mode shift
+  confirmed at scale (16% PASS, 35/50 nobegin); concrete fix
+  deferred pending the next sampler with Option D dump
+  inspection.
 - P03a fix implementation: **DEFERRED** to a future session.
 
+The 50-run dataset confirms the failure-mode shift is real and
+P02-attributable. The next audit run (with Option D enabled)
+will produce trace dumps showing whether the "nobegin" cases
+correspond to:
+- Push to AP queue but no resume entry → wake/IPI loss; OR
+- Resume entry on a different CPU than target → stealWork
+  pulled the bootstrap onto a non-target CPU before the target
+  popped it.
+
 The `TODO_SCHED.md §Deferred` list carries this forward under
-the **H-04 "P03a fix deferred — audit shifted failure mode"**
-entry. P05 harness re-gating stays blocked per its
-dependency on P03a.
+**H-04 "P03a fix deferred — audit shifted failure mode"**.
+P05 harness re-gating stays blocked per its dependency on P03a.
