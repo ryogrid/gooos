@@ -173,19 +173,45 @@ Doc updates land alongside each item per
 Issues surfaced after the main cycle closed; plan at
 `current_impl_2026_04_24/fix_plan_deferred_1_5/06_next_cycle.md`.
 
-- [ ] **I-1 audit** — run 50-iter sleep sampler with
-  `runSleepAudit=true`; classify nobegin via
-  `migrateAndPause` trace-ring dumps.
-- [ ] **I-1 fix** — if audit is decisive, implement Option B or
-  C and re-sample; else write `03b_sleep_fix_v2.md` and defer.
-- [ ] **I-2** — 50-iter sampler on one non-sleeptest program
-  (`goprobe`); answer "is the P02 regression sleeptest-specific?".
-- [ ] **I-3** — time clean `make build`; decide whether the
-  multi-minute stall the user reported is actionable or
-  documented-as-expected.
-- [ ] **Reviewer pass** (general-purpose).
-- [ ] **Close-out**: tick each I-N; update this file's Final
-  Verification; write the user-report.
+- [x] **I-1 audit** — 50-run sleep sampler with
+  `runSleepAudit=true`: 20 % PASS, 27 nobegin, 3 afterS1, 3
+  afterS2. Found nobegin is kernel panic (varied types), not
+  wake-loss. Option D trace ring cannot discriminate because
+  crash pre-empts resume. Commit `eb885a2`.
+- [x] **I-1 fix** — Option B / C / D no longer apply to the
+  observed crash class. Recommendation changed to **Option G
+  (revert P02)** documented in `06_next_cycle.md`; actual
+  revert DEFERRED to next session per reviewer S1 / S2 guard
+  rails (need control sample + matched-N baseline first).
+- [x] **I-2** — `goprobe` 50-run sampler: 46 % PASS / 48 %
+  nobegin. P02 regression is **not** sleeptest-specific.
+  Commit `e1a6b28`.
+- [x] **I-3** — `make build` = 16.4 s on warm cache; observed
+  25-min zombie tinygo was concurrent-process contention, not
+  a patch issue. Documented; no code change. Commit `87d4318`.
+- [x] **Reviewer pass** — ran on `60fd136..HEAD`; 0 BLOCKING.
+  S1/S2/S4 applied in commit `a923a2a` (TL;DR + caveats).
+  S3/S5 declined with written reasons.
+- [x] **Close-out**: this checklist ticked; Final Verification
+  section updated below.
+
+### Next-cycle reviewer findings (applied)
+
+Pass run against `60fd136..HEAD` via `general-purpose` agent:
+
+- **S1** (Option D ring not definitively excluded as corruption
+  source): applied — `06_next_cycle.md §Caveats` notes the
+  recommended `runSleepAudit=false` control sample.
+- **S2** (pre-P02 baseline was anecdotal, not N=50): applied —
+  same §Caveats block flags that next session must run a
+  matched-N baseline after revert.
+- **S3** (script's breakdown buckets miss `fail_beforeS1`):
+  **declined** — script ergonomics only; conclusions unchanged.
+- **S4** (Option G recommendation buried mid-doc): applied —
+  §Final state TL;DR prepended.
+- **S5** (scope drift from B/C/D to G): **declined** — the
+  drift is justified by the evidence and acknowledged in the
+  mid-session commit text.
 
 ## Final Verification (2026-04-24)
 
