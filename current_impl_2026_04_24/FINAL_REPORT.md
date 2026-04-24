@@ -18,6 +18,22 @@
 > `current_impl_2026_04_24/fix_plan_deferred_1_5/` and
 > `TODO_SCHED.md` for the full record.
 
+> **2026-04-24 Option G revert** (continuation of the follow-up):
+> B1 / DEFERRED 2 (round-robin `ring3Wrapper` spawn via
+> `migrateAndPause`, commit `051f534`) was **reverted** in commit
+> `94886c1` (TODO_SCHED/optG.revert). Sampler data (S1 control
+> 20-iter, `runSleepAudit=false`, 25 % PASS — matching the ring-on
+> 20 % band) ruled out the Option D audit ring as a corruption
+> source and pinned the ~50–80 % Ring-3 spawn crash regression on
+> P02 itself. Post-revert baseline S2 (50-iter, same config):
+> **25/50 PASS = 50 %** — a 2× jump vs. S1's 25 %, with
+> `nobegin` kernel panics dropping from 50 % to 8 %. The residual
+> 42 % failure rate is the pre-existing F1 Sleep-3 flake (see
+> `fix_plan_deferred_1_5/03_sleep_cross_cpu_channel_wakeup_audit.md`),
+> which was masked by the P02 spawn-panic noise and now surfaces
+> cleanly. Data: `tmp/sleep_s{1,2}_*_summary.json`. Context:
+> `fix_plan_deferred_1_5/06_next_cycle.md §Option G execution`.
+
 ## Summary
 
 13 of 18 planned items landed. Five explicitly deferred to a future

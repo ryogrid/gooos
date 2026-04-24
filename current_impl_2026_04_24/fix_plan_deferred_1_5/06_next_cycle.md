@@ -32,6 +32,55 @@
      commit.
 5. **H-01** remains deferred (out of scope for this cycle).
 
+## Option G execution (2026-04-24 continuation)
+
+Same session, resumed after the TL;DR above was written. Sampler
+points gathered:
+
+- **S1 — 20-iter control** (`runSleepAudit=false`,
+  `runSleeputestTest=true`, pre-revert):
+  `tmp/sleep_s1_control_summary.json`:
+  ```
+  {"iterations": 20, "pass": 5, "fail": 15, "rate_percent": 25,
+   "breakdown": {"fail_nobegin": 10, "fail_beforeS1": 1,
+                 "fail_afterS1": 2, "fail_afterS2": 2}}
+  ```
+  Matches the ring-on 20 % band (50-iter, §I-1 final result).
+  Confirms the Option D trace ring (`migrateTracePush` /
+  `migrateTraceResume`) is **not** the corruption source; the
+  ~50–80 % crash rate is attributable to P02 itself.
+
+- **Revert** — manual revert of `051f534` in commit `94886c1`
+  (not `git revert`, because subsequent commits `4cd94e4` /
+  `ebb7e1e` produced a patch-hunk conflict). Preserves the P03
+  counters (`gooosNotePush` / `gooosNotePop`) and the P03a
+  Option D trace ring as dead-but-harmless instrumentation.
+  Reviewer pass: ALL PASS (no BLOCKING / MINOR).
+
+- **S2 — 50-iter post-revert baseline** (`runSleepAudit=false`,
+  matched to S1 scripting):
+  `tmp/sleep_s2_postrevert_summary.json`:
+  ```
+  {"iterations": 50, "pass": 25, "fail": 25, "rate_percent": 50,
+   "breakdown": {"fail_nobegin": 4, "fail_beforeS1": 7,
+                 "fail_afterS1": 10, "fail_afterS2": 4}}
+  ```
+  **50 % PASS vs. S1's 25 %** — a clean 2× jump at matched config
+  (both `runSleepAudit=false`). The failure-class shift is the
+  decisive signal: `nobegin` dropped from 50 % of runs (10/20)
+  under P02 to 8 % (4/50) post-revert. The P02 `migrateAndPause`
+  Push-vs-resume race is the source of the nobegin kernel panics.
+  Residual `beforeS1` / `afterS1` / `afterS2` failures (21/50 =
+  42 %) are the pre-existing F1 Sleep-3 flake surfaced in
+  `current_impl_2026_04_24/fix_plan_deferred_1_5/03_sleep_cross_cpu_channel_wakeup_audit.md`;
+  those were masked by the P02 crash noise and remain open after
+  this revert. New harness committed as
+  `scripts/test_sleeptest_postrevert.sh`.
+
+**Option G outcome**: P02 confirmed as root cause of the
+spawn-time regression. Revert landed in `94886c1`. F1 flake
+tracked separately; address in next cycle.
+
 ## Scope & goal
 
 This plan covers the three concrete follow-up items that surfaced

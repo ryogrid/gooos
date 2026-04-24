@@ -195,6 +195,40 @@ Issues surfaced after the main cycle closed; plan at
 - [x] **Close-out**: this checklist ticked; Final Verification
   section updated below.
 
+### Option G — revert-and-baseline (2026-04-24 continuation)
+
+Approved "revert-and-baseline plan" per user 2026-04-24 — execute
+the Option G recommendation from `06_next_cycle.md §Final state`.
+Three sampler points framed the revert: S1 control (rules out
+Option D ring as corruption source), actual revert, S2 matched-N
+post-revert baseline.
+
+- [x] **optG.S1** — 20-iter control sampler with
+  `runSleepAudit=false` (only `runSleeputestTest=true`); archived
+  at `tmp/sleep_s1_control_summary.json`. Result: 5/20 PASS =
+  **25 %** (10 nobegin / 1 beforeS1 / 2 afterS1 / 2 afterS2).
+  Matches ring-on 20 % band — Option D trace ring is not the
+  corruption source. New sampler script committed as
+  `scripts/test_sleeptest_control.sh` (commit `f1c7a85`).
+- [x] **optG.revert** — manual revert of commit `051f534` (P02)
+  in commit `94886c1`. Touches `src/goroutine_tss.go`,
+  `src/process.go`, `src/elf.go`, `scripts/tinygo_runtime.patch`,
+  and the live TinyGo tree at
+  `$HOME/.local/tinygo0.40.1/src/runtime/scheduler_cores.go`.
+  Preserves P03 audit (4cd94e4) + P03a Option D ring (ebb7e1e)
+  as dead-but-harmless instrumentation. Reviewer pass: ALL PASS,
+  no BLOCKING / MINOR items.
+- [x] **optG.S2** — 50-iter post-revert baseline sampler with
+  `runSleepAudit=false`. Script:
+  `scripts/test_sleeptest_postrevert.sh`. Result:
+  `tmp/sleep_s2_postrevert_summary.json` — **25/50 PASS = 50 %**
+  vs. S1 25 % (2× jump, matched config). Key delta: `nobegin`
+  50 %→8 % confirms P02 as the spawn-panic source. Residual
+  21/50 `beforeS1`/`afterS1`/`afterS2` failures are the
+  pre-existing F1 Sleep-3 flake surfaced after the P02 noise
+  cleared; tracked separately. Option G outcome: **P02 root
+  cause confirmed, revert accepted.**
+
 ### Next-cycle reviewer findings (applied)
 
 Pass run against `60fd136..HEAD` via `general-purpose` agent:
