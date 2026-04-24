@@ -42,9 +42,14 @@ type Process struct {
 	EntryPoint  uintptr
 	StackTop    uintptr
 
-	parent  *Process     // nil for the boot shell
-	exitCh  chan uintptr // parent waits here; child sends exit code
-	poolIdx int          // ring3StackPool slot index, -1 if none
+	parent  *Process // nil for the boot shell
+	// Route C M4.1: exitCh replaced by ExitEv (KEvent). Parent
+	// Waits; child Signals from processExit. The legacy chan is
+	// kept as a type-migration safety net: zero value is nil, and
+	// no code path retains it alongside ExitEv.
+	exitCh  chan uintptr // reserved; unused post-M4.1
+	ExitEv  KEvent       // parent Waits here; child Signals
+	poolIdx int          // ring3StackPool slot index, -1 if none (pre-M4.1); now used by M4.1 for kthread slot cross-reference
 
 	// fds is the per-process file descriptor table. nil entries
 	// are closed slots. Inherited shallow-copy on exec (each
@@ -243,36 +248,38 @@ func elfExecTrampoline() {
 	}
 }
 
-// ring3Wrapper is the goroutine entry for every Ring-3 process. It
-// registers TSS.RSP0 for the pool-owned kernel stack and jumps to
-// Ring 3. Never returns: the Ring-3 program exits via sys_exit →
-// processExit, which sends on proc.exitCh and halts this goroutine.
-//
-// The pool slot is acquired here and released by processExit. See
-// impldoc/deferred_stack_reclaim.md.
+// ring3Wrapper is the kthread entry for every Ring-3 process.
+// Route C M4.1: hosted by a gooos kernel thread (kschedSpawnProc).
+// kschedLoopOnce installs TSS.RSP0 = kthread.Stack.Top + CR3 =
+// proc.pml4 before dispatching us, so the body is just bookkeeping
+// + jumpToRing3. Never returns: sys_exit → processExit signals
+// proc.ExitEv and calls kschedExit(0) to reclaim the slot.
 func ring3Wrapper(proc *Process) {
 	serialPrintln("ring3Wrapper: cpuID=" + utoa(uint64(cpuID())))
-	ring3WrapperHandle = taskCurrent()
-	idx, kernelStackTop := ring3StackAcquire()
-	serialPrintln("ring3Wrapper: stackAcquired")
-	proc.poolIdx = idx
-	setProcByPoolSlot(idx, proc)                      // feature 2.2 ISR-safe lookup
-	perCPUBlocks[cpuID()].CurrentPoolIdx = int32(idx) // feature 2.2 tick accounting
+	cpu := cpuID()
+	t := kschedRunning[cpu]
+	if t == nil {
+		serialPrintln("ring3Wrapper: FATAL not on a kthread; halting")
+		for {
+			hlt()
+		}
+	}
+	// Feature 2.2 ISR-safe lookup: map the kthread's pool slot to
+	// the process so maybeSignalUserPreempt can reach *Process in
+	// O(1) from the preempt ISR.
+	if t.Slot >= 0 && int(t.Slot) < maxRing3Procs {
+		proc.poolIdx = int(t.Slot)
+		setProcByPoolSlot(int(t.Slot), proc)
+		perCPUBlocks[cpu].CurrentPoolIdx = t.Slot
+	}
 	setCurrentProc(proc)
-	registerRing3GWithStack(kernelStackTop, proc)
-	tssSetRSP0ForCurrentG()
 	serialPrintln("ring3Wrapper: jumping to Ring 3")
-	// Allow Ring 3 to trigger int 0x80 each time a Ring-3 goroutine
+	// Allow Ring 3 to trigger int 0x80 each time a Ring-3 context
 	// enters; safe to call repeatedly.
 	setGateDPL3(0x80)
-	// Switch into this process's PML4 before entering Ring 3.
-	// gooosOnResume covers every subsequent goroutine resume, but
-	// the very first scheduler dispatch fired before we registered
-	// ourselves in gInfoByTask, so the hook short-circuited and the
-	// boot PML4 is still active. Install the per-process PML4 now.
-	if proc.pml4 != 0 {
-		writeCR3(proc.pml4)
-	}
+	// TSS.RSP0 + CR3 were already set by kschedLoopOnce's
+	// kschedInstallRing3Ctx before we were dispatched; no
+	// additional writeCR3 needed here.
 	jumpToRing3(proc.EntryPoint, proc.StackTop)
 	// unreachable
 }
@@ -412,7 +419,11 @@ func elfSpawn(filename, args string, parent *Process) (*Process, bool) {
 	}
 
 	serialPrintln("elfSpawn: loaded " + filename)
-	go ring3Wrapper(child)
+	// Route C M4.1: host as a gooos kernel thread. The closure
+	// captures `child` for the entry body; kschedInstallRing3Ctx
+	// will set CR3 + TSS.RSP0 before first dispatch.
+	kschedInit()
+	kschedSpawnProc("ring3Wrapper", func() { ring3Wrapper(child) }, child)
 	return child, true
 }
 
@@ -439,7 +450,12 @@ func processWait(proc *Process) uintptr {
 			" wait=" + utoa(uint64(waitPID)))
 	}
 	setForegroundProc(proc)
-	exitCode := <-proc.exitCh
+	// Route C M4.1: block on the ExitEv KEvent instead of the
+	// legacy chan. Parent may be a TinyGo goroutine (current
+	// shell) or a kthread (future elfSpawn callers) — KEvent.Wait
+	// pumps kschedLoopOnce for goroutine callers.
+	proc.ExitEv.Wait()
+	exitCode := proc.ExitCode
 	setForegroundProc(prevForeground)
 	serialPrintln("MARKER: M6 processWait post-exitCh-recv")
 	if runSMPProbeShellTest {
@@ -531,9 +547,12 @@ func processExit(exitCode uintptr) {
 	if proc.parent != nil {
 		serialPrintln("processExit: child exit code " + utoa(uint64(exitCode)) +
 			", resuming parent")
-		serialPrintln("MARKER: M4 processExit pre-exitCh-send")
-		proc.exitCh <- exitCode
-		serialPrintln("MARKER: M5 processExit post-exitCh-send")
+		serialPrintln("MARKER: M4 processExit pre-ExitEv-signal")
+		// ExitCode was set under procLock above; ordering: the
+		// Signal here happens AFTER we released procLock so
+		// processWait observes the code after its Wait returns.
+		proc.ExitEv.Signal()
+		serialPrintln("MARKER: M5 processExit post-ExitEv-signal")
 	} else {
 		serialPrintln("processExit: no parent, halting")
 	}
@@ -556,20 +575,20 @@ func processExit(exitCode uintptr) {
 	// interrupt". Decrement the counter first to simulate leaving
 	// ISR context — safe because this goroutine will never return
 	// to the ISR epilogue or Ring 3 anyway.
-	unregisterRing3G()
 	clearCurrentProc()
 	procCloseAll(proc)
 	if proc.poolIdx >= 0 {
 		clearProcByPoolSlot(proc.poolIdx) // feature 2.2
-		ring3StackRelease(proc.poolIdx)
+		// Route C M4.1: poolIdx is now the kthread slot, not a
+		// ring3StackPool slot. kschedExit below hands the slot
+		// back to kthreadPool automatically.
 		proc.poolIdx = -1
 	}
-	// This goroutine was entered from an int 0x80 ISR, so the ISR
+	// This path was entered from an int 0x80 ISR, so the ISR
 	// prologue bumped %gs:4 (InterruptDepth) and %gs:44 (SyscallDepth).
-	// The ISR epilogue on this goroutine's kernel stack will never
-	// run (taskPause below parks forever). Decrement both per-CPU
-	// counters now. The legacy global gooos_in_interrupt_depth was
-	// retired in M2 (impldoc/smp_m2_ap_lapic_timer.md).
+	// The ISR epilogue on the host's kernel stack will never
+	// run because kschedExit below never returns. Decrement both
+	// per-CPU counters now.
 	idx := cpuID()
 	if perCPUBlocks[idx].InterruptDepth > 0 {
 		perCPUBlocks[idx].InterruptDepth--
@@ -577,7 +596,11 @@ func processExit(exitCode uintptr) {
 	if perCPUBlocks[idx].SyscallDepth > 0 {
 		perCPUBlocks[idx].SyscallDepth--
 	}
-	taskPause() // never returns for this goroutine
+	// Route C M4.1: the host is a gooos kernel thread. kschedExit
+	// switches back to kschedBootstrap[cpu]; kschedLoopOnce then
+	// frees the kthread pool slot and clears kschedRunning[cpu].
+	kschedExit(exitCode)
+	// Unreachable.
 	for {
 		hlt()
 	}

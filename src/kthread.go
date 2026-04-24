@@ -83,6 +83,13 @@ type KernelThread struct {
 	// Used marks the pool slot as live. Protected by
 	// kthreadPoolLock in src/kthread_pool.go.
 	Used uint32
+
+	// Proc, when non-nil, marks this thread as a Ring-3 process
+	// host (ring3Wrapper). kschedLoopOnce installs `proc.pml4`
+	// into CR3 and `&Stack.Top` into TSS.RSP0 when dispatching
+	// such a thread. Set by kschedSpawnProc; cleared by
+	// kschedExit on process-side exit.
+	Proc *Process
 }
 
 // kernelStackBytes is the KernelStack payload region size. 16 KiB
