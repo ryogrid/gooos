@@ -297,6 +297,34 @@ with "push happened, kernel died before target resumed".
 Reinforces the **Option G revert** recommendation from the
 mid-session finding above.
 
+## I-2 result (50-run goprobe sampler)
+
+```
+iterations:      50
+pass:            23   (46 %)
+fail:            27
+  fail_nobegin:  24
+  fail_midrun:    3
+```
+
+Compared to the sleeptest sampler (20 % PASS, 54 % nobegin),
+`goprobe` under the same `-smp 4` with P02 landed fails
+spawn-time in 48 % of runs (24/50 nobegin) and partially
+completes but stalls mid-run in another 6 % (3/50 midrun).
+
+**Conclusion for user's I-2 question**: the P02 regression is
+**not sleeptest-specific**. Every Ring-3 user-process spawn that
+routes through `scheduleRing3Wrapper` → `migrateAndPause` is
+affected by the same spawn-time crash class; the exact PASS
+rate varies by program (sleeptest 20 %, goprobe 46 %),
+likely because programs that yield more (`goprobe` does a lot of
+`runtime.Gosched()` / channel ops) give the scheduler
+additional opportunities to recover from corrupted state, while
+programs with long tight loops (`sleeptest` sleeps in a row)
+expose the corruption more directly.
+
+Reinforces Option G revert.
+
 ## Out of scope
 
 - H-01 (Plan-01 service-migration design). Separate design
