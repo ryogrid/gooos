@@ -17,25 +17,30 @@ Doc updates land alongside each item per
 
 ### P02 — `elfSpawn` round-robin distribution (plan file: `02_ring3wrapper_round_robin_distribution.md`)
 
-- [ ] **P02.patch** — extend `scripts/tinygo_runtime.patch`
+- [x] **P02.patch** — extend `scripts/tinygo_runtime.patch`
   `scheduler_cores.go` hunk with `runqueuePushTo(t, cpuIdx)`
   and `migrateAndPause(targetCpu)` (Gosched lock-discipline
-  pattern).
-- [ ] **P02.linkname** — add
+  pattern). *Landed in commit `051f534`.*
+- [x] **P02.linkname** — add
   `//go:linkname migrateAndPause runtime.migrateAndPause`
-  declaration in `src/goroutine_tss.go`.
-- [ ] **P02.spawn** — add `ring3SpawnCounter` and
+  declaration in `src/goroutine_tss.go`. *Landed in commit
+  `051f534`.*
+- [x] **P02.spawn** — add `ring3SpawnCounter` and
   `scheduleRing3Wrapper(proc *Process)` in `src/process.go`.
-- [ ] **P02.callsites** — replace `go ring3Wrapper(child)` at
+  *Landed in commit `051f534`.*
+- [x] **P02.callsites** — replace `go ring3Wrapper(child)` at
   `src/process.go:415` and `go ring3Wrapper(proc)` at
-  `src/elf.go:250` with `scheduleRing3Wrapper`.
-- [ ] **P02.verify** — `make build`/`lint`/`verify-globals`
-  clean; `bash scripts/test_smp_shell_smpprobe.sh` shows ≥ 2
-  distinct `cpuID=` in worker output.
+  `src/elf.go:250` with `scheduleRing3Wrapper`. *Landed in
+  commit `051f534`.*
+- [x] **P02.verify** — manual `-smp 4` boot with
+  `runSMPProbeShellTest=true` shows workers on cpuID 0, 2, 3
+  (pre-change: all on 0). Makefile + lint + verify-globals
+  clean. *Verified against commit `051f534`.*
 - [ ] **P02.docs** — close
   `current_impl_2026_04_24/03_smp_preempt_phase_gating.md`
   §Open Questions smpprobe-distribution bullet; update
-  `FINAL_REPORT.md §Deferred` item 2.
+  `FINAL_REPORT.md §Deferred` item 2. *(Deferred to the
+  final doc sweep at end of cycle.)*
 
 ### P01 core — Phase 4.4 context switch (plan file: `01_phase4_4_context_switch_and_service_migration.md`)
 
@@ -174,5 +179,76 @@ deferred.)*
 
 ## Deferred
 
-*(Filled at end. Anything intentionally punted, with
-justification. Used verbatim in the final user report.)*
+### H-01 — Plan-01 service-migration design hazard (identified during implementation)
+
+**Hazard**: Plan-01's "kernel thread runs on its own stack, yielding
+back to host via `kernelThreadSwap`" design cannot safely host
+services that use TinyGo runtime primitives — `runtime.Gosched()`,
+channel send/recv, `<-afterTicks(...)`, `for x := range ch` — from
+within the kernel-thread stack.
+
+**Root cause**: `runtime.Gosched()` internally calls
+`task.PauseLocked()`, which saves the **current stack pointer** into
+the current task's state. When the host TinyGo task H has been
+"borrowed" by a kernel thread running on its own stack SK,
+`task.Current()` still returns H, so `PauseLocked` writes SK into
+`H.state.sp`. When H is later resumed by the scheduler, TinyGo's
+`task.resume` loads SK as H's stack and runs — on the kernel
+thread's stack, not H's. That corrupts H's task state and the
+kernel-thread machinery simultaneously.
+
+**Scope of the hazard**:
+- Every service listed for migration in Plan-01's §Service
+  migration table uses at least one of these primitives:
+  - `timerDispatcher` — `runtime.Gosched()`
+  - `netRxLoop` — `runtime.Gosched()`
+  - `fsTask` — `for req := range fsReqCh` (channel recv)
+  - `tcpRTOScannerLoop` — `<-afterTicks(...)`
+  - `tcpEchoServer` — `<-afterTicks(...)`
+  - `udpEchoServer` — channel recv
+- Plan-04 `bootFinalizeThread` parks on `<-bootReadyCh`, same
+  class of hazard.
+
+**What Phase 4.4 CAN safely provide**: a kernel-thread runtime for
+**new** services that are designed to use `kernelYield()` only and
+never touch TinyGo runtime / channel primitives. That is useful but
+does NOT retrofit existing services.
+
+**Options for a real fix** (future design work, out of scope this
+session):
+1. Make kernel threads **TinyGo task proxies** — every kernel
+   thread has a hidden TinyGo `task.Task` attached, so
+   `task.Current()` returns the thread's proxy task instead of
+   the host. This keeps the TinyGo machinery happy but blurs the
+   "gooos owns scheduling" line.
+2. Audit each service, rewrite it to use **only** gooos
+   primitives (`kernelYield`, a new channel-less IPC), then
+   migrate. Large, invasive, and removes Go-idiomatic patterns
+   from the kernel.
+3. Accept Phase 4.3 semantics and only introduce kernel threads
+   for services that fit the constraint from day 1. The F1 fix
+   already covers the concrete footgun (no infinite-loop
+   direct-invoke).
+
+**Decision for this session**: defer P01 core + P01 services +
+P04. The design in Plan-01 is not executable as-stated without
+resolving this hazard. Landing the asm swap stub alone would be
+dead code. The deferral is reported to the user; a follow-up
+design session is the right place to pick one of the three
+options above.
+
+### H-02 — Plan-03 fix scope
+
+Plan-03 §P03a specifies the fix is written after the audit
+produces a diagnosis. If the audit runs out of time or produces
+no clear winning hypothesis, P03a stays deferred and the Sleep-3
+flake carries forward.
+
+### H-03 — Plan-05 blocked by H-01 and possibly H-02
+
+Plan-05 §Dependencies requires both DEFERRED 2 (P02 — landed) and
+DEFERRED 3a (P03a fix). With P03a's outcome unknown at this
+point, Plan-05's flip-to-release-gate step cannot be evaluated
+this session. Creating the outer-loop sampler
+(`scripts/test_smp_release_gate.sh`) can still land because it
+is a pure harness addition.
