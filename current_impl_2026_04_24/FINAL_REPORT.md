@@ -5,6 +5,19 @@
 **Source of scope**: `hoge.md` prompt → `TODO_FIX.md` plan →
 `current_impl_2026_04_24/*.md` §Open Questions sections.
 
+> **2026-04-24 follow-up cycle** (`TODO_SCHED.md`): the
+> DEFERRED 1-5 implementation cycle landed DEFERRED 2 (B1
+> round-robin `ring3Wrapper` spawn distribution) and the
+> DEFERRED 3 audit instrumentation. DEFERRED 1 core + services
+> + DEFERRED 4 were escalated as hazard **H-01** in
+> `TODO_SCHED.md §Deferred` — Plan-01's kernel-thread-on-own-
+> stack design cannot safely host services that use TinyGo
+> runtime/channel primitives; a follow-up design session is
+> required. DEFERRED 3a fix + DEFERRED 5 header-flip remain
+> pending audit results and the hazard resolution. See
+> `current_impl_2026_04_24/fix_plan_deferred_1_5/` and
+> `TODO_SCHED.md` for the full record.
+
 ## Summary
 
 13 of 18 planned items landed. Five explicitly deferred to a future
