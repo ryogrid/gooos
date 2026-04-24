@@ -168,6 +168,25 @@ Doc updates land alongside each item per
   `a339f9e`. Six suggestions recorded below.
 - [x] **FINAL.verify** — this section filled below.
 
+## Next cycle (follow-up to the main cycle)
+
+Issues surfaced after the main cycle closed; plan at
+`current_impl_2026_04_24/fix_plan_deferred_1_5/06_next_cycle.md`.
+
+- [ ] **I-1 audit** — run 50-iter sleep sampler with
+  `runSleepAudit=true`; classify nobegin via
+  `migrateAndPause` trace-ring dumps.
+- [ ] **I-1 fix** — if audit is decisive, implement Option B or
+  C and re-sample; else write `03b_sleep_fix_v2.md` and defer.
+- [ ] **I-2** — 50-iter sampler on one non-sleeptest program
+  (`goprobe`); answer "is the P02 regression sleeptest-specific?".
+- [ ] **I-3** — time clean `make build`; decide whether the
+  multi-minute stall the user reported is actionable or
+  documented-as-expected.
+- [ ] **Reviewer pass** (general-purpose).
+- [ ] **Close-out**: tick each I-N; update this file's Final
+  Verification; write the user-report.
+
 ## Final Verification (2026-04-24)
 
 - [x] Every checklist item above is `[x]` or annotated
