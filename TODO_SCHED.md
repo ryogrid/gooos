@@ -218,6 +218,39 @@ post-revert baseline.
   Preserves P03 audit (4cd94e4) + P03a Option D ring (ebb7e1e)
   as dead-but-harmless instrumentation. Reviewer pass: ALL PASS,
   no BLOCKING / MINOR items.
+### F1 — residual Sleep-3 audit + fix (post-Option-G)
+
+After the P02 revert cleared the spawn-panic noise, the
+matched S2 baseline exposed a residual 42 % failure rate
+attributable to the F1 Sleep-3 cross-CPU channel-wakeup flake.
+This sub-cycle executes the audit-counter protocol in
+`current_impl_2026_04_24/fix_plan_deferred_1_5/03_sleep_cross_cpu_channel_wakeup_audit.md`
+(H1 @ 65 %, H2 @ 20 %, H5 @ 8 %), lands the fix for whichever
+hypothesis the signal picks, and re-baselines.
+
+- [ ] **F1.audit** — 30-iter sampler with `runSleepAudit=true`
+  (`test_sleeptest_longrun.sh`). Extract per-CPU
+  `SchedTasksPushed` / `SchedPopOk` / `SchedPopNil` +
+  `lapicICRTimeouts` from each failing run's final
+  `sleepAuditDump()`. Decide H1 / H2 / H5 / miss.
+- [ ] **F1.fix** — land the hypothesis-winning patch:
+  H1 → `task.lastCpu` field + receiver-queue push; H2 →
+  atomic `pitTicks`; H5 → longer `lapicWaitICR` + retry.
+  Reviewer subagent pass after commit.
+- [ ] **F1.verify** — 50-iter S3 baseline with
+  `runSleepAudit=false` (`test_sleeptest_postrevert.sh`).
+  Target ≥ 80 % PASS. Archive
+  `tmp/sleep_s3_postfix_summary.json`.
+
+### T1 — src/main.go demo-code cleanup
+
+- [ ] **T1** — Strip GC demo, VM/FreeList/ELF self-tests,
+  Spike2 chan round-trip, afterTicks/pitTicks observational
+  prints. Remove `testNetBuf` + `testICMPEchoReply` (relocate
+  `netBufInit()` to the network init path; update
+  `scripts/test_net.sh` to drop the now-absent ICMP/NETBUF
+  assertions).
+
 - [x] **optG.S2** — 50-iter post-revert baseline sampler with
   `runSleepAudit=false`. Script:
   `scripts/test_sleeptest_postrevert.sh`. Result:
