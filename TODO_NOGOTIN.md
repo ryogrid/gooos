@@ -117,8 +117,88 @@ the dependency explicit.
 
 ## M5 — TinyGo-patch trim + `scheduler=none` flip
 
-- [ ] M5.1 — Trim `scripts/tinygo_runtime.patch` per §08 (delete ~510 lines across `queue.go`, `task_stack_multicore.go`, `gc_blocks.go`, `scheduler_cooperative.go`, `scheduler_cores.go`); adjust `runtime_gooos.go main` entry; trim `interrupt_gooos.go`; update `scripts/patch_tinygo_runtime.sh` sentinels; re-apply in `~/.local/tinygo0.40.1/`
-- [ ] M5.2 — `src/target.json` `scheduler=cores` → `scheduler=none`; `scripts/verify_globals.sh` asserts updated to kthread globals; full regression sweep
+**Session-4 finding (2026-04-25)**: M5 is hard-blocked on M4.2
++ M4.3 + boot-probe cleanup completing first. Reason:
+`scheduler=none` makes TinyGo *reject any `go` statement at
+compile time*. As of HEAD `b00f2d1` the kernel still has 12
+live `go` sites:
+
+```
+src/afterticks.go:91   go timerDispatcher()
+src/goroutine_tss.go:88 go func() { ... } (task-offset self-test)
+src/net.go:56          go netRxLoop()
+src/net.go:59          go udpEchoServer()
+src/main.go:348        go func() { ch <- 42 }() (Spike2 chan probe)
+src/main.go:360        go func() { ... }       (afterTicks self-test)
+src/main.go:418        go func() { ... }       (boot net-diag probe)
+src/main.go:634        go smpBasicProbe()
+src/main.go:663        go kpMarker()
+src/main.go:664        go kpHog()
+src/tcp_retx.go:127    go tcpRTOScannerLoop()
+src/tcp.go:1344        go tcpEchoServer()
+```
+
+Plus `tcpEchoServer` itself spawns per-connection goroutines
+internally. Each must either (a) migrate to `kschedSpawn` /
+`kschedSpawnProc` (M4.2 service migration) or (b) be deleted
+outright (the four anon boot-time self-tests at `main.go:348,
+360, 418` and `goroutine_tss.go:88` are §06 delete-on-arrival
+candidates already flagged in `current_impl_2026_04_24/
+fix_plan_deferred_1_5/06_next_cycle.md` T1).
+
+The M4.1 smoke-test regression (Spike2 chan path triggering
+`internal/task.PauseLocked → task.Current() = nil`) is also
+along this critical path: the Spike2 site at `main.go:348` is
+one of the four delete-on-arrival probes, so removing it
+clears the M4.1 regression as a side-effect.
+
+**Re-sequenced M5 prerequisites**:
+
+- [ ] M4.2.a — Delete the four anon boot-time self-tests in
+  `main.go` (Spike2 chan, afterTicks self-test, boot net-diag
+  probe, and the goroutine_tss.go task-offset test). Removes 4
+  of the 12 `go` statements; also resolves the M4.1 smoke
+  regression at the Spike2 site.
+- [ ] M4.2.b — Migrate `udpEchoServer` to `kschedSpawn`. Demo
+  service; small body; channel rewires to `KQueue[UDPDatagram]`
+  (UDPBinding.Ch).
+- [ ] M4.2.c — Migrate `tcpRTOScannerLoop` to `kschedSpawn`.
+  Body uses `<-afterTicks(...)`; rewire to `kschedTimedPark`.
+- [ ] M4.2.d — Migrate `tcpEchoServer` + per-connection
+  workers to `kschedSpawn`. Largest sub-step; involves accept
+  queue rewires.
+- [ ] M4.2.e — Migrate `netRxLoop` to `kschedSpawn`. Now
+  unblocked because M4.0's gcLock spinlock makes
+  `ethernetDispatch` allocations cross-CPU safe.
+- [ ] M4.2.f — Migrate `timerDispatcher` to `kschedSpawn`.
+  Body's `runtime.Gosched` → `kschedYield`; the existing
+  channel-vs-event dual fire path stays intact (still serves
+  any remaining goroutine callers via afterTicks shim).
+- [ ] M4.2.g — Migrate `smpBasicProbe` (gated by
+  `runSMPBasicProbe`) and `kpHog` / `kpMarker` (gated by
+  `runPreemptProbe`) to `kschedSpawn`. The kpHog migration
+  attempt in session 2 / M1 hit a "no banner" mystery; with
+  M4.1 ring3Wrapper as kthread + M4.0 gcLock spinlock + the
+  Spike2 self-test gone (M4.2.a), retry should succeed.
+- [ ] M4.3 — `sys_sleep` (`src/userspace.go:453`) →
+  `kschedTimedPark`; `sys_recvfrom` timeouts → bounded-poll
+  per §06.
+- [ ] M4.4 — Full regression gate: `test_sleeptest_postrevert
+  ITERATIONS=50` ≥ 80 % (F1 closure); `test_net.sh` +
+  `test_tcp_longidle.sh 300` + `test_smp_shell_preempt.sh` +
+  `test_smp_release_gate.sh` + `test_smp_basic.sh` +
+  `test_ps.sh` PASS.
+
+After all of the above, M5 can land cleanly:
+
+- [ ] M5.1 — Trim `scripts/tinygo_runtime.patch` per §08
+  (delete ~510 lines across `queue.go`,
+  `task_stack_multicore.go`, scheduler hunks); update
+  `scripts/patch_tinygo_runtime.sh` sentinels; re-apply.
+- [ ] M5.2 — `src/target.json` `scheduler=cores` →
+  `scheduler=none`; `scripts/verify_globals.sh` asserts
+  updated to kthread globals (`kschedQueues`, `kthreadPool`,
+  `kschedRunning`, etc.); full regression sweep.
 
 ## Post-M5 work
 
