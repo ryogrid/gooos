@@ -16,7 +16,7 @@ before relying on exact line numbers.
 |---|---|---|---|
 | 1 | **C1 / C3** — Phase 4.4 kernel-thread context switch + migrate long-lived kernel services (`timerDispatcher`, `netRxLoop`, `tcpRTOScannerLoop`, `fsTask`). | `01_phase4_4_context_switch_and_service_migration.md` | 1st |
 | 2 | **B1** — `elfSpawn` round-robin distribution for `ring3Wrapper` goroutines (the smpprobe-workers-all-on-cpuID=0 symptom). | `02_ring3wrapper_round_robin_distribution.md` | 2nd |
-| 3 | **F1 follow-up** — Sleep-3 intermittent hang under `-smp 4` (suspected TinyGo channel-wakeup cross-CPU race). | `03_sleep_cross_cpu_channel_wakeup_audit.md` | 3rd |
+| 3 | **F1 follow-up** — Sleep-3 intermittent hang under `-smp 4` (suspected TinyGo channel-wakeup cross-CPU race). | `03_sleep_cross_cpu_channel_wakeup_audit.md` (audit plan) + `03a_sleep_fix.md` (diagnosis + next-fix recommendation, produced 2026-04-24 by the audit session) | 3rd |
 | 4 | **A1** — move heavy work inside `bootActivatePostShellReady` out of first-`int 0x80` ISR context into a dedicated boot-finalize kernel thread. | `04_boot_finalize_kernel_thread.md` | 4th |
 | 5 | **G1 / G2** — re-gate `test_smp_shell_preempt.sh` and `test_sleeptest_shell.sh` from "diagnostic / reproducer" to release-blocking regression harnesses. | `05_harness_regating.md` | 5th |
 |   | Integration, README + doc updates, traceability sweep | `99_integration_and_readme_update.md` | alongside each item |

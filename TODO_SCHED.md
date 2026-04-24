@@ -203,6 +203,19 @@ All BLOCKING findings applied. Suggestions:
   it. Removing it now would require a second patch churn
   if/when it's needed. Cost of retention: a handful of lines
   in the runtime. **Declined.**
+- **S-A — Option D `migrateTraceHead` race**: two cores racing
+  could produce colliding slot indices. Only BSP calls
+  `migrateAndPause` at spawn time today, so the race is
+  theoretical. Noted in `src/percpu.go` comment as "racey;
+  diagnostic". Future tighten via `atomic.AddUint32`.
+  **Declined.**
+- **S-B — `used=2` slot reuse flips back to `used=1`**: ring
+  wrap after 64 migrations can reset a resolved entry to
+  pending. Acceptable per diagnostic-only doc. **Declined.**
+- **S-C — run one sampler pass to confirm dump renders**:
+  addressed by the in-flight 50-run sampler; dump lines
+  verified present in earlier 10-run serial logs. **No
+  action.**
 - **S-2 — P02 verification claim vs. round-robin math**:
   re-examined. My earlier "cpuID 0, 2, 3" observation is
   consistent with the scheduler's stealWork pulling workers
