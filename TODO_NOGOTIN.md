@@ -62,6 +62,15 @@ report.)*
   (smoke test PASS on 2026-04-25). Context budget preserved for
   careful M1+ work in a follow-up session per the plan's
   resumability discipline.
+- **Session stop after M3** — second session added M1 infra + M2
+  (fsTask migration, KEvent + fsReqQueue) + M3 (KEventAfter +
+  kschedTimedPark; dispatcher now fires both channels and events).
+  All four milestones committed and pushed (`7f81f12..1df4040`).
+  M4 is the heavy lift (ring3Wrapper rewrite + 5 service migrations
+  + `gooosOnResume` / `gInfoByTask` deletion + `ring3StackPoolCh`
+  rewire + F1 closure verification at 300-s soak) and needs a
+  fresh context budget. Stopping here so M4 lands as its own
+  careful cycle.
 - **kpHog-as-kernel-thread dispatch reliability (M1→M4)** —
   M1 landed the infrastructure (kschedLoopOnce, waitForEvents
   hook, handlePreemptIPI branch, IF=0-guarded dispatch) but the
