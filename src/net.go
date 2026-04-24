@@ -222,6 +222,28 @@ func netDiag() {
 	if kernelThreadSpawnDrops != 0 {
 		serialPrintln("kt:spawn_drops=" + utoa(uint64(kernelThreadSpawnDrops)))
 	}
+	if runSleepAudit {
+		sleepAuditDump()
+	}
 	tcpDiag()
 	serialPrintln("=== end ===")
+}
+
+// sleepAuditDump prints the Sleep-3 audit counters (gated by
+// runSleepAudit in src/preempt_config.go). Called from netDiag.
+// See
+// current_impl_2026_04_24/fix_plan_deferred_1_5/03_sleep_cross_cpu_channel_wakeup_audit.md
+// for hypothesis-to-counter mapping.
+func sleepAuditDump() {
+	serialPrintln("=== Sleep Audit Dump ===")
+	for i := uint32(0); i < 4 && i < maxCPUs; i++ {
+		serialPrintln("cpu=" + utoa(uint64(i)) +
+			" pushed=" + utoa(SchedTasksPushed[i]) +
+			" pop_ok=" + utoa(SchedPopOk[i]) +
+			" pop_nil=" + utoa(SchedPopNil[i]))
+	}
+	serialPrintln("lapicICRTimeouts=" + utoa(lapicICRTimeouts))
+	serialPrintln("pitTicks=" + utoa(pitTicks))
+	serialPrintln("afterTicksCalls=" + utoa(afterTicksCalls))
+	serialPrintln("=== end Sleep Audit ===")
 }

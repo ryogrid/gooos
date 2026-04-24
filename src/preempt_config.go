@@ -61,3 +61,11 @@ const runSleeputestTest = false
 // (`.autorun.sh`) so userspace `yieldtest` validation can execute through the
 // real shell parser/exec/wait path without HMP sendkey injection.
 const runYieldtestTest = false
+
+// runSleepAudit enables per-CPU push/pop counters + periodic
+// sleepAuditDump() in netDiag, used by
+// current_impl_2026_04_24/fix_plan_deferred_1_5/03_sleep_cross_cpu_channel_wakeup_audit.md
+// to isolate the residual Sleep-3 flake. OFF by default; the
+// audit harness scripts/test_sleeptest_longrun.sh flips it true
+// via sed + rebuild, same pattern as the other autorun gates.
+const runSleepAudit = false

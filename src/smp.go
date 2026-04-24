@@ -140,6 +140,11 @@ func lapicWaitICR() {
 		}
 	}
 	// Timeout: give up, let the next caller retry.
+	// P03 audit (gated counter in src/percpu.go): bump so
+	// sleepAuditDump can report IPI delivery stalls.
+	if runSleepAudit {
+		lapicICRTimeouts++
+	}
 }
 
 // ioDelay performs a short delay (~1 µs per iteration) using port 0x80.

@@ -51,6 +51,44 @@ const (
 // 64 bytes (cache line) to avoid false sharing.
 var perCPUBlocks [maxCPUs]PerCPU
 
+// ---- P03 Sleep-audit counters (gated by runSleepAudit) ----
+//
+// Kept as separate arrays (not embedded in PerCPU) so the
+// ABI-critical struct offsets above are not disturbed. Plain
+// uint64 increments are acceptable for diagnostics — a racey
+// increment only biases the counter slightly. See
+// current_impl_2026_04_24/fix_plan_deferred_1_5/03_sleep_cross_cpu_channel_wakeup_audit.md.
+
+var SchedTasksPushed [maxCPUs]uint64 // bumped by gooosNotePush
+var SchedPopOk [maxCPUs]uint64       // bumped by gooosNotePop when ok==true
+var SchedPopNil [maxCPUs]uint64      // bumped by gooosNotePop when ok==false
+var lapicICRTimeouts uint64          // bumped by src/smp.go:lapicWaitICR on timeout
+
+//go:linkname gooosNotePush gooosNotePush
+func gooosNotePush(cpuIdx uint32) {
+	if !runSleepAudit {
+		return
+	}
+	if cpuIdx < maxCPUs {
+		SchedTasksPushed[cpuIdx]++
+	}
+}
+
+//go:linkname gooosNotePop gooosNotePop
+func gooosNotePop(cpuIdx uint32, ok bool) {
+	if !runSleepAudit {
+		return
+	}
+	if cpuIdx >= maxCPUs {
+		return
+	}
+	if ok {
+		SchedPopOk[cpuIdx]++
+	} else {
+		SchedPopNil[cpuIdx]++
+	}
+}
+
 // wrmsr writes a 64-bit value to the specified MSR.
 // Implemented in stubs.S.
 //
