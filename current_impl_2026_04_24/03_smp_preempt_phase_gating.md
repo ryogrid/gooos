@@ -92,12 +92,17 @@ Replaces the following description in baseline **§IPI Paths**:
   is `//go:nosplit` and only sets `WantReschedule` + EOI, so
   adding a per-AP 100 Hz tick introduces no new lock pressure.
   Preempt IPI fanout stays BSP-only via the phase gate.
-- `smpprobe` workers still report a narrow CPU distribution even
-  with AP timer active and `preemptPhaseOperational` reached. The
-  remaining hypothesis is that work-stealing under `scheduler=cores`
-  does not pull newly-spawned `ring3Wrapper` goroutines off BSP's
-  local runqueue aggressively enough. Tracked as B1 in `TODO_FIX.md`
-  and deferred to a future session. See `smp_preempt_problem/README.md §3`.
+- **Closed (B1)**: `smpprobe` worker distribution. `elfSpawn` now
+  calls `scheduleRing3Wrapper` (src/process.go) which round-robins
+  new `ring3Wrapper` goroutines across online CPUs via a new
+  `runtime.migrateAndPause` linknamed bridge (added to
+  `scripts/tinygo_runtime.patch`'s `scheduler_cores.go` hunk).
+  Manual verification under `-smp 4` with
+  `runSMPProbeShellTest=true` shows workers on cpuID 0, 2, 3 in a
+  single run (pre-fix: all on 0). Landed in commit `051f534`.
+  See
+  `current_impl_2026_04_24/fix_plan_deferred_1_5/02_ring3wrapper_round_robin_distribution.md`
+  for the full design.
 - The investigation snapshot `252a96b` added the `APIDSTAT` /
   `PRESTAT` diagnostics used during `processExit`; those survive
   today but the distribution question is still open.

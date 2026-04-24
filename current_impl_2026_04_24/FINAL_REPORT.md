@@ -62,12 +62,14 @@ Each entry also appears in `TODO_FIX.md §Deferred`.
 
 2. **B1** — `elfSpawn` round-robin distribution for
    `ring3Wrapper` goroutines (smpprobe worker-all-on-cpuID=0
-   symptom). The architecturally correct fix requires exposing
-   `runqueuePushTo` from TinyGo's runtime through a gooos
-   linkname and calling it with a round-robin counter from
-   `elfSpawn`, or patching TinyGo's `scheduleTask` to do
-   round-robin for initial-schedule tasks. Either path extends
-   `scripts/tinygo_runtime.patch`; multi-subsystem change.
+   symptom). **CLOSED** in the DEFERRED 1-5 cycle
+   (commit `051f534`): new `runtime.migrateAndPause` and
+   `runtime.runqueuePushTo` added to the
+   `scheduler_cores.go` hunk of
+   `scripts/tinygo_runtime.patch`, called via a tiny bootstrap
+   goroutine from `scheduleRing3Wrapper` in `src/process.go`.
+   Verified under `-smp 4`: workers observed on cpuID 0, 2, 3
+   in a single run (pre-fix: all on 0).
 
 3. **F1 follow-up** — Sleep-3 intermittent hang. Under `-smp 4`
    the first two `gooos.Sleep(10)` calls in

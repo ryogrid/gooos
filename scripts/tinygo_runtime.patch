@@ -976,7 +976,7 @@ diff --git a/src/runtime/scheduler_cores.go b/src/runtime/scheduler_cores.go
 index e45eaf39..aecf6568 100644
 --- a/src/runtime/scheduler_cores.go
 +++ b/src/runtime/scheduler_cores.go
-@@ -24,8 +24,16 @@ var cpuTasks [numCPU]*task.Task
+@@ -24,8 +24,24 @@ var cpuTasks [numCPU]*task.Task
  var (
  	sleepQueue *task.Task
  	runqueue   task.Queue
@@ -990,10 +990,21 @@ index e45eaf39..aecf6568 100644
 +//go:linkname gooosCpuID cpuID
 +func gooosCpuID() uint32
 +
++// gooosNotePush / gooosNotePop — P03 Sleep-audit hooks. Bodies
++// live on the gooos side (src/percpu.go) and bump per-CPU
++// diagnostic counters when runSleepAudit is true; otherwise they
++// are cheap early-returns.
++//
++//go:linkname gooosNotePush gooosNotePush
++func gooosNotePush(cpuIdx uint32)
++
++//go:linkname gooosNotePop gooosNotePop
++func gooosNotePop(cpuIdx uint32, ok bool)
++
  func deadlock() {
  	// Call yield without requesting a wakeup.
  	task.Pause()
-@@ -39,8 +47,9 @@ func scheduleTask(t *task.Task) {
+@@ -39,8 +47,10 @@ func scheduleTask(t *task.Task) {
  	switch t.RunState {
  	case task.RunStatePaused:
  		// Paused, state is saved on the stack.
@@ -1002,6 +1013,7 @@ index e45eaf39..aecf6568 100644
 +		// gooos SMP v2: push onto the waker's per-CPU runqueue.
 +		// Work-stealing (stealWork below) distributes to idle peers.
 +		runqueues[gooosCpuID()].Push(t)
++		gooosNotePush(gooosCpuID()) // gooos DEFERRED 3 / P03 audit
  		// ...and wake up a sleeping core, if there is one.
  		// (If all cores are already busy, this is a no-op).
  		schedulerWake()
@@ -1115,8 +1127,8 @@ index e45eaf39..aecf6568 100644
  
  		// Run main.main.
  		callMain()
-@@ -162,8 +210,15 @@ func run() {
- 
+@@ -162,8 +210,16 @@ func run() {
+
  func scheduler(_ bool) {
  	for mainExited.Load() == 0 {
 -		// Check for ready-to-run tasks.
@@ -1126,6 +1138,7 @@ index e45eaf39..aecf6568 100644
 +		// empty. Work-stealing gives idle cores something to do and
 +		// makes goroutines migrate across cores in practice.
 +		runnable := runqueues[gooosCpuID()].Pop()
++		gooosNotePop(gooosCpuID(), runnable != nil) // gooos DEFERRED 3 / P03 audit
 +		if runnable == nil {
 +			runnable = stealWork()
 +		}
