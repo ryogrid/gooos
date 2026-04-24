@@ -270,6 +270,33 @@ Option D instrumentation is still useful as background
 evidence but is not the right tool for diagnosing this crash
 class.
 
+## I-1 final result (50-run Option D sampler, `runSleepAudit=true`)
+
+```
+iterations:       50
+pass:             10   (20 %)
+fail:             40
+  fail_nobegin:   27
+  fail_afterS1:    3
+  fail_afterS2:    3   (original F1 Sleep-3 residual)
+  fail_beforeS1:  ~7   (remaining fails reported mid-run as beforeS1)
+runs with explicit "panic:" text:  7  (PF / nil-ptr / stack-overflow /
+                                        index-out-of-range / mis-formatted panic)
+remaining nobegin runs:  truncated "p" at end of log = panic in flight
+                         when sampler's 90 s timeout killed qemu.
+```
+
+Conclusion: 70 %+ of spawn attempts into an AP crash the kernel,
+via one of several different panic types, consistent with
+corruption of `task.state.sp` or stack-memory content during the
+cross-CPU `Push + PauseLocked` window. The Option D trace ring
+cannot fully observe this because the crash prevents the
+resume-side entry from being recorded — the data is consistent
+with "push happened, kernel died before target resumed".
+
+Reinforces the **Option G revert** recommendation from the
+mid-session finding above.
+
 ## Out of scope
 
 - H-01 (Plan-01 service-migration design). Separate design

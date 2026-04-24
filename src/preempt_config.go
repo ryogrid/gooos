@@ -50,12 +50,12 @@ const runSMPProbeShellTest = false
 // runGoprobeTest writes a one-shot shell autorun script at boot
 // (`.autorun.sh`) so userspace `goprobe` validation can execute through the
 // real shell parser/exec/wait path without HMP sendkey injection.
-const runGoprobeTest = false
+const runGoprobeTest = true
 
 // runSleeputestTest writes a one-shot shell autorun script at boot
 // (`.autorun.sh`) so userspace `sleeptest` validation can execute through the
 // real shell parser/exec/wait path without HMP sendkey injection.
-const runSleeputestTest = true
+const runSleeputestTest = false
 
 // runYieldtestTest writes a one-shot shell autorun script at boot
 // (`.autorun.sh`) so userspace `yieldtest` validation can execute through the
@@ -68,4 +68,4 @@ const runYieldtestTest = false
 // to isolate the residual Sleep-3 flake. OFF by default; the
 // audit harness scripts/test_sleeptest_longrun.sh flips it true
 // via sed + rebuild, same pattern as the other autorun gates.
-const runSleepAudit = true
+const runSleepAudit = false
