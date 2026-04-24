@@ -103,11 +103,17 @@ proposed, the audit needs to:
 
 If the shift is P02-attributable, the fix options are:
 
-- **Option A (quickest)**: remove the `migrateAndPause` call
-  when `target == 0` (BSP) OR when `numCoresOnline == 1`.
-  Currently `scheduleRing3Wrapper` already skips migration when
-  `target == cpuID()`, so this just extends that to favour BSP
-  for the first few spawns.
+- **Option A (originally proposed, now REJECTED after log
+  inspection)**: guard `target == 0`. This does not address the
+  observed failure mode. Checking `tmp/sleep_audit_run_4.log`
+  from the 10-run sampler confirms the "nobegin" case occurs
+  when sleeptest's ring3Wrapper bootstrap targets **AP 1**
+  (counter=2, n=4 → target=1), not BSP. The current code
+  already skips migrate when `target == cpuID()`, and the
+  failure is the opposite case: bootstrap running on BSP
+  correctly calling `migrateAndPause(1)` but the AP never
+  resuming the task. Option A would have no effect on the
+  failing path.
 - **Option B**: replace `migrateAndPause`'s park-on-target with
   a push-and-wake but **no pause** on the source CPU; let
   `stealWork` rescue if the target doesn't pop. Removes the
@@ -117,12 +123,25 @@ If the shift is P02-attributable, the fix options are:
   panic otherwise. Catches the case where the wrong CPU
   resumed us. Diagnostic, not a fix.
 
-**Recommendation for the next session**: land Option A as a
-minimum-risk guard (one `if target == 0 { skip } else { ... }`
-line), then re-sample. If the pass rate recovers to the 2026-
-04-24 baseline ~50 %, we at least don't regress. Then
-separately resume the Sleep-3 investigation via the original H1
-audit, which is now the *residual* concern.
+- **Option D (new after Option A rejection)**: instrument
+  `migrateAndPause` itself. Before the Push, record
+  `(srcCPU, targetCPU, taskPtr)` in a ring buffer. After
+  PauseLocked returns, record `(actualResumeCPU, taskPtr)`.
+  Run the 50-run sampler; inspect the ring buffer at the
+  `nobegin` failures. This determines whether the task ever
+  got popped by the target — if not, the issue is in
+  wake/IPI delivery; if yes but by the "wrong" CPU, the
+  issue is a cross-queue race during stealWork. This is an
+  audit refinement, not a fix.
+
+**Recommendation for the next session**: run **Option D**
+(migrateAndPause trace ring) first to produce decisive
+evidence on the failing path; then choose between Option B
+(no-pause wake-and-steal) and Option C (resume-CPU
+assertion) based on what Option D's data shows. The original
+Option A is rejected per the inline note above — log
+inspection after the 10-run sampler confirmed it would not
+affect the failing path.
 
 ## Status — DEFERRED
 
