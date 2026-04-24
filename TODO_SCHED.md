@@ -115,13 +115,17 @@ Doc updates land alongside each item per
   `scripts/test_sleeptest_longrun.sh` (50-run sampler, per-run
   audit dump, harness_recover_stale_backup sourced).
   *Landed in commit `4cd94e4`.*
-- [ ] **P03.run** — run sampler; collect logs; analyse against
-  H1–H7 signal rules. *(In flight — 10-iteration sampler
-  started 2026-04-24 11:51.)*
-- [ ] **P03.doc** — write
+- [x] **P03.run** — 10-iteration sampler run completed.
+  40% PASS (vs. pre-P02 baseline ~50%); failure-mode shift
+  away from Sleep-3 toward spawn-time "nobegin" cases.
+  `tmp/sleep_longrun_summary.json` + per-run logs preserved.
+  50-run follow-up sampler deferred — see
+  `fix_plan_deferred_1_5/03a_sleep_fix.md`.
+- [x] **P03.doc** — wrote
   `current_impl_2026_04_24/fix_plan_deferred_1_5/03a_sleep_fix.md`
-  with the winning hypothesis + proposed fix. *(Blocked on
-  P03.run.)*
+  capturing the failure-mode shift, hypothesis re-ranking,
+  and recommended next-step fix (Option A gating `target==0`).
+  Fix implementation itself is **DEFERRED — see H-04 below**.
 
 ### P03a fix — implement winning hypothesis (plan file: `03a_sleep_fix.md`, written by P03 session)
 
@@ -258,4 +262,29 @@ DEFERRED 3a (P03a fix). With P03a's outcome unknown at this
 point, Plan-05's flip-to-release-gate step cannot be evaluated
 this session. Creating the outer-loop sampler
 (`scripts/test_smp_release_gate.sh`) can still land because it
-is a pure harness addition.
+is a pure harness addition. **Sampler landed** in commit
+`c3b0de8`; header-flip still deferred.
+
+### H-04 — P03a fix deferred pending follow-up sampler
+
+10-iteration sampler (commits `4cd94e4`, `8c3c864`) revealed a
+failure-mode shift: pre-cycle the Sleep-3 hang was the
+dominant pattern; post-P02 round-robin the failures are
+concentrated at spawn-time "nobegin" (4/10) and Sleep-1-hangs
+(2/10) with Sleep-3 no longer isolable. Pass rate went from
+~50 % baseline to 40 %. Full analysis + recommended Option-A
+guard are in
+`current_impl_2026_04_24/fix_plan_deferred_1_5/03a_sleep_fix.md`.
+
+Why deferred:
+- The shift suggests the bootstrap `migrateAndPause` call in
+  `scheduleRing3Wrapper` is the new dominant flake site; a
+  proper fix needs a 50-run sampler with additional
+  `migrateAndPause`-specific instrumentation (target/resume-
+  CPU tracking) before a one-line guard can be chosen with
+  confidence.
+- The 50-run sampler is ~75 min; implementing the extra
+  instrumentation + re-sampling + writing the patched 03a
+  is another session's work.
+
+P03a.fix and the P05 header-flip both inherit this deferral.

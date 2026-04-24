@@ -976,7 +976,7 @@ diff --git a/src/runtime/scheduler_cores.go b/src/runtime/scheduler_cores.go
 index e45eaf39..aecf6568 100644
 --- a/src/runtime/scheduler_cores.go
 +++ b/src/runtime/scheduler_cores.go
-@@ -24,8 +24,24 @@ var cpuTasks [numCPU]*task.Task
+@@ -24,8 +24,27 @@ var cpuTasks [numCPU]*task.Task
  var (
  	sleepQueue *task.Task
  	runqueue   task.Queue
