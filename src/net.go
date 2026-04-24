@@ -46,17 +46,13 @@ func netInit() {
 
 	arpSendGratuitous()
 
-	// netRxLoop runs as a TinyGo goroutine. It used to also be
-	// registered via kernelThreadSpawn(0, netRxLoop) (Phase 4.3)
-	// but that was harmful: Phase 4.3 kernelThreadSwitch is a
-	// direct invocation, so a long-running kernel thread like
-	// netRxLoop would hijack any caller of kernelYield()
-	// permanently — including timerDispatcher, which then stops
-	// firing afterTicks deadlines and strands every sys_sleep at
-	// Ring 3. F1 per TODO_FIX.md. Re-enable via
-	// kernelThreadSpawn once Phase 4.4 lands a real
-	// context switch that suspends the thread at its next
-	// yield point rather than running it to completion.
+	// Route C M4: netRxLoop stays as a TinyGo goroutine for now.
+	// M4.0 replaced gcLock with a gooos spinlock so cross-CPU
+	// allocation no longer parks via task.PauseLocked — that
+	// unblocks the migration. M4.2 (this site) lands after M4.1
+	// (ring3Wrapper) so the allocator is exercised from a real
+	// Route-C-shape scheduler first and regressions are easier
+	// to attribute.
 	go netRxLoop()
 	serialPrintln("NET: RX dispatch goroutine started")
 
@@ -67,10 +63,7 @@ func netInit() {
 
 // netRxLoop drives the receive side. Simplest possible poller:
 // drainRxRing, yield, repeat. No channel, no flag, no sti/hlt.
-// The previous channel-based design (rxSignalCh + ISR send) hit
-// an unsolvable race where ISR-context channel sends couldn't
-// wake a parked receiver under gooos's cooperative scheduler.
-// Polling is slightly more CPU-hungry but trivially correct.
+// Stays as a TinyGo goroutine pending M5 STW integration (§05).
 func netRxLoop() {
 	for {
 		drainRxRing()

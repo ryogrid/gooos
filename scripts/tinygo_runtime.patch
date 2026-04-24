@@ -277,39 +277,95 @@ index b4425de3..4bfe5af9 100644
 +	currentTasks[idx] = nil
  }
 diff --git a/src/runtime/gc_blocks.go b/src/runtime/gc_blocks.go
-index a95edbfd..6cd49059 100644
+index a95edbfd..6cd4905a 100644
 --- a/src/runtime/gc_blocks.go
 +++ b/src/runtime/gc_blocks.go
-@@ -58,6 +58,15 @@ var (
+@@ -58,6 +58,33 @@ var (
  	gcLock        task.PMutex    // lock to avoid race conditions on multicore systems
  )
- 
-+// gooos SMP note: alloc() / GC() rely on upstream's gcLock
-+// (task.PMutex). Under scheduler=tasks gcLock is a no-op
-+// (tinygo.unicore), which is safe on gooos only because APs do
-+// not run goroutines that allocate while BSP is in GC (APs park
-+// in waitForEvents). Under scheduler=cores (Wave 2), gcLock
-+// becomes a real Mutex routing through atomicsLock and provides
-+// cross-CPU protection. The per-CPU gcPauseCore IPI (M5) closes
-+// the remaining concurrent-mutator gap.
+
++// gooos SMP note (Route C M4.0): the upstream gcLock (task.PMutex)
++// is bypassed in favour of a non-parking gooos spinlock on the
++// allocator hot path. Rationale: under scheduler=cores,
++// task.PMutex is a task.Mutex, and its contended Lock() parks via
++// task.PauseLocked — which writes RSP into task.Current()'s state
++// struct. From a gooos kthread context (kschedSpawn'd thread with
++// no TinyGo task associated) that write corrupts a stale task and
++// the kthread simultaneously (H-01 hazard). gcLockWord below is a
++// plain uint32 acquired via the gooos kernel's spinlock stubs
++// (stubs.S: spinlockAcquire / spinlockRelease). Goroutine callers
++// and kthread callers both take the same spinlock — cross-CPU
++// safe, deadlock-free (no parking). Concurrent-mutator STW during
++// mark phase lands in a future M5 commit via the gcPauseCore IPI
++// (vector 0xFD, currently stubbed); until then, mark phase relies
++// on the scheduler naturally parking every kthread and goroutine
++// at some safe-point inside the mark pass.
++
++//go:linkname gooos_gcLockAcquire spinlockAcquire
++//go:noescape
++func gooos_gcLockAcquire(lock *uint32)
++
++//go:linkname gooos_gcLockRelease spinlockRelease
++//go:noescape
++func gooos_gcLockRelease(lock *uint32)
++
++var gcLockWord uint32
 +
  // zeroSizedAlloc is just a sentinel that gets returned when allocating 0 bytes.
  var zeroSizedAlloc uint8
- 
-@@ -505,6 +514,13 @@ func free(ptr unsafe.Pointer) {
+
+@@ -411,7 +438,7 @@ func alloc(size uintptr, layout unsafe.Pointer) unsafe.Pointer {
+
+ 	// Make sure there are no concurrent allocations. The heap is not currently
+ 	// designed for concurrent alloc/GC.
+-	gcLock.Lock()
++	gooos_gcLockAcquire(&gcLockWord)
+
+ 	// Update the total allocation counters.
+ 	gcTotalAlloc += uint64(rawSize)
+@@ -468,7 +495,7 @@ func alloc(size uintptr, layout unsafe.Pointer) unsafe.Pointer {
+ 	header.layout = parseGCLayout(layout)
+
+ 	// We've claimed this allocation, now we can unlock the heap.
+-	gcLock.Unlock()
++	gooos_gcLockRelease(&gcLockWord)
+
+ 	// Return a pointer to this allocation.
+ 	add := align(unsafe.Sizeof(objHeader{}))
+@@ -505,10 +532,15 @@ func free(ptr unsafe.Pointer) {
  }
- 
+
  // GC performs a garbage collection cycle.
-+// gooos SMP: relies on upstream gcLock (task.PMutex). Under
-+// scheduler=tasks / tinygo.unicore, gcLock is a no-op; cross-CPU
-+// safety comes from the BSP-only-allocates contract (APs idle in
-+// waitForEvents). Under scheduler=cores, gcLock becomes a real
-+// Mutex routing through atomicsLock. The M5 gcPauseCore IPI
-+// closes the remaining concurrent-mutator window under
-+// scheduler=cores.
++// gooos SMP (Route C M4.0): allocator lock replaced with a gooos
++// spinlock (gcLockWord) so cross-CPU exclusion never parks via
++// task.PauseLocked. See the note near gcLockWord's declaration
++// above. Full STW during mark phase lands with gcPauseCore IPI
++// (§05 / M5).
  func GC() {
- 	gcLock.Lock()
+-	gcLock.Lock()
++	gooos_gcLockAcquire(&gcLockWord)
  	runGC()
+-	gcLock.Unlock()
++	gooos_gcLockRelease(&gcLockWord)
+ }
+
+ // runGC performs a garbage collection cycle. It is the internal implementation
+@@ -797,7 +824,7 @@ func alloc(size uintptr, layout unsafe.Pointer) unsafe.Pointer {
+ // The returned memory statistics are up to date as of the
+ // call to ReadMemStats. This would not do GC implicitly for you.
+ func ReadMemStats(m *MemStats) {
+-	gcLock.Lock()
++	gooos_gcLockAcquire(&gcLockWord)
+
+ 	// Calculate the raw size of the heap.
+ 	heapEnd := heapEnd
+@@ -843,5 +870,5 @@ func ReadMemStats(m *MemStats) {
+ 	// Record the total allocated bytes.
+ 	m.TotalAlloc = gcTotalAlloc
+
+-	gcLock.Unlock()
++	gooos_gcLockRelease(&gcLockWord)
+ }
 diff --git a/src/runtime/interrupt/interrupt_gooos.go b/src/runtime/interrupt/interrupt_gooos.go
 new file mode 100644
 index 00000000..e7837ff6

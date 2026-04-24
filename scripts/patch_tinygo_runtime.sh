@@ -100,7 +100,8 @@ if [[ -f "$RG" && -f "$RGU" && -f "$IG" && -f "$IGU" && -f "$WG" && -f "$WGU" ]]
     && grep -q 'gooos_readInterruptDepth' "$IG" \
     && grep -q 'gooos_readSyscallDepth' "$IG" \
     && grep -q 'go:noescape' "$TINYGO_SRC/internal/task/queue.go" \
-    && grep -q 'gooos_spinlockAcquire' "$TINYGO_SRC/internal/task/queue.go"; then
+    && grep -q 'gooos_spinlockAcquire' "$TINYGO_SRC/internal/task/queue.go" \
+    && grep -q 'gcLockWord' "$TINYGO_SRC/runtime/gc_blocks.go"; then
     echo "already-applied: tinygo runtime patch (SMP v2 on 0.40.1) present at $TINYGO_SRC"
     echo "(delete the gooos* runtime files and the in-place changes to re-run)"
     exit 0
@@ -228,6 +229,10 @@ fi
 # re-entrancy on scheduler=cores (see TODO_SMP4.md M3-4).
 if ! grep -q 'go:noescape' "$TINYGO_SRC/internal/task/queue.go"; then
     echo "error: $TINYGO_SRC/internal/task/queue.go is missing //go:noescape on spinlock decls (Wave 2)" >&2
+    fail=1
+fi
+if ! grep -q 'gcLockWord' "$TINYGO_SRC/runtime/gc_blocks.go"; then
+    echo "error: $TINYGO_SRC/runtime/gc_blocks.go is missing gcLockWord (Route C M4.0)" >&2
     fail=1
 fi
 if (( fail )); then

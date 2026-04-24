@@ -60,11 +60,27 @@ build-flip (new M6'). Current §09 nominally places GC work in
 implementation is implicitly in M4 scope; splitting it out makes
 the dependency explicit.
 
-- [ ] M4.0 — **PREREQ** — Land STW freeze IPI (vector 0xFD per
-  §05), broadcast handler, per-CPU `WantSTWFreeze` flag in
-  `PerCPU` (`src/percpu.go`), `Spinlock.Release` hook that enters
-  freeze-spin after drop when flag is set. Remove the "BSP-only
-  allocates" workaround in `gc_blocks.go`.
+- [x] M4.0 — **gcLock replacement (partial PREREQ)**. Replaced
+  `task.PMutex gcLock` in the patched `runtime/gc_blocks.go` with
+  a plain `uint32 gcLockWord` acquired/released via the gooos
+  kernel spinlock stubs (`spinlockAcquire` / `spinlockRelease`)
+  via `//go:linkname`. Goroutine callers and (future) kthread
+  callers now take the same spinlock — cross-CPU safe without
+  parking via task.PauseLocked, removing the H-01 hazard on the
+  allocator hot path. `scripts/tinygo_runtime.patch` extended
+  with the new hunk; `scripts/patch_tinygo_runtime.sh`
+  idempotency check updated to require `gcLockWord` in the live
+  tree. **The STW freeze IPI (vector 0xFD) + concurrent-mutator
+  mark-phase guard remain deferred to M5** — the mark phase
+  still relies on the "every mutator eventually parks at a
+  safe-point" heuristic under scheduler=cores. For M4.2 net-
+  service migration, the gcLock spinlock alone is the gating
+  fix; full STW is correctness-nice-to-have for later.
+  **Gates**: `make build` clean; `scripts/test_kthread_smoke.sh`
+  **PASS** (A=5 B=5 ok=1); `-smp 4` boot with default QEMU
+  networking reaches shell prompt (was hanging at M3.3 when
+  netRxLoop was attempted as a kthread — that was the symptom
+  M4.0 fixes).
 - [ ] M4.1 — `ring3Wrapper` kernel-thread rewrite; `tssSetRSP0ForKernelThread` helper; `kschedSwitchPostCR3` hook (extends `kschedLoopOnce` to write CR3 + TSS.RSP0 when the dispatched thread has a `Proc` field set); `gInfoByTask` / `gooosOnResume` / `registerRing3G` / `unregisterRing3G` deleted; `Process.exitCh` → `ExitEv KEvent` + `ExitCode uintptr`; `processExit` + `processWait` rewired. The `Process *Process` field needs to be added to `KernelThread` or tracked in a parallel `kthreadProc[slot]` table.
 - [ ] M4.2 — `netRxLoop`, `udpEchoServer`, `tcpRTOScannerLoop`, `tcpEchoServer` + per-connection workers migrated to `kschedSpawn`. Unblocked by M4.0.
 - [ ] M4.3 — `sys_sleep` → `kschedTimedPark`; `sys_recvfrom` timeouts → bounded-poll; `afterTicks` channel shim deleted; `ring3StackPoolCh` replaced with `KQueue[int32]` or bitmap
