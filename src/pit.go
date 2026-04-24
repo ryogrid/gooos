@@ -66,6 +66,13 @@ func handleTimer(vector uint64) {
 	if numCoresOnline > 1 {
 		pitWakeAPs()
 	}
+	// F1 audit: every 200 ticks (~2 s) emit a compact counter line
+	// directly from the ISR. Bypasses afterTicks + the scheduler so
+	// it survives a Sleep-3 hang — see sleepAuditISRDump in
+	// src/percpu.go.
+	if runSleepAudit && pitTicks%200 == 0 {
+		sleepAuditISRDump()
+	}
 }
 
 // pitWakeAPs broadcasts a wakeup IPI (vector 0xFC) to every online

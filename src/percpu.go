@@ -64,6 +64,53 @@ var SchedPopOk [maxCPUs]uint64       // bumped by gooosNotePop when ok==true
 var SchedPopNil [maxCPUs]uint64      // bumped by gooosNotePop when ok==false
 var lapicICRTimeouts uint64          // bumped by src/smp.go:lapicWaitICR on timeout
 
+// sleepAuditISRBuf is the scratch area sleepAuditISRDump formats
+// into. Separate from panicHexBuf because the ISR-side audit runs
+// periodically and could otherwise race with panic formatting.
+// Only written from handleTimer on BSP, so the single-buffer
+// discipline is safe.
+var sleepAuditISRBuf [192]byte
+
+// sleepAuditISRDump emits a single-line audit snapshot directly
+// from the PIT ISR, bypassing afterTicks / the scheduler / any
+// goroutine runtime. The netDiag-based sleepAuditDump at
+// src/net.go:237 is fine when the scheduler is healthy, but the
+// F1 flake IS a scheduler-side hang — the netDiag goroutine
+// blocks on afterTicks exactly like sleeptest does, so 0 audit
+// lines escape a failing run. Running here, from interrupt
+// context, guarantees at least one dump per 2 s regardless of
+// scheduler state.
+//
+// Format is compact (single line) so each PIT tick that emits
+// one adds ~150 B of serial traffic at most.
+//
+//go:nosplit
+func sleepAuditISRDump() {
+	buf := sleepAuditISRBuf[:]
+	off := 0
+	off = appendStr(buf, off, "AUDIT t=")
+	off = appendDec(buf, off, pitTicks)
+	for i := uint32(0); i < 4 && i < maxCPUs; i++ {
+		off = appendStr(buf, off, " c")
+		off = appendDec(buf, off, uint64(i))
+		off = appendStr(buf, off, "=")
+		off = appendDec(buf, off, SchedTasksPushed[i])
+		off = appendStr(buf, off, "/")
+		off = appendDec(buf, off, SchedPopOk[i])
+		off = appendStr(buf, off, "/")
+		off = appendDec(buf, off, SchedPopNil[i])
+	}
+	off = appendStr(buf, off, " icr=")
+	off = appendDec(buf, off, lapicICRTimeouts)
+	off = appendStr(buf, off, " at=")
+	off = appendDec(buf, off, afterTicksCalls)
+	buf[off] = '\r'
+	off++
+	buf[off] = '\n'
+	off++
+	serialPrintBytes(buf[:off])
+}
+
 //go:linkname gooosNotePush gooosNotePush
 func gooosNotePush(cpuIdx uint32) {
 	if !runSleepAudit {
