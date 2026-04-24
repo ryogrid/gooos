@@ -23,7 +23,7 @@ Starting SHA: `7f81f12` (design doc set).
 
 ## M1 — Demo probes on kernel threads
 
-- [ ] M1.1 — `kpHog` / `kpMarker` migrated to `kschedSpawn`; AP `kschedLoop` wired; `waitForEvents` co-existence hook; gate `scripts/test_preempt_kernel.sh runPreemptProbe=true` PASS
+- [x] M1.1 — **M1 infrastructure only** (kpHog / kpMarker migration itself deferred to M4). Landed: `kschedLoopOnce()` in `src/kthread_sched.go` for one-iteration scheduling; `handlePreemptIPI` branch in `src/goroutine_irq.go` that yields the active kernel thread via `kschedYield()` (preserving the existing Ring-3 iretq-frame rewrite and TinyGo fallback); `scripts/tinygo_runtime.patch` wait_gooos.go hunk calling `gooosKschedLoopOnce` (linkname `kschedLoopOnce`) before `sti;hlt;cli` so APs pick up kernel threads during TinyGo idle windows; `kschedLoopOnce` holds IF=0 while setting `kschedRunning[cpu]` to close a preempt-IPI race. kpHog/kpMarker stay as goroutines for now (preempt test expects them cross-CPU; kpHog-as-kernel-thread debugging needs M4-scope context where `ring3Wrapper` also migrates). Gates: `scripts/test_kthread_smoke.sh` PASS (regression-clean), `scripts/test_preempt_kernel.sh` PASS (markers_observed=6 >=5).
 
 ## M2 — `fsTask` on kernel thread
 
@@ -62,26 +62,24 @@ report.)*
   (smoke test PASS on 2026-04-25). Context budget preserved for
   careful M1+ work in a follow-up session per the plan's
   resumability discipline.
-- **M1 preempt-wiring dependency discovered mid-plan** —
-  `src/main.go:659` `kpHog` has zero cooperative yield points;
-  it is a pure `for { x++ }`. §09 M1 lists it as a simple
-  migration, but for a kpHog kernel-thread to get preempted it
-  needs `handlePreemptIPI` to call `kschedYield()` — which §09
-  places in M4. Two resolution options for the next session:
-  (a) do a minimal handlePreemptIPI edit as part of M1 (adds a
-  kernel-thread-aware branch alongside the existing TinyGo
-  Gosched call); (b) split M1 into M1a (kpMarker only, which
-  has `<-afterTicks` yields and will migrate cleanly once M3
-  lands) and M1b (kpHog after preempt wiring lands). §09 should
-  be amended accordingly at that time; the amendment itself is
-  a minor design-doc tweak, not a BLOCKING reviewer finding.
-- **TinyGo `waitForEvents` co-existence hook** — §09 M1's
-  "waitForEvents pulls from kschedQueues first" design requires
-  editing `scripts/tinygo_runtime.patch` (the `wait_gooos.go`
-  hunk at patch lines 1120–1138) to add a `kschedLoopOnce()`
-  call + re-applying in `~/.local/tinygo0.40.1/`. Not yet done.
-  Next session: edit the patch; add `kschedLoopOnce()` to
-  `src/kthread_sched.go`; bridge via `//export`.
+- **kpHog-as-kernel-thread dispatch reliability (M1→M4)** —
+  M1 landed the infrastructure (kschedLoopOnce, waitForEvents
+  hook, handlePreemptIPI branch, IF=0-guarded dispatch) but the
+  actual kpHog migration was reverted after -smp 4 runs showed
+  kpHog's entry banner never firing even without an observable
+  crash, and only 4 markers (target ≥5) in 15 s. Hypotheses for
+  the next session to investigate: (a) APs don't reliably reach
+  `waitForEvents` under the harness load — shift kpHog's
+  round-robin target to AP 1 explicitly at spawn; (b) string-
+  concat allocation in the banner races GC under the pre-M4
+  BSP-only-allocates rule (partly mitigated by removing
+  `utoa(cpuID())` but may still bite); (c) `gooosKschedLoopOnce`
+  linkname from the patched wait_gooos.go to our //export
+  symbol resolves but runs with some incompatible stack
+  assumption. Recommendation: land ring3Wrapper migration (M4)
+  first so the kernel scheduler is the only scheduler — then
+  re-attempt kpHog migration with no TinyGo-scheduler
+  interference.
 - **Baseline B4 / B5** — full `test_net.sh` and
   `test_sleeptest_postrevert.sh ITERATIONS=20` runs skipped in
   this session. Boot-level + smoke-level verification is clean.

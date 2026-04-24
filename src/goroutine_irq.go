@@ -152,7 +152,21 @@ func handlePreemptIPI(vector uint64) {
 		}
 	}
 
-	// Ring 0: kernel goroutine preemption via cooperative swap.
+	// Ring 0: preemption.
+	// Route C M1: if a gooos kernel thread is currently running on
+	// this CPU, yield IT (back to kschedBootstrap[cpu]); do not
+	// touch the TinyGo scheduler. kschedRunning[cpu] is set only
+	// while kschedLoopOnce has dispatched a thread.
+	if c < maxCPUs && kschedRunning[c] != nil {
+		if preemptYieldSeen[c] == 0 {
+			preemptYieldSeen[c] = 1
+		}
+		preemptYieldCount[c]++
+		perCPUBlocks[c].WantReschedule = 0
+		kschedYield()
+		return
+	}
+	// Otherwise fall back to the TinyGo cooperative yield path.
 	if taskCurrent() == 0 {
 		if c < maxCPUs {
 			preemptSkipTask0Count[c]++

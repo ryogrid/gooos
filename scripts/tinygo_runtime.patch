@@ -1119,20 +1119,32 @@ index e45eaf39..aecf6568 100644
  			runnable.RunState = task.RunStateRunning
 diff --git a/src/runtime/wait_gooos.go b/src/runtime/wait_gooos.go
 new file mode 100644
-index 00000000..3841e659
+index 00000000..3841e660
 --- /dev/null
 +++ b/src/runtime/wait_gooos.go
-@@ -0,0 +1,14 @@
+@@ -0,0 +1,26 @@
 +//go:build gooos && baremetal && kernelspace
 +
 +package runtime
++
++// kschedLoopOnce is implemented by the gooos kernel (linkname
++// target "kschedLoopOnce" via //export). Under Route C it drives
++// one iteration of the gooos kernel-thread scheduler so kernel
++// threads share CPU with any remaining TinyGo goroutines during
++// the M1..M3 co-existence window.
++//
++//go:linkname gooosKschedLoopOnce kschedLoopOnce
++func gooosKschedLoopOnce()
 +
 +// waitForEvents is called by the scheduler when the runqueue is
 +// empty and there are no sleeping/timer tasks. On APs this is the
 +// normal idle state — halt until an IPI or LAPIC timer wakes us.
 +// On the BSP it means all goroutines are blocked (rare but safe
-+// to idle briefly).
++// to idle briefly). Route C: before idling, pull any runnable
++// kernel thread off this CPU's gooos queue and run it until it
++// parks; then fall through to sti/hlt/cli.
 +func waitForEvents() {
++	gooosKschedLoopOnce()
 +	gooos_sti()
 +	gooos_hlt()
 +	gooos_cli()

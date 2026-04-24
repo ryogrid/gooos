@@ -203,6 +203,66 @@ func kschedLoop() {
 	}
 }
 
+// kschedLoopOnce drives one iteration of the scheduler: pop a
+// runnable kernel thread from this CPU's queue (steal from peers
+// if empty), switch into it, return when it parks / yields /
+// exits. Returns immediately if there is no runnable thread on
+// any CPU.
+//
+// Called from the TinyGo runtime's waitForEvents hook so kernel
+// threads share CPU with the TinyGo scheduler during M1..M3
+// co-existence. M4 removes the co-existence path in favour of
+// a pure kschedLoop.
+//
+//export kschedLoopOnce
+//go:nosplit
+func kschedLoopOnce() {
+	if kschedInitialized == 0 {
+		return
+	}
+	cpu := cpuID()
+	if cpu >= maxCPUs {
+		return
+	}
+	t := kschedPop(cpu)
+	if t == nil {
+		for i := uint32(1); i < numCoresOnline; i++ {
+			t = kschedSteal((cpu+i)%numCoresOnline, cpu)
+			if t != nil {
+				break
+			}
+		}
+	}
+	if t == nil {
+		return
+	}
+	if KState(t.State) == KStateExiting {
+		kthreadPoolFree(t)
+		return
+	}
+	// Hold IF=0 while committing the dispatch so a preempt IPI
+	// cannot observe kschedRunning[cpu]=t before kschedSwitch has
+	// actually made t the running thread. kschedSwitch's popfq
+	// restores IF to whatever t's saved RFLAGS had (= IF=1 for a
+	// freshly-spawned thread; same for a previously-parked one as
+	// long as it was parked from an IF=1 context).
+	flags := readFlags()
+	cli()
+	kschedRunning[cpu] = t
+	t.State = uint32(KStateRunning)
+	t.OwnerCPU = cpu
+	t.Quantum = kschedDefaultQuantum
+	kschedSwitch(t, &kschedBootstrap[cpu])
+	// Returned: thread parked / yielded / exited. Symmetric cli
+	// while we tear down the dispatch record.
+	cli()
+	if t.State == uint32(KStateExiting) {
+		kthreadPoolFree(t)
+	}
+	kschedRunning[cpu] = nil
+	restoreFlags(flags)
+}
+
 // kschedYield voluntarily hands the current CPU to the scheduler
 // loop. Callable from a running kernel thread; returns when the
 // thread is scheduled again.

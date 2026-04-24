@@ -644,6 +644,18 @@ func bootActivatePostShellReady() {
 
 	if preemptEnabled && runPreemptProbe {
 		serialPrintln("preempt_probe: spawning kpMarker + kpHog")
+		// Route C M1 landed the kernel-thread scheduler
+		// *infrastructure* — kschedLoopOnce, the waitForEvents
+		// hook in the TinyGo runtime patch, and the
+		// handlePreemptIPI branch that yields via kschedYield
+		// when a kernel thread is running — but the kpHog
+		// migration itself is deferred to M4. Reason: on -smp 4
+		// kpHog currently fails to get reliably dispatched (APs
+		// never pick it off BSP's kschedQueue via steal in the
+		// observed window); the issue needs the full M4 context
+		// where ring3Wrapper is also a kernel thread and the
+		// scheduler owns the CPU outright. Pre-Route-C semantics
+		// (kpHog + kpMarker as goroutines) preserved for now.
 		go kpMarker()
 		go kpHog()
 	}
