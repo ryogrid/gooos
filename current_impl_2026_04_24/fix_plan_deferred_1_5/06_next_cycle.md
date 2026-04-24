@@ -1,5 +1,37 @@
 # 06 — Next cycle after DEFERRED 1–5 implementation
 
+## Final state (post-session TL;DR)
+
+1. **I-3** (slow build): documented, no code change. `make build`
+   = 16.4 s / `make iso` = 17.1 s on this machine with a warm
+   TinyGo cache. The user's multi-minute stall is cold-cache +
+   concurrent-process contention.
+2. **I-1** (Option D audit): 50-run sampler = **20 % PASS**.
+   Key finding: "nobegin" failures are **kernel panics**, not
+   quiet wake-loss. 7 runs show explicit `panic:` text (PF,
+   nil-ptr deref, stack overflow, index-out-of-range,
+   mis-formatted-banner, truncated); remaining nobegin runs end
+   with a truncated `"p"` = panic text cut off by the sampler's
+   deadline. Option D trace ring cannot discriminate because
+   the crash pre-empts the resume-side entry.
+3. **I-2** (cross-program): 50-run `goprobe` sampler = **46 %
+   PASS / 48 % nobegin**. Confirms the P02 regression is **not
+   sleeptest-specific** — every Ring-3 spawn through
+   `scheduleRing3Wrapper → migrateAndPause` hits the same crash
+   class.
+4. **Recommendation**: **Option G — revert P02** (`051f534`) in
+   the next session. Before landing, do two pre-revert
+   measurements so the before/after claim is decisive:
+   - **S1** — re-sample `test_sleeptest_longrun.sh ITERATIONS=20`
+     with `runSleepAudit=false` to confirm the crashes persist
+     without the Option D ring buffer (rule out a ring-induced
+     corruption theory).
+   - **S2** — after `git revert 051f534`, re-run
+     `test_sleeptest_longrun.sh ITERATIONS=50` to produce a
+     matched-N baseline; cite the before/after in the revert
+     commit.
+5. **H-01** remains deferred (out of scope for this cycle).
+
 ## Scope & goal
 
 This plan covers the three concrete follow-up items that surfaced
@@ -296,6 +328,27 @@ with "push happened, kernel died before target resumed".
 
 Reinforces the **Option G revert** recommendation from the
 mid-session finding above.
+
+### Caveats (reviewer-raised, not blocking)
+
+- The Option D ring buffer landed in `ebb7e1e` (prior cycle),
+  and the 50-run sampler for I-1 was executed with
+  `runSleepAudit=true`, so the ring's counter writes
+  (`migrateTraceHead++` and 6 field writes per push/resume)
+  were active on every migrate call. The writes are index-
+  bounded (`idx := migrateTraceHead % migrateTraceSize`) so
+  cannot plausibly produce `rip=0x00000006` or similar arbitrary
+  stack corruption, but before landing the Option G revert the
+  next session should run a short control sample (20 runs)
+  with `runSleepAudit=false` to rule the ring out.
+- The pre-P02 baseline (~50 % PASS for `test_sleeptest_shell.sh`)
+  cited in `FINAL_REPORT.md` was never formally sampled at
+  N=50; it is an anecdotal observation from the 2026-04-24
+  cycle's smoke tests. A matched-N baseline sample **after**
+  the revert would let the revert commit cite "before 20 %,
+  after XX %" rather than "before ~50 % anecdotal, after XX %
+  measured". The next session should include this as part of
+  landing Option G.
 
 ## I-2 result (50-run goprobe sampler)
 
