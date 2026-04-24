@@ -58,7 +58,35 @@ Starting SHA: `7f81f12` (design doc set).
 *(Items the cycle chose not to complete; surfaced in the final
 report.)*
 
-<!-- append deferred items here during execution -->
+- **Session stop after M0** — first session landed M0 end-to-end
+  (smoke test PASS on 2026-04-25). Context budget preserved for
+  careful M1+ work in a follow-up session per the plan's
+  resumability discipline.
+- **M1 preempt-wiring dependency discovered mid-plan** —
+  `src/main.go:659` `kpHog` has zero cooperative yield points;
+  it is a pure `for { x++ }`. §09 M1 lists it as a simple
+  migration, but for a kpHog kernel-thread to get preempted it
+  needs `handlePreemptIPI` to call `kschedYield()` — which §09
+  places in M4. Two resolution options for the next session:
+  (a) do a minimal handlePreemptIPI edit as part of M1 (adds a
+  kernel-thread-aware branch alongside the existing TinyGo
+  Gosched call); (b) split M1 into M1a (kpMarker only, which
+  has `<-afterTicks` yields and will migrate cleanly once M3
+  lands) and M1b (kpHog after preempt wiring lands). §09 should
+  be amended accordingly at that time; the amendment itself is
+  a minor design-doc tweak, not a BLOCKING reviewer finding.
+- **TinyGo `waitForEvents` co-existence hook** — §09 M1's
+  "waitForEvents pulls from kschedQueues first" design requires
+  editing `scripts/tinygo_runtime.patch` (the `wait_gooos.go`
+  hunk at patch lines 1120–1138) to add a `kschedLoopOnce()`
+  call + re-applying in `~/.local/tinygo0.40.1/`. Not yet done.
+  Next session: edit the patch; add `kschedLoopOnce()` to
+  `src/kthread_sched.go`; bridge via `//export`.
+- **Baseline B4 / B5** — full `test_net.sh` and
+  `test_sleeptest_postrevert.sh ITERATIONS=20` runs skipped in
+  this session. Boot-level + smoke-level verification is clean.
+  Run before the first migration that could regress
+  (recommend: before M2 lands `fsTask` on a kernel thread).
 
 ## Notes
 
