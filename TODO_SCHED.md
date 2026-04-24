@@ -36,11 +36,11 @@ Doc updates land alongside each item per
   `runSMPProbeShellTest=true` shows workers on cpuID 0, 2, 3
   (pre-change: all on 0). Makefile + lint + verify-globals
   clean. *Verified against commit `051f534`.*
-- [ ] **P02.docs** — close
+- [x] **P02.docs** — close
   `current_impl_2026_04_24/03_smp_preempt_phase_gating.md`
   §Open Questions smpprobe-distribution bullet; update
-  `FINAL_REPORT.md §Deferred` item 2. *(Deferred to the
-  final doc sweep at end of cycle.)*
+  `FINAL_REPORT.md §Deferred` item 2. *Landed in commit
+  `8c3c864`.*
 
 ### P01 core — Phase 4.4 context switch (plan file: `01_phase4_4_context_switch_and_service_migration.md`)
 
@@ -97,24 +97,31 @@ Doc updates land alongside each item per
 
 ### P03 audit — sleep cross-CPU channel-wake audit (plan file: `03_sleep_cross_cpu_channel_wakeup_audit.md`)
 
-- [ ] **P03.flag** — add `const runSleepAudit = false` in
+- [x] **P03.flag** — add `const runSleepAudit = false` in
   `src/preempt_config.go`; add per-CPU `SchedTasksPushed`,
   `SchedPopNil`, `SchedPopOk` in `src/percpu.go` (gated).
-- [ ] **P03.patch** — extend
+  *Landed in commit `4cd94e4`.*
+- [x] **P03.patch** — extend
   `scripts/tinygo_runtime.patch` scheduler hunks with
   `gooosNotePush` / `gooosNotePop` linkname hooks.
-- [ ] **P03.icr** — add `lapicICRTimeouts` bump in
-  `src/smp.go:lapicWaitICR`.
-- [ ] **P03.dump** — add `sleepAuditDump()` in `src/net.go`,
-  called from `netDiag` when gate is on.
-- [ ] **P03.harness** — create
+  *Landed in commits `4cd94e4` (live tree) + `8c3c864`
+  (patch-file sync).*
+- [x] **P03.icr** — add `lapicICRTimeouts` bump in
+  `src/smp.go:lapicWaitICR`. *Landed in commit `4cd94e4`.*
+- [x] **P03.dump** — add `sleepAuditDump()` in `src/net.go`,
+  called from `netDiag` when gate is on. *Landed in commit
+  `4cd94e4`.*
+- [x] **P03.harness** — create
   `scripts/test_sleeptest_longrun.sh` (50-run sampler, per-run
   audit dump, harness_recover_stale_backup sourced).
+  *Landed in commit `4cd94e4`.*
 - [ ] **P03.run** — run sampler; collect logs; analyse against
-  H1–H7 signal rules.
+  H1–H7 signal rules. *(In flight — 10-iteration sampler
+  started 2026-04-24 11:51.)*
 - [ ] **P03.doc** — write
   `current_impl_2026_04_24/fix_plan_deferred_1_5/03a_sleep_fix.md`
-  with the winning hypothesis + proposed fix.
+  with the winning hypothesis + proposed fix. *(Blocked on
+  P03.run.)*
 
 ### P03a fix — implement winning hypothesis (plan file: `03a_sleep_fix.md`, written by P03 session)
 
@@ -127,9 +134,9 @@ Doc updates land alongside each item per
 
 ### P05 — harness re-gating (plan file: `05_harness_regating.md`)
 
-- [ ] **P05.gate** — new `scripts/test_smp_release_gate.sh`
+- [x] **P05.gate** — new `scripts/test_smp_release_gate.sh`
   (50-iteration outer loop over 8 harnesses; JSON summary;
-  exit-non-zero on any < 95 %).
+  exit-non-zero on any < 95 %). *Landed in commit `c3b0de8`.*
 - [ ] **P05.headers** — flip `scripts/test_smp_shell_preempt.sh`
   and `scripts/test_sleeptest_shell.sh` headers to
   RELEASE-BLOCKING.
