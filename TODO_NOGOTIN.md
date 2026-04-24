@@ -37,8 +37,36 @@ Starting SHA: `7f81f12` (design doc set).
 
 ## M4 — `ring3Wrapper` + net services + user-hosted sleep/recv
 
-- [ ] M4.1 — `ring3Wrapper` kernel-thread rewrite; `tssSetRSP0ForKernelThread` helper; `kschedSwitchPostCR3` hook; `gInfoByTask` / `gooosOnResume` / `registerRing3G` / `unregisterRing3G` deleted; `Process.exitCh` → `ExitEv KEvent` + `ExitCode uintptr`; `processExit` + `processWait` rewired
-- [ ] M4.2 — `netRxLoop`, `udpEchoServer`, `tcpRTOScannerLoop`, `tcpEchoServer` + per-connection workers migrated to `kschedSpawn`
+**Session-3 finding (2026-04-25)**: M4's net-service migrations
+(M4.2 — netRxLoop, udpEchoServer, tcpRTOScannerLoop, tcpEchoServer)
+cannot land cleanly before §M5's STW freeze IPI (vector 0xFD,
+`05_gc_integration.md`). Reason: those services allocate in their
+hot paths (`ethernetDispatch → ipv4Handle → packet buffers / ARP
+cache / stats`). Once dispatched on an AP via kschedLoopOnce, they
+allocate from AP context — racing the pre-Route-C "BSP-only
+allocates" GC approximation. Reproducer: attempted `netRxLoop`
+migration in this session triggered a boot hang under default
+QEMU networking (ARP/DHCP traffic arrives, drainRxRing →
+ethernetDispatch → allocator contention → hang). Reverting to a
+goroutine restored boot. `-net none` boot showed the allocation
+side was the culprit — without incoming traffic netRxLoop never
+allocates and the kthread version boots fine.
+
+The M4 dependency on M5 should be recorded as a **§09 sequencing
+refinement**: rename the milestone order so the GC integration
+lands first (new M4'), then service migrations (new M5'), then the
+build-flip (new M6'). Current §09 nominally places GC work in
+"§05 doc + M5 TinyGo patch trim" but the STW freeze IPI
+implementation is implicitly in M4 scope; splitting it out makes
+the dependency explicit.
+
+- [ ] M4.0 — **PREREQ** — Land STW freeze IPI (vector 0xFD per
+  §05), broadcast handler, per-CPU `WantSTWFreeze` flag in
+  `PerCPU` (`src/percpu.go`), `Spinlock.Release` hook that enters
+  freeze-spin after drop when flag is set. Remove the "BSP-only
+  allocates" workaround in `gc_blocks.go`.
+- [ ] M4.1 — `ring3Wrapper` kernel-thread rewrite; `tssSetRSP0ForKernelThread` helper; `kschedSwitchPostCR3` hook (extends `kschedLoopOnce` to write CR3 + TSS.RSP0 when the dispatched thread has a `Proc` field set); `gInfoByTask` / `gooosOnResume` / `registerRing3G` / `unregisterRing3G` deleted; `Process.exitCh` → `ExitEv KEvent` + `ExitCode uintptr`; `processExit` + `processWait` rewired. The `Process *Process` field needs to be added to `KernelThread` or tracked in a parallel `kthreadProc[slot]` table.
+- [ ] M4.2 — `netRxLoop`, `udpEchoServer`, `tcpRTOScannerLoop`, `tcpEchoServer` + per-connection workers migrated to `kschedSpawn`. Unblocked by M4.0.
 - [ ] M4.3 — `sys_sleep` → `kschedTimedPark`; `sys_recvfrom` timeouts → bounded-poll; `afterTicks` channel shim deleted; `ring3StackPoolCh` replaced with `KQueue[int32]` or bitmap
 - [ ] M4.4 — Gate: `test_sleeptest_postrevert.sh ITERATIONS=50` ≥ 80 % (F1 closure); `test_net.sh` + `test_tcp_longidle.sh 300` + `test_smp_shell_preempt.sh` + `test_smp_release_gate.sh` + `test_smp_basic.sh` + `test_ps.sh` all PASS
 
