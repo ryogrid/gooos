@@ -89,6 +89,68 @@ func gooosNotePop(cpuIdx uint32, ok bool) {
 	}
 }
 
+// migrateTraceEntry captures one `migrateAndPause` call for the
+// P03a Option D audit — records source CPU + target CPU + the
+// task pointer at push, and the actual resume CPU after the
+// PauseLocked returns. Paired with pushTick/resumeTick so cases
+// where the task sits in the target queue for many ticks are
+// visible. See
+// current_impl_2026_04_24/fix_plan_deferred_1_5/03a_sleep_fix.md
+// §Option D.
+type migrateTraceEntry struct {
+	srcCPU     uint32
+	targetCPU  uint32
+	resumeCPU  uint32
+	pushTick   uint64
+	resumeTick uint64
+	used       uint32 // 1 after push recorded; 2 after resume recorded
+}
+
+const migrateTraceSize = 64
+
+var migrateTrace [migrateTraceSize]migrateTraceEntry
+var migrateTraceHead uint32 // monotonic write index (racey; diagnostic)
+
+// migrateTracePush records the push half of a migrateAndPause
+// call. Returns the trace slot index so migrateTraceResume can
+// fill in the resume half.
+//
+//go:linkname migrateTracePush migrateTracePush
+func migrateTracePush(srcCPU, targetCPU uint32) uint32 {
+	if !runSleepAudit {
+		return 0xFFFFFFFF
+	}
+	idx := migrateTraceHead % migrateTraceSize
+	migrateTraceHead++
+	migrateTrace[idx].srcCPU = srcCPU
+	migrateTrace[idx].targetCPU = targetCPU
+	migrateTrace[idx].pushTick = pitTicks
+	migrateTrace[idx].resumeCPU = 0xFFFFFFFF
+	migrateTrace[idx].resumeTick = 0
+	migrateTrace[idx].used = 1
+	return idx
+}
+
+// migrateTraceResume fills in the resume-side data on the trace
+// entry the matching push returned. If the slot has been wrapped
+// by another call since, the update is silently dropped.
+//
+//go:linkname migrateTraceResume migrateTraceResume
+func migrateTraceResume(idx uint32, resumeCPU uint32) {
+	if !runSleepAudit {
+		return
+	}
+	if idx >= migrateTraceSize {
+		return
+	}
+	// Best-effort write; if the slot was recycled, we just
+	// overwrite with the latest resume, which is still
+	// informative.
+	migrateTrace[idx].resumeCPU = resumeCPU
+	migrateTrace[idx].resumeTick = pitTicks
+	migrateTrace[idx].used = 2
+}
+
 // wrmsr writes a 64-bit value to the specified MSR.
 // Implemented in stubs.S.
 //

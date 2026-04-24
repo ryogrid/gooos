@@ -245,5 +245,28 @@ func sleepAuditDump() {
 	serialPrintln("lapicICRTimeouts=" + utoa(lapicICRTimeouts))
 	serialPrintln("pitTicks=" + utoa(pitTicks))
 	serialPrintln("afterTicksCalls=" + utoa(afterTicksCalls))
+	// P03a Option D: dump the migrateAndPause trace ring.
+	serialPrintln("migrateTrace head=" + utoa(uint64(migrateTraceHead)))
+	var shown uint32
+	for i := uint32(0); i < migrateTraceSize; i++ {
+		e := &migrateTrace[i]
+		if e.used == 0 {
+			continue
+		}
+		resume := "pending"
+		if e.used == 2 {
+			resume = "resumeCPU=" + utoa(uint64(e.resumeCPU)) +
+				" resumeTick=" + utoa(e.resumeTick)
+		}
+		serialPrintln("migrate[" + utoa(uint64(i)) + "]: src=" +
+			utoa(uint64(e.srcCPU)) +
+			" target=" + utoa(uint64(e.targetCPU)) +
+			" pushTick=" + utoa(e.pushTick) +
+			" " + resume)
+		shown++
+		if shown >= 16 {
+			break
+		}
+	}
 	serialPrintln("=== end Sleep Audit ===")
 }

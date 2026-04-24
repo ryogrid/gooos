@@ -976,7 +976,7 @@ diff --git a/src/runtime/scheduler_cores.go b/src/runtime/scheduler_cores.go
 index e45eaf39..aecf6568 100644
 --- a/src/runtime/scheduler_cores.go
 +++ b/src/runtime/scheduler_cores.go
-@@ -24,8 +24,27 @@ var cpuTasks [numCPU]*task.Task
+@@ -24,8 +24,38 @@ var cpuTasks [numCPU]*task.Task
  var (
  	sleepQueue *task.Task
  	runqueue   task.Queue
@@ -1000,6 +1000,17 @@ index e45eaf39..aecf6568 100644
 +
 +//go:linkname gooosNotePop gooosNotePop
 +func gooosNotePop(cpuIdx uint32, ok bool)
++
++// migrateTracePush / migrateTraceResume — P03a Option D audit
++// hooks. Bodies in src/percpu.go (gooos side) bump a ring buffer
++// that records (src, target, taskPtr, resumeCPU, pushTick,
++// resumeTick) per migrateAndPause call.
++//
++//go:linkname migrateTracePush migrateTracePush
++func migrateTracePush(srcCPU, targetCPU uint32) uint32
++
++//go:linkname migrateTraceResume migrateTraceResume
++func migrateTraceResume(idx uint32, resumeCPU uint32)
 +
  func deadlock() {
  	// Call yield without requesting a wakeup.
@@ -1026,7 +1037,7 @@ index e45eaf39..aecf6568 100644
  	task.PauseLocked()
  }
  
-@@ -110,7 +119,80 @@ func removeTimer(t *timer) *timerNode {
+@@ -110,7 +119,84 @@ func removeTimer(t *timer) *timerNode {
  }
  
  func schedulerRunQueue() *task.Queue {
@@ -1089,10 +1100,14 @@ index e45eaf39..aecf6568 100644
 +	if targetCpu >= n {
 +		targetCpu = 0
 +	}
++	// P03a Option D audit: record the push half before the swap.
++	traceIdx := migrateTracePush(gooosCpuID(), targetCpu)
 +	schedulerLock.Lock()
 +	runqueues[targetCpu].Push(task.Current())
 +	schedulerWake()
 +	task.PauseLocked()
++	// Back on whichever CPU popped us — record the resume half.
++	migrateTraceResume(traceIdx, gooosCpuID())
 +}
 +
 +// apScheduler is the TinyGo scheduler entry for AP cores. Called
