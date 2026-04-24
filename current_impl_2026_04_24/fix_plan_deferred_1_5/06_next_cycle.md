@@ -118,6 +118,42 @@ root cause is documented with enough evidence that the user
 knows what to expect (e.g., "first clean build takes ~4 min
 due to TinyGo interp; subsequent builds are 60 s").
 
+### I-3 findings (this session)
+
+Direct measurement on this machine (2026-04-24) with a warm
+TinyGo cache at `~/.cache/tinygo` (~1.5 GB):
+
+- `rm -rf tmp user/build; time make build` → **16.4 s**
+  elapsed, 22.7 s CPU, 632 MB peak RSS.
+- `rm -rf tmp user/build; time make iso` → **17.1 s**
+  elapsed, 22.3 s CPU, 632 MB peak RSS.
+- No multi-minute stall reproduced.
+
+Earlier in the session **one** tinygo build did consume
+25 min CPU and left a `[tinygo] <defunct>` zombie behind; at
+the time four stale `qemu-system-x86_64` processes from
+earlier verification runs were also running and contending
+for RAM/CPU. The correlation supports hypothesis (c)
+"environmental contention" over (a) "patch-induced slowdown".
+
+Hypothesis (b) "Makefile zombie-reap issue": not
+reproducible. The Makefile chain `run-smp → $(KERNEL_ISO)
+→ $(KERNEL_BIN) → $(KERNEL_GO_O) (tinygo)` uses standard
+`make` dependency semantics; `make` reaps children normally.
+
+**Documented expectation for the user**: a fresh clone
+without `~/.cache/tinygo` takes several minutes for the
+first `tinygo build` (the compiler caches IR/object files
+per-target per-source-hash). Subsequent builds with warm
+cache are 15-20 s. If a build hangs > 2 minutes with warm
+cache, check `ps aux | grep -E 'qemu|tinygo'` for stale
+processes and kill them before retrying. Adding a note to
+the README Prerequisites section about the first-build
+cost is a sensible one-line improvement.
+
+No code change required for I-3. README note deferred to
+next session (low priority).
+
 ## Execution order
 
 1. Write this doc + extend `TODO_SCHED.md §Next cycle`. Commit.
