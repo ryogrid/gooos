@@ -111,6 +111,27 @@ the dependency explicit.
   with kthread-hosted shell). `test_sleeptest_postrevert.sh`
   regresses to 0 % (hits the deferred sys_sleep hazard);
   expected to recover at M4.3.
+- [x] M4.1.c — Preempt-IPI rewiring + currentProc kthread
+  fallback. `src/goroutine_irq.go` `handlePreemptIPI`: when
+  the preempted Ring-3 context is hosted by a kthread
+  (`kschedRunning[c] != nil`), short-circuit to `kschedYield()`
+  instead of running through `maybeDeliverSignal` (which uses
+  `procByTask[taskCurrent()]` and silently misses for migrated
+  kthread contexts). The Ring-0 fall-through path was already
+  routing kthread preempt to `kschedYield`; the explicit Ring-3
+  branch makes it consistent and avoids the wasted
+  signal-delivery attempt. `src/process.go` `currentProc()`:
+  fall back to `procByPoolSlot[perCPUBlocks[cpuID()].CurrentPoolIdx]`
+  when `procByTask[taskCurrent()]` returns nil — needed because
+  a kthread re-dispatched on a different CPU sees a different
+  stale `taskCurrent()` value than what `setCurrentProc` stored
+  under at first dispatch. M4.1.b's `kthreadResumeRing3Ctx`
+  keeps `CurrentPoolIdx` current on every resume so this
+  fallback always resolves to the right proc. **Gates**: smoke
+  + preempt_kernel (markers=6) + ps PASS. Signal delivery for
+  kthread-hosted Ring 3 (SIGALRM) is still goroutine-only;
+  re-wiring to use the pool-slot path is a follow-up if needed
+  by future user programs.
 - [x] M4.1.b — Cross-CPU CR3+TSS re-install on kthread re-dispatch.
   New `kthreadResumeRing3Ctx()` in `src/kthread_ring3.go`:
   reads `kschedRunning[cpuID()]`, looks up

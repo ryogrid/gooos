@@ -182,14 +182,35 @@ const argPageVaddr = uintptr(0x40300000)
 const userStackBase = uintptr(0x7FFF0000)
 
 // currentProc returns the Process for the currently running
-// goroutine, or nil if this is not a Ring-3-hosting goroutine.
-// Protected by procLock.
+// goroutine OR kthread, or nil if neither is hosting a Ring-3
+// process. Protected by procLock for the goroutine path.
+//
+// M4.1.c: when called from a kthread context that has migrated
+// CPUs since first dispatch, taskCurrent() returns a different
+// stale TinyGo task pointer than what ring3WrapperKT stored under
+// in setCurrentProc — so procByTask lookup misses. Fall back to
+// procByPoolSlot[perCPUBlocks[cpuID()].CurrentPoolIdx], which
+// kthreadResumeRing3Ctx (M4.1.b) keeps current on every
+// kthread re-dispatch.
 func currentProc() *Process {
 	flags := procLock.Acquire()
 	ensureProcMaps()
 	p := procByTask[taskCurrent()]
 	procLock.Release(flags)
-	return p
+	if p != nil {
+		return p
+	}
+	// Kthread fallback: read pool slot installed by
+	// kthreadResumeRing3Ctx and resolve via procByPoolSlot.
+	cpu := cpuID()
+	if cpu >= maxCPUs {
+		return nil
+	}
+	idx := perCPUBlocks[cpu].CurrentPoolIdx
+	if idx < 0 || int(idx) >= maxRing3Procs {
+		return nil
+	}
+	return procByPoolSlot[idx]
 }
 
 // setCurrentProc records proc as the Process for the current

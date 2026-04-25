@@ -131,10 +131,30 @@ func handlePreemptIPI(vector uint64) {
 			if c < maxCPUs {
 				preemptRing3Count[c]++
 			}
-			// Ring 3: deliver SIGALRM if a handler is registered.
-			// maybeDeliverSignal rewrites frame.RIP / frame.RSP in
-			// place; on iretq the user process jumps to its
-			// SIGALRM handler instead of the interrupted RIP.
+			// M4.1.c: if the host of this Ring-3 process is a
+			// kthread (kschedRunning[c] != nil), short-circuit
+			// to the kthread yield path. maybeDeliverSignal uses
+			// procByTask[taskCurrent()] which doesn't resolve
+			// from a migrated kthread context, and signal
+			// delivery for kthread-hosted Ring 3 isn't wired up
+			// yet. The kschedYield below parks this kthread;
+			// when re-dispatched, M4.1.b's kthreadResumeRing3Ctx
+			// reinstalls CR3+TSS on the (possibly different)
+			// CPU and the iretq frame restores the user state.
+			if c < maxCPUs && kschedRunning[c] != nil {
+				if preemptYieldSeen[c] == 0 {
+					preemptYieldSeen[c] = 1
+				}
+				preemptYieldCount[c]++
+				perCPUBlocks[c].WantReschedule = 0
+				kschedYield()
+				return
+			}
+			// Goroutine-hosted Ring 3: deliver SIGALRM if a
+			// handler is registered. maybeDeliverSignal rewrites
+			// frame.RIP / frame.RSP in place; on iretq the user
+			// process jumps to its SIGALRM handler instead of
+			// the interrupted RIP.
 			if maybeDeliverSignal(frame) {
 				if c < maxCPUs {
 					preemptRing3SigCount[c]++
