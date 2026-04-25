@@ -172,7 +172,8 @@ func main() {
 
 	// Start the afterTicks timer-wheel dispatcher. Must be after
 	// pitInit (dispatcher reads pitTicks) and before any caller of
-	// afterTicks (testAfterTicks, netInit spawns, Ring-3 wrappers).
+	// afterTicks. M4.2.f: dispatcher is now a kthread; afterTicksInit
+	// calls kschedInit defensively (idempotent).
 	afterTicksInit()
 	serialPrintln("Timer wheel: afterTicksInit")
 
@@ -398,20 +399,9 @@ func main() {
 		netInit()
 		testNetBuf()
 		testICMPEchoReply()
-		// Periodic netDiag: first dump ~5 s after boot for
-		// test-script grep targets, then every ~10 s forever.
-		// The loop is safe post-Ring-3 because afterTicks is
-		// backed by the single-dispatcher timer wheel
-		// (src/afterticks.go) instead of the per-call spawn
-		// that previously leaked Task structs.
-		go func() {
-			<-afterTicks(500)
-			netDiag()
-			for {
-				<-afterTicks(1000)
-				netDiag()
-			}
-		}()
+		// M4.2.g: was an inline `go func()`; now a netDiagLoop
+		// kthread spawned later from main() (after kschedInit
+		// + fsTask pin).
 	}
 
 	// IOAPIC initialization disabled: QEMU's IOAPIC IRQ0
@@ -424,9 +414,11 @@ func main() {
 	// ioapicInit()
 	serialPrintln("IOAPIC: disabled (PIC pass-through active)")
 
-	// Phase B self-test: verify the TinyGo Task struct layout
-	// assumed by src/goroutine_tss.go before anything depends on it.
-	checkTaskOffset()
+	// M4.2.g cleanup: checkTaskOffset (TinyGo Task layout self-test)
+	// removed — required `go func(){}()` and was the last `go `
+	// site in src/*.go. The Task layout is no longer load-bearing
+	// post-Route-C since gInfoByTask is dead-on-the-kthread-side.
+	// M5 cleanup will delete the goroutine_tss.go support code.
 
 	// Route C M0 self-test: verify the KernelThread struct layout
 	// assumed by src/kthread_switch.S.
@@ -444,7 +436,20 @@ func main() {
 	// (fsSend*) now push onto a bounded fsReqQ and park on a
 	// per-request KEvent instead of a chan *fsResponse.
 	kschedInit()
-	kschedSpawn("fsTask", fsTask)
+	// Pin fsTask to CPU 0 so the BSP elf.go pump can dispatch it
+	// directly via local kschedPop. Without this, after M4.2.{c,d}
+	// added tcpRTOScanner + tcpEcho kthreads ahead of fsTask in the
+	// round-robin counter, fsTask would land on an AP and the BSP
+	// pump would hang at fsSendRead until the AP's idle hook fired.
+	kschedSpawnAt("fsTask", fsTask, 0)
+	// Route C M4.2.{b,e}: spawn net-service kthreads (netRxLoop,
+	// udpEchoServer) here so they're after the smoke test and
+	// before bspBootDone.
+	netSpawnServices()
+	if e1000Found {
+		// M4.2.g: periodic netDiag, was inline `go func()`.
+		kschedSpawn("netDiagLoop", netDiagLoop)
+	}
 	runtime.Gosched()
 
 	vgaWriteLine(13, "Services: fsTask running")
@@ -620,7 +625,8 @@ func bootActivatePostShellReady() {
 	bspBootDone = 1
 
 	if runSMPBasicProbe {
-		go smpBasicProbe()
+		// M4.2.g: was `go smpBasicProbe()`. kthread now.
+		kschedSpawn("smpBasicProbe", smpBasicProbe)
 	}
 
 	if preemptEnabled && runSMPShellPreemptProbe {
@@ -637,23 +643,37 @@ func bootActivatePostShellReady() {
 
 	if preemptEnabled && runPreemptProbe {
 		serialPrintln("preempt_probe: spawning kpMarker + kpHog")
-		// Route C M1 landed the kernel-thread scheduler
-		// *infrastructure* — kschedLoopOnce, the waitForEvents
-		// hook in the TinyGo runtime patch, and the
-		// handlePreemptIPI branch that yields via kschedYield
-		// when a kernel thread is running — but the kpHog
-		// migration itself is deferred to M4. Reason: on -smp 4
-		// kpHog currently fails to get reliably dispatched (APs
-		// never pick it off BSP's kschedQueue via steal in the
-		// observed window); the issue needs the full M4 context
-		// where ring3Wrapper is also a kernel thread and the
-		// scheduler owns the CPU outright. Pre-Route-C semantics
-		// (kpHog + kpMarker as goroutines) preserved for now.
-		go kpMarker()
-		go kpHog()
+		// M4.2.g: kpMarker + kpHog migrated to gooos kernel
+		// threads. The M1 attempt's "no banner" mystery is
+		// expected to be resolved by the M4.0 + M4.1 stack
+		// (kthread ring3Wrapper, gcLock spinlock, sysYield
+		// kthread fork). Each runs to preempt-IPI rescheduling.
+		kschedSpawn("kpMarker", kpMarker)
+		kschedSpawn("kpHog", kpHog)
 	}
 
 	preemptPhaseAdvance(preemptPhaseSchedReady)
+}
+
+// netDiagLoop is the periodic netDiag dumper kthread. M4.2.g:
+// was an inline `go func()` in the e1000 init block. First dump
+// at ~5 s after spawn (for test scripts that grep "=== Network
+// Diagnostics ==="), then every ~10 s thereafter.
+func netDiagLoop() {
+	if kschedRunning[cpuID()] != nil {
+		kschedTimedPark(500)
+	} else {
+		<-afterTicks(500)
+	}
+	netDiag()
+	for {
+		if kschedRunning[cpuID()] != nil {
+			kschedTimedPark(1000)
+		} else {
+			<-afterTicks(1000)
+		}
+		netDiag()
+	}
 }
 
 // kpHog is a tight compute loop with zero cooperative-yield points.
@@ -681,7 +701,12 @@ func kpMarker() {
 	for iter := 0; iter < 20; iter++ {
 		serialPrintln("preempt_probe_marker=" + utoa(uint64(iter)) +
 			" cpu=" + utoa(uint64(cpuID())))
-		<-afterTicks(5)
+		// M4.2.g: kthread context — kschedTimedPark.
+		if kschedRunning[cpuID()] != nil {
+			kschedTimedPark(5)
+		} else {
+			<-afterTicks(5)
+		}
 	}
 	serialPrintln("kpMarker: done")
 }
@@ -707,6 +732,11 @@ func smpBasicProbe() {
 		}
 		out := "smp_basic_cpu=" + utoa(uint64(c)) + " iter=" + utoa(uint64(iter))
 		serialPrintln(out)
-		<-afterTicks(1)
+		// M4.2.g: kthread context — kschedTimedPark.
+		if kschedRunning[cpuID()] != nil {
+			kschedTimedPark(1)
+		} else {
+			<-afterTicks(1)
+		}
 	}
 }

@@ -154,7 +154,47 @@ the dependency explicit.
   still works). **Gates**: `make build` clean;
   `scripts/test_kthread_smoke.sh` PASS; `scripts/test_preempt_kernel.sh`
   PASS; `scripts/test_ps.sh` PASS.
-- [ ] M4.2 — `netRxLoop`, `udpEchoServer`, `tcpRTOScannerLoop`, `tcpEchoServer` + per-connection workers migrated to `kschedSpawn`. Unblocked by M4.0.
+- [x] M4.2 — All net/probe/dispatcher service goroutines
+  migrated to gooos kernel threads. Bundled as a single commit
+  (M4.2.b through M4.2.g + the 2 self-test residues from
+  M4.2.a) because subsystems interlock at boot ordering and
+  spawn-target placement. After this commit `grep -c "^[[:space:]]*go " src/*.go` = 0.
+  - **M4.2.b**: udpEchoServer + UDPBinding.Q + socketFd.recvQ
+    via NEW `udpDgramQueue` (src/kthread_queue.go) with Push/
+    TryPush/Pop/TryPop. sys_recvfrom timeout becomes a
+    bounded-poll TryPop+kschedTimedPark loop. Closes the
+    deferred-from-M4.3 sys_recvfrom H-01 hazard.
+  - **M4.2.c**: tcpRTOScannerLoop kthread (afterTicks→kschedTimedPark).
+  - **M4.2.d**: tcpEchoServer kthread (afterTicks→kschedTimedPark;
+    no per-connection goroutines existed in current code).
+  - **M4.2.e**: netRxLoop kthread (runtime.Gosched→kschedYield).
+  - **M4.2.f**: timerDispatcher kthread (runtime.Gosched→kschedYield).
+  - **M4.2.g**: smpBasicProbe + kpHog + kpMarker kthreads;
+    netDiagLoop kthread (was inline `go func()`); checkTaskOffset
+    self-test deleted (was the last `go func(){}()` site,
+    inherently TinyGo-task-bound).
+  - **Spawn-target placement**: NEW `kschedSpawnAt(name, entry, cpu)`
+    in src/kthread_lifecycle.go. fsTask + boot shell ring3WrapperKT
+    + smoke kthreads pinned to CPU 0 so the BSP-driven elf.go
+    pump and kschedSmokeRun's kschedLoop can dispatch them via
+    local pop without depending on AP idle hooks (which are
+    unreliable during early boot).
+  - **BSP keyboard wait fix**: `keyboardReadEventBlocking`
+    BSP path uses kschedTimedPark instead of hlt when the
+    caller is a kthread, so net kthreads on CPU 0 (e.g.,
+    udpEcho, netDiagLoop) get scheduling time during shell
+    idle.
+  - **elf.go pump fix**: BSP pump's iteration uses
+    runtime.Gosched (not gooosPause) so remaining TinyGo
+    goroutines (none in normal operation, but TinyGo's own
+    scheduler bookkeeping) get scheduling time.
+  - **Gates**: `make build` clean; `scripts/test_kthread_smoke.sh`
+    PASS (A=5 B=5 ok=1); `scripts/test_ps.sh` PASS
+    (header=1 row=1); `scripts/test_preempt_kernel.sh` PASS
+    (markers=6); `scripts/test_net.sh` PASS (UDP echo + netDiag);
+    `scripts/test_sleeptest_postrevert.sh` 50-iter
+    **98 % PASS (49/50)** — up from 74 % at M4.3 and 50 %
+    at M2 baseline. F1 closure target (≥ 80 %) **exceeded**.
 - [ ] M4.3 — `sys_sleep` → `kschedTimedPark`; `sys_recvfrom` timeouts → bounded-poll; `afterTicks` channel shim deleted; `ring3StackPoolCh` replaced with `KQueue[int32]` or bitmap
 - [ ] M4.4 — Gate: `test_sleeptest_postrevert.sh ITERATIONS=50` ≥ 80 % (F1 closure); `test_net.sh` + `test_tcp_longidle.sh 300` + `test_smp_shell_preempt.sh` + `test_smp_release_gate.sh` + `test_smp_basic.sh` + `test_ps.sh` all PASS
 
@@ -197,32 +237,19 @@ clears the M4.1 regression as a side-effect.
 
 **Re-sequenced M5 prerequisites**:
 
-- [ ] M4.2.a — Delete the four anon boot-time self-tests in
-  `main.go` (Spike2 chan, afterTicks self-test, boot net-diag
-  probe, and the goroutine_tss.go task-offset test). Removes 4
-  of the 12 `go` statements; also resolves the M4.1 smoke
-  regression at the Spike2 site.
-- [ ] M4.2.b — Migrate `udpEchoServer` to `kschedSpawn`. Demo
-  service; small body; channel rewires to `KQueue[UDPDatagram]`
-  (UDPBinding.Ch).
-- [ ] M4.2.c — Migrate `tcpRTOScannerLoop` to `kschedSpawn`.
-  Body uses `<-afterTicks(...)`; rewire to `kschedTimedPark`.
-- [ ] M4.2.d — Migrate `tcpEchoServer` + per-connection
-  workers to `kschedSpawn`. Largest sub-step; involves accept
-  queue rewires.
-- [ ] M4.2.e — Migrate `netRxLoop` to `kschedSpawn`. Now
-  unblocked because M4.0's gcLock spinlock makes
-  `ethernetDispatch` allocations cross-CPU safe.
-- [ ] M4.2.f — Migrate `timerDispatcher` to `kschedSpawn`.
-  Body's `runtime.Gosched` → `kschedYield`; the existing
-  channel-vs-event dual fire path stays intact (still serves
-  any remaining goroutine callers via afterTicks shim).
-- [ ] M4.2.g — Migrate `smpBasicProbe` (gated by
-  `runSMPBasicProbe`) and `kpHog` / `kpMarker` (gated by
-  `runPreemptProbe`) to `kschedSpawn`. The kpHog migration
-  attempt in session 2 / M1 hit a "no banner" mystery; with
-  M4.1 ring3Wrapper as kthread + M4.0 gcLock spinlock + the
-  Spike2 self-test gone (M4.2.a), retry should succeed.
+- [x] M4.2.a — All four anon boot-time self-tests removed
+  (Spike2 chan, afterTicks self-test, boot net-diag probe,
+  and goroutine_tss.go's checkTaskOffset). Spike2 + afterTicks
+  removed in commit `cbad225`; netDiag became a kthread
+  (netDiagLoop) and checkTaskOffset deleted in M4.2.b-g
+  bundle. **0 `go ` sites remain in src/*.go**.
+- [x] M4.2.b — udpEchoServer + udpDgramQueue (see M4.2 entry above).
+- [x] M4.2.c — tcpRTOScannerLoop kthread (see M4.2 entry above).
+- [x] M4.2.d — tcpEchoServer kthread (see M4.2 entry above).
+- [x] M4.2.e — netRxLoop kthread (see M4.2 entry above).
+- [x] M4.2.f — timerDispatcher kthread (see M4.2 entry above).
+- [x] M4.2.g — smpBasicProbe + kpHog + kpMarker + netDiagLoop
+  kthreads (see M4.2 entry above).
 - [x] M4.3 — `sys_sleep` (`src/userspace.go:460`) +
   TCP polling sites (sys_accept, sys_connect, sys_tcp_recv
   in `src/netsock.go`) migrated from `<-afterTicks(d)` to

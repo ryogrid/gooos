@@ -76,30 +76,10 @@ func taskStackTop(t uintptr) uintptr {
 	return *(*uintptr)(unsafe.Pointer(t + stackTopOffset))
 }
 
-// checkTaskOffset is a cheap self-test called at boot (from
-// main.go) that traps immediately if the Task layout assumption
-// above is wrong — e.g., if a TinyGo upgrade changes the struct.
-// The check works by spawning a throwaway goroutine that writes
-// its own canaryPtr into a local var; the layout is consistent
-// iff taskStackTop of that goroutine points strictly above its
-// canary.
-func checkTaskOffset() {
-	done := make(chan struct{}, 1)
-	go func() {
-		t := taskCurrent()
-		top := taskStackTop(t)
-		// canaryPtr field is at offset stackTopOffset - 8.
-		canary := *(**uintptr)(unsafe.Pointer(t + stackTopOffset - 8))
-		if top == 0 || canary == nil || top <= uintptr(unsafe.Pointer(canary)) {
-			serialPrintln("FATAL: TinyGo Task layout mismatch (stackTop offset)")
-			for {
-				hlt()
-			}
-		}
-		done <- struct{}{}
-	}()
-	<-done
-}
+// M4.2.g: checkTaskOffset removed — required `go func(){}()`
+// (the last `go ` site in src/*.go) and isn't load-bearing
+// post-Route-C. M5 will delete the surrounding goroutine_tss.go
+// support code as part of the scheduler=none flip.
 
 // registerRing3G records the current goroutine as Ring-3-bound. Must
 // be called from ring3Wrapper before jumpToRing3 and before the first

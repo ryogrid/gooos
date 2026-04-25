@@ -102,6 +102,19 @@ func keyboardReadEventBlocking() uint32 {
 				markKeyboardDrainCPU()
 				return ev
 			}
+			// M4.2.b/e: when the caller is a kthread (post-M4.1
+			// shell-on-kthread), park on a 1-tick timer event
+			// instead of hlt'ing the CPU. hlt monopolizes BSP
+			// and starves netRxLoop / udpEchoServer kthreads
+			// also queued on CPU 0 (no APs on -smp 1). The
+			// parked kthread wakes on timer (10 ms) and re-checks
+			// the keyboard ring; intervening kschedLoopOnce
+			// iterations from elf.go's pump dispatch the other
+			// CPU-0 kthreads.
+			if kschedRunning[0] != nil {
+				kschedTimedPark(1)
+				continue
+			}
 			sti()
 			// After sti(), check once more before hlt().
 			// On x86, load from gooosKbdHead will be ordered after sti()

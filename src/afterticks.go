@@ -84,11 +84,13 @@ var (
 	timerListLock Spinlock
 )
 
-// afterTicksInit spawns the timer-wheel dispatcher. Must be
-// called once at boot, before any goroutine that might call
-// afterTicks.
+// afterTicksInit spawns the timer-wheel dispatcher.
+// M4.2.f: now a kthread (was `go timerDispatcher()`).
+// Idempotent kschedInit ensures we work whether called before
+// or after main()'s explicit kschedInit.
 func afterTicksInit() {
-	go timerDispatcher()
+	kschedInit()
+	kschedSpawn("timerDispatcher", timerDispatcher)
 }
 
 // timerDispatcher is the single long-lived goroutine that owns
@@ -132,7 +134,13 @@ func timerDispatcher() {
 		for j := 0; j < nEv; j++ {
 			readyEv[j].Signal()
 		}
-		runtime.Gosched()
+		// M4.2.f: kthread context — kschedYield instead of
+		// runtime.Gosched. Goroutine fallback retained.
+		if kschedRunning[cpuID()] != nil {
+			kschedYield()
+		} else {
+			runtime.Gosched()
+		}
 	}
 }
 

@@ -38,49 +38,15 @@ var kthreadHostedProc [kthreadPoolCap]*Process
 // Mirrors kschedSpawn (src/kthread_lifecycle.go:21) with two
 // differences: name = "ring3", side-table store before enqueue.
 func kschedSpawnRing3Wrapper(proc *Process) *KernelThread {
-	t := kthreadPoolAlloc()
-	if t == nil {
-		kthreadPoolExhaustedPanic()
-	}
-	name := "ring3"
-	for i := 0; i < len(name); i++ {
-		t.Name[i] = name[i]
-	}
-	t.Name[len(name)] = 0
-	t.Entry = ring3WrapperKT
-
-	top := uintptr(unsafe.Pointer(&t.Stack.Top))
-	rsp := top - 8*8
-	enterAddr := kschedEnterAddr()
-	selfPtr := uintptr(unsafe.Pointer(t))
-	words := [8]uintptr{
-		0,         // RBX
-		0,         // RBP
-		0,         // R12 (unused)
-		selfPtr,   // R13 -> &KernelThread
-		0,         // R14
-		0,         // R15
-		0x202,     // RFLAGS (IF=1, mandatory bit 1 set)
-		enterAddr, // RIP -> kschedEnter
-	}
-	for i := 0; i < 8; i++ {
-		*(*uintptr)(unsafe.Pointer(rsp + uintptr(i)*8)) = words[i]
-	}
-	t.SavedRSP = rsp
-	t.State = uint32(KStateRunnable)
-
+	t := kschedSpawnInternal("ring3", ring3WrapperKT)
 	// Record the proc BEFORE the push so a wake on the target CPU
 	// can resolve the proc as soon as the kthread is dispatched.
 	kthreadHostedProc[t.Slot] = proc
-
-	target := kschedSpawnRRCounter
-	kschedSpawnRRCounter++
-	if numCoresOnline == 0 {
-		target = 0
-	} else {
-		target = target % numCoresOnline
-	}
-	kschedPush(t, target)
+	// Pin to CPU 0 so the BSP elf.go pump can dispatch via local
+	// pop without depending on AP idle hooks. Any subsequent
+	// processWait kschedTimedPark allows other CPUs to dispatch
+	// peer kthreads via their own waitForEvents idle hooks.
+	kschedPush(t, 0)
 	return t
 }
 

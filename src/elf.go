@@ -12,7 +12,10 @@
 
 package main
 
-import "unsafe"
+import (
+	"runtime"
+	"unsafe"
+)
 
 // ELF identification constants.
 const (
@@ -254,7 +257,11 @@ func elfLoad(name string, args string) bool {
 	kschedSpawnRing3Wrapper(proc)
 	for proc.Exited == 0 {
 		kschedLoopOnce()
-		gooosPause()
+		// Yield to TinyGo scheduler so other goroutines (e.g.
+		// the periodic netDiag at main.go ~407) get scheduled.
+		// Without this the pump is a tight kthread-only loop
+		// and any remaining goroutine starves on -smp 1.
+		runtime.Gosched()
 	}
 	serialPrintln("ELF: boot shell exited, halting")
 	for {

@@ -1341,7 +1341,10 @@ func tcpInit() {
 		return
 	}
 	serialPrintln("TCP: listener port=8080 (kernel echo)")
-	go tcpEchoServer()
+	// M4.2.d: was `go tcpEchoServer()`. Migrated to a gooos
+	// kernel thread; body uses kschedTimedPark.
+	kschedInit() // idempotent
+	kschedSpawn("tcpEcho", tcpEchoServer)
 }
 
 // tcpEchoServer is the kernel-internal echo service for port
@@ -1353,7 +1356,12 @@ func tcpEchoServer() {
 	for {
 		work := tcpEchoPass(buf[:])
 		if !work {
-			<-afterTicks(tcpEchoPollTicks)
+			// M4.2.d: kthread context — kschedTimedPark.
+			if kschedRunning[cpuID()] != nil {
+				kschedTimedPark(tcpEchoPollTicks)
+			} else {
+				<-afterTicks(tcpEchoPollTicks)
+			}
 		}
 	}
 }

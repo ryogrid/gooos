@@ -46,19 +46,24 @@ func netInit() {
 
 	arpSendGratuitous()
 
-	// Route C M4: netRxLoop stays as a TinyGo goroutine for now.
-	// M4.0 replaced gcLock with a gooos spinlock so cross-CPU
-	// allocation no longer parks via task.PauseLocked — that
-	// unblocks the migration. M4.2 (this site) lands after M4.1
-	// (ring3Wrapper) so the allocator is exercised from a real
-	// Route-C-shape scheduler first and regressions are easier
-	// to attribute.
-	go netRxLoop()
-	serialPrintln("NET: RX dispatch goroutine started")
-
-	go udpEchoServer()
-
+	// M4.2.{b,e}: net-service kthread spawns moved out of netInit
+	// to netSpawnServices (called from main() after kschedSmokeRun)
+	// so the M0 smoke test isn't perturbed by long-running kthreads
+	// already on CPU 0's queue.
 	tcpInit()
+}
+
+// netSpawnServices spawns the long-running net kthreads
+// (netRxLoop, udpEchoServer). Called from main() after the M0
+// smoke test (if any) but before bspBootDone.
+func netSpawnServices() {
+	if !e1000Found {
+		return
+	}
+	kschedInit() // idempotent
+	kschedSpawn("netRxLoop", netRxLoop)
+	serialPrintln("NET: RX dispatch kthread started")
+	kschedSpawn("udpEcho", udpEchoServer)
 }
 
 // netRxLoop drives the receive side. Simplest possible poller:
@@ -68,7 +73,15 @@ func netRxLoop() {
 	for {
 		drainRxRing()
 		statsInc(&netStats.NetRxLoopWakes) // counts iterations
-		runtime.Gosched()
+		// M4.2.e: kthread context — kschedYield instead of
+		// runtime.Gosched (H-01 hazard at task.Queue.Push).
+		// Goroutine fallback retained for any pre-Route-C caller
+		// (none currently — netInit spawns this as a kthread).
+		if kschedRunning[cpuID()] != nil {
+			kschedYield()
+		} else {
+			runtime.Gosched()
+		}
 	}
 }
 

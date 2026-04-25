@@ -13,12 +13,43 @@ package main
 
 import "unsafe"
 
+// kschedSpawnAt creates a new kernel thread on a specific CPU.
+// Used when round-robin placement is wrong (e.g., fsTask must be
+// on BSP/CPU 0 so the boot-time BSP elf-pump can dispatch it
+// without depending on AP idle hooks).
+func kschedSpawnAt(name string, entry func(), targetCPU uint32) *KernelThread {
+	t := kschedSpawnInternal(name, entry)
+	if numCoresOnline > 0 && targetCPU >= numCoresOnline {
+		targetCPU = 0
+	}
+	kschedPush(t, targetCPU)
+	return t
+}
+
 // kschedSpawn creates a new kernel thread running entry() and
 // enqueues it onto the round-robin target CPU. Returns a pointer
 // to the thread so the caller can join / park on it later.
 //
 // Panics if the kthread pool is exhausted.
 func kschedSpawn(name string, entry func()) *KernelThread {
+	t := kschedSpawnInternal(name, entry)
+	// Round-robin placement across online CPUs. kschedSpawnRRCounter
+	// is racey; kschedPush's queue lock linearises the push itself.
+	target := kschedSpawnRRCounter
+	kschedSpawnRRCounter++
+	if numCoresOnline == 0 {
+		target = 0
+	} else {
+		target = target % numCoresOnline
+	}
+	kschedPush(t, target)
+	return t
+}
+
+// kschedSpawnInternal allocates a kthread + builds initial switch
+// frame, but does not enqueue. Used by kschedSpawn (round-robin)
+// and kschedSpawnAt (target CPU).
+func kschedSpawnInternal(name string, entry func()) *KernelThread {
 	t := kthreadPoolAlloc()
 	if t == nil {
 		kthreadPoolExhaustedPanic()
@@ -39,43 +70,18 @@ func kschedSpawn(name string, entry func()) *KernelThread {
 	// %r13 as a *KernelThread and calls back into Go (kschedRunEntry)
 	// which does `t.Entry()` — that sidesteps any need for us to
 	// reverse-engineer TinyGo's func-value layout.
-	//
-	// Stack layout (low → high) that kschedSwitch will pop:
-	//   [RBX=0, RBP=0, R12=0, R13=*KernelThread, R14=0, R15=0,
-	//    RFLAGS=0x202 (IF=1), RIP=kschedEnter]
 	top := uintptr(unsafe.Pointer(&t.Stack.Top))
 	rsp := top - 8*8
-
 	enterAddr := kschedEnterAddr()
 	selfPtr := uintptr(unsafe.Pointer(t))
-	// Word writes, low-to-high.
 	words := [8]uintptr{
-		0,         // RBX
-		0,         // RBP
-		0,         // R12 (unused under this trampoline shape)
-		selfPtr,   // R13 -> &KernelThread
-		0,         // R14
-		0,         // R15
-		0x202,     // RFLAGS (IF=1, mandatory bit 1 set)
-		enterAddr, // RIP -> kschedEnter
+		0, 0, 0, selfPtr, 0, 0, 0x202, enterAddr,
 	}
 	for i := 0; i < 8; i++ {
 		*(*uintptr)(unsafe.Pointer(rsp + uintptr(i)*8)) = words[i]
 	}
-
 	t.SavedRSP = rsp
 	t.State = uint32(KStateRunnable)
-
-	// Round-robin placement across online CPUs. kschedSpawnRRCounter
-	// is racey; kschedPush's queue lock linearises the push itself.
-	target := kschedSpawnRRCounter
-	kschedSpawnRRCounter++
-	if numCoresOnline == 0 {
-		target = 0
-	} else {
-		target = target % numCoresOnline
-	}
-	kschedPush(t, target)
 	return t
 }
 

@@ -59,8 +59,12 @@ func kschedSmokeRun() {
 	kschedInit()
 	kschedSmokeThreadsActive = 2
 	kschedSmokeAllDone = 0
-	kschedSpawn("smokeA", kschedSmokeBodyA)
-	kschedSpawn("smokeB", kschedSmokeBodyB)
+	// Pin both smoke kthreads to CPU 0 so the BSP-driven kschedLoop
+	// below can dispatch them via local pop. Round-robin would
+	// scatter them across APs, and APs may not be reliably idling
+	// into waitForEvents at this early boot stage.
+	kschedSpawnAt("smokeA", kschedSmokeBodyA, 0)
+	kschedSpawnAt("smokeB", kschedSmokeBodyB, 0)
 	// Drive the scheduler from this context. Returns when both
 	// smoke threads have called kschedExit.
 	kschedLoop()

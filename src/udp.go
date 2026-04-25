@@ -1,9 +1,11 @@
 // src/udp.go -- User Datagram Protocol (RFC 768) over IPv4.
 //
 // Exposes a kernel-internal bind table (8 entries) so in-kernel
-// services can receive UDP traffic through a Go channel. The Phase 5
-// socket syscall API will layer on top of this; for now the only
-// consumer is `udpEchoServer`, a tiny built-in echo service on port 7.
+// services can receive UDP traffic through a bounded MPSC queue
+// (M4.2.b: udpDgramQueue, replacing chan UDPDatagram). The Phase 5
+// socket syscall API layers on top of this; the built-in
+// `udpEchoServer` (kthread per M4.2.b) is one consumer, socketFd
+// is the other.
 //
 // Checksums are computed over the pseudo-header + UDP header + data.
 // RFC 768 permits sending a zero checksum on IPv4 (disables validation
@@ -11,8 +13,6 @@
 // 0xFFFF as required.
 
 package main
-
-import "runtime"
 
 const (
 	udpHeaderSize = 8
@@ -34,10 +34,11 @@ type UDPDatagram struct {
 	Data    []byte
 }
 
-// UDPBinding associates a port with a receive channel.
+// UDPBinding associates a port with a receive queue (M4.2.b:
+// was chan UDPDatagram, now udpDgramQueue MPSC).
 type UDPBinding struct {
 	Port   uint16
-	Ch     chan UDPDatagram
+	Q      *udpDgramQueue
 	Active bool
 }
 
@@ -125,10 +126,10 @@ func udpChecksumVerify(srcIP, dstIP uint32, packet []byte) bool {
 	return computed == wire
 }
 
-// udpBind reserves `port` and returns a receive channel (cap=16) on
-// which incoming datagrams to that port arrive. Returns nil when the
-// port is taken or the table is full.
-func udpBind(port uint16) chan UDPDatagram {
+// udpBind reserves `port` and returns a fresh receive queue
+// (cap=udpDgramQueueCap=16) on which incoming datagrams arrive.
+// Returns nil when the port is taken or the table is full.
+func udpBind(port uint16) *udpDgramQueue {
 	flags := udpLock.Acquire()
 	defer udpLock.Release(flags)
 	for i := 0; i < udpMaxBinds; i++ {
@@ -140,21 +141,22 @@ func udpBind(port uint16) chan UDPDatagram {
 		if !udpBindings[i].Active {
 			udpBindings[i] = UDPBinding{
 				Port:   port,
-				Ch:     make(chan UDPDatagram, 16),
+				Q:      newUdpDgramQueue(),
 				Active: true,
 			}
-			return udpBindings[i].Ch
+			return udpBindings[i].Q
 		}
 	}
 	return nil
 }
 
-// udpBindWithChannel is the Phase-5 variant used by socketFd: the
-// caller supplies its own receive channel (so the same cap=16 channel
-// can move with the socket across bind/close). Returns false on port
-// collision or table exhaustion.
-func udpBindWithChannel(port uint16, ch chan UDPDatagram) bool {
-	if ch == nil {
+// udpBindWithQueue is the Phase-5 variant used by socketFd: the
+// caller supplies its own receive queue (so the same queue can
+// move with the socket across bind/close). Returns false on port
+// collision or table exhaustion. M4.2.b: was udpBindWithChannel
+// taking a chan UDPDatagram.
+func udpBindWithQueue(port uint16, q *udpDgramQueue) bool {
+	if q == nil {
 		return false
 	}
 	flags := udpLock.Acquire()
@@ -168,7 +170,7 @@ func udpBindWithChannel(port uint16, ch chan UDPDatagram) bool {
 		if !udpBindings[i].Active {
 			udpBindings[i] = UDPBinding{
 				Port:   port,
-				Ch:     ch,
+				Q:      q,
 				Active: true,
 			}
 			return true
@@ -184,18 +186,18 @@ func udpUnbind(port uint16) {
 	for i := 0; i < udpMaxBinds; i++ {
 		if udpBindings[i].Active && udpBindings[i].Port == port {
 			udpBindings[i].Active = false
-			udpBindings[i].Ch = nil
+			udpBindings[i].Q = nil
 		}
 	}
 }
 
-// udpLookupChannel returns the listener channel for `port`, or nil.
-func udpLookupChannel(port uint16) chan UDPDatagram {
+// udpLookupQueue returns the listener queue for `port`, or nil.
+func udpLookupQueue(port uint16) *udpDgramQueue {
 	flags := udpLock.Acquire()
 	defer udpLock.Release(flags)
 	for i := 0; i < udpMaxBinds; i++ {
 		if udpBindings[i].Active && udpBindings[i].Port == port {
-			return udpBindings[i].Ch
+			return udpBindings[i].Q
 		}
 	}
 	return nil
@@ -211,8 +213,8 @@ func udpHandle(hdr IPv4Header, inner []byte) {
 		statsInc(&netStats.ChecksumErr)
 		return
 	}
-	ch := udpLookupChannel(uh.DstPort)
-	if ch == nil {
+	q := udpLookupQueue(uh.DstPort)
+	if q == nil {
 		statsInc(&netStats.UdpPortUnreach)
 		return
 	}
@@ -222,12 +224,13 @@ func udpHandle(hdr IPv4Header, inner []byte) {
 	copy(cp, data)
 
 	// Non-blocking delivery: drop if the listener is back-pressured.
-	select {
-	case ch <- UDPDatagram{
+	// M4.2.b: queue.TryPush replaces the old `select { ch <- dg:
+	// default: drop }` semantics one-for-one.
+	if q.TryPush(UDPDatagram{
 		SrcIP: hdr.SrcIP, SrcPort: uh.SrcPort, DstPort: uh.DstPort, Data: cp,
-	}:
+	}) {
 		statsInc(&netStats.UdpRecv)
-	default:
+	} else {
 		statsInc(&netStats.RxDropped)
 	}
 }
@@ -309,17 +312,17 @@ func udpSendRaw(srcIP, dstIP uint32, srcPort, dstPort uint16, data []byte) bool 
 }
 
 // udpEchoServer binds port 7 and reflects every received datagram back
-// to the sender. Started as a goroutine from netInit.
+// to the sender. Started as a kthread from netInit (M4.2.b: was a
+// goroutine pre-Route-C).
 func udpEchoServer() {
-	ch := udpBind(7)
-	if ch == nil {
+	q := udpBind(7)
+	if q == nil {
 		serialPrintln("UDP echo: port 7 bind failed")
 		return
 	}
 	serialPrintln("UDP echo: listening on port 7")
 	for {
-		dg := <-ch
+		dg := q.Pop() // blocking; parks the kthread when empty
 		udpSend(dg.SrcIP, dg.SrcPort, dg.DstPort, dg.Data)
-		runtime.Gosched()
 	}
 }
