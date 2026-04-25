@@ -463,17 +463,20 @@ func processWait(proc *Process) uintptr {
 	// M4.1: when the caller is a kthread (post-ring3Wrapper migration),
 	// `<-proc.exitCh` is the H-01 hazard — Go chan recv from a kthread
 	// parks via TinyGo's task.PauseLocked which writes RSP into a
-	// stale task.Current() and corrupts the kthread context. Spin-
-	// yield instead: kschedYield re-enqueues self; when re-dispatched
-	// we re-check proc.Exited (set by processExit before exitCh send).
-	// Cross-CPU CR3+TSS re-install on re-dispatch is M4.1.b; for the
-	// common case where the parent kthread re-dispatches on the same
-	// CPU it was first dispatched on, the previously-installed CR3+TSS
-	// remain correct.
+	// stale task.Current() and corrupts the kthread context. Park on
+	// a 1-tick (10 ms) timer event instead of kschedYield: kschedYield
+	// re-enqueues self on the CURRENT CPU's local queue, which means
+	// kschedLoopOnce on this CPU just pops self again — a tight loop
+	// that monopolizes the CPU and starves peer-CPU dispatch of the
+	// child kthread. kschedTimedPark frees the CPU between checks so
+	// peer CPUs (where the child was round-robin-spawned) can drive
+	// their own waitForEvents -> kschedLoopOnce -> dispatch path.
+	// On wake (1 tick later), kthreadResumeRing3Ctx (M4.1.b) re-
+	// installs CR3+TSS for the re-dispatch CPU.
 	var exitCode uintptr
 	if kschedRunning[cpuID()] != nil {
 		for proc.Exited == 0 {
-			kschedYield()
+			kschedTimedPark(1)
 		}
 		exitCode = proc.ExitCode
 	} else {

@@ -460,7 +460,18 @@ func sysYieldHandler(frame *SyscallFrame) {
 func sysSleepHandler(frame *SyscallFrame) {
 	ticks := uint64(frame.RDI)
 	if ticks > 0 {
-		<-afterTicks(ticks)
+		// M4.3: from a kthread-hosted Ring-3 process, the syscall
+		// ISR runs on the kthread's own stack. `<-afterTicks(d)`
+		// is a Go chan recv that parks via TinyGo task primitives —
+		// the H-01 hazard. kschedTimedPark uses a stack-allocated
+		// KEvent and parks the kthread directly, waking on timer.
+		// Goroutine-context fallback retained for any pre-M4.1
+		// remnant caller (none currently).
+		if kschedRunning[cpuID()] != nil {
+			kschedTimedPark(ticks)
+		} else {
+			<-afterTicks(ticks)
+		}
 	}
 	frame.RAX = 0
 }

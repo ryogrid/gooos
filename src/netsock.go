@@ -590,7 +590,13 @@ func sysAcceptHandler(frame *SyscallFrame) {
 			frame.RAX = sysFail(fdErrBad)
 			return
 		}
-		<-afterTicks(5) // 50 ms poll
+		// M4.3: kthread-hosted callers must use kschedTimedPark
+		// to avoid the H-01 chan-recv hazard.
+		if kschedRunning[cpuID()] != nil {
+			kschedTimedPark(5)
+		} else {
+			<-afterTicks(5) // 50 ms poll
+		}
 	}
 
 	// Wrap the TCB in a fresh socketFd and allocate a new fd.
@@ -645,7 +651,12 @@ func sysConnectHandler(frame *SyscallFrame) {
 			frame.RAX = sysFail(fdErrBad)
 			return
 		}
-		<-afterTicks(5)
+		// M4.3: kthread-hosted callers must use kschedTimedPark.
+		if kschedRunning[cpuID()] != nil {
+			kschedTimedPark(5)
+		} else {
+			<-afterTicks(5)
+		}
 	}
 	sock.kind = sockKindTCPConn
 	sock.tcpTCB = tcb
@@ -781,7 +792,12 @@ func sysTcpRecvHandler(frame *SyscallFrame) {
 			frame.RAX = sysFail(fdErrBad)
 			return
 		}
-		<-afterTicks(5)
+		// M4.3: kthread-hosted callers must use kschedTimedPark.
+		if kschedRunning[cpuID()] != nil {
+			kschedTimedPark(5)
+		} else {
+			<-afterTicks(5)
+		}
 	}
 }
 

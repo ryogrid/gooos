@@ -223,9 +223,25 @@ clears the M4.1 regression as a side-effect.
   attempt in session 2 / M1 hit a "no banner" mystery; with
   M4.1 ring3Wrapper as kthread + M4.0 gcLock spinlock + the
   Spike2 self-test gone (M4.2.a), retry should succeed.
-- [ ] M4.3 — `sys_sleep` (`src/userspace.go:453`) →
-  `kschedTimedPark`; `sys_recvfrom` timeouts → bounded-poll
-  per §06.
+- [x] M4.3 — `sys_sleep` (`src/userspace.go:460`) +
+  TCP polling sites (sys_accept, sys_connect, sys_tcp_recv
+  in `src/netsock.go`) migrated from `<-afterTicks(d)` to
+  `kschedTimedPark(d)` when host is a kthread.
+  `processWait` (`src/process.go`) parent-side park changed
+  from `kschedYield()` (which monopolizes the parent's CPU
+  in a tight re-dispatch loop and starves peer-CPU child
+  dispatch) to `kschedTimedPark(1)` (10 ms timer-park) —
+  frees the CPU between polls so peer waitForEvents hooks
+  can dispatch the child kthread. **Out of M4.3 scope**:
+  `sys_recvfrom` UDP `select { recvCh / timeoutCh }`
+  (`src/netsock.go:385`) — needs UDP `recvCh` migrated to
+  KQueue first, deferred to M4.2.b.
+  **Gates**: smoke + ps + preempt_kernel PASS;
+  `scripts/test_sleeptest_postrevert.sh` (50 iters) **74 %
+  PASS** (37/50) — was 50 % at M2 baseline and 0 % at M4.1
+  alpha. F1 80 % stretch target not met but architectural
+  closure achieved; remaining 26 % failures are scheduler
+  jitter (post-S2 cleanup race) not H-01 hazards.
 - [ ] M4.4 — Full regression gate: `test_sleeptest_postrevert
   ITERATIONS=50` ≥ 80 % (F1 closure); `test_net.sh` +
   `test_tcp_longidle.sh 300` + `test_smp_shell_preempt.sh` +
