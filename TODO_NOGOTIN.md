@@ -81,27 +81,27 @@ the dependency explicit.
   networking reaches shell prompt (was hanging at M3.3 when
   netRxLoop was attempted as a kthread — that was the symptom
   M4.0 fixes).
-- [ ] M4.1 — `ring3Wrapper` kernel-thread rewrite. **Session-4
-  attempt landed but caused a non-deterministic boot panic
-  (`internal/task.PauseLocked → task.Current() = nil`) in the
-  TinyGo chan/Mutex path even on plain `-smp 4` boots, so the
-  commit was reverted via `git revert b00f2d1` (revert SHA
-  `4ada612`). Hypothesis for next attempt: the panic is tied
-  to adding a `KEvent` field to `Process` (struct-layout shift
-  may have perturbed something in the concurrent boot
-  goroutine schedule), or to the closure-spawned
-  `kschedSpawnProc` invocation reaching an AP whose
-  `currentTasks[cpu]` slot is still nil. Re-attempt strategy:
-  (a) keep `Process` shape unchanged — store `*KEvent` in a
-  parallel `kthreadByPID[pid] = *KernelThread` table or in the
-  hosting `KernelThread.WakeLink` slot, not as a Process
-  field; (b) instead of `kschedSpawnProc` with a closure entry,
-  use a Go top-level `ring3WrapperKT` that reads the proc
-  pointer from a side table indexed by kthread slot. Original
-  scope still applies: `kschedSwitchPostCR3` hook in
-  `kschedLoopOnce` writing CR3 + TSS.RSP0 when `t.Proc != nil`;
-  `processExit` calling `kschedExit` instead of `taskPause`;
-  `gInfoByTask` deletion deferred to M5.
+- [ ] M4.1 — `ring3Wrapper` kernel-thread rewrite. **Two
+  session attempts; both reverted.** Attempt 1 (commit
+  `b00f2d1`, reverted in `4ada612`) added an `ExitEv KEvent`
+  field to `Process` and used a closure entry for
+  `kschedSpawnProc`; produced non-deterministic
+  `task.PauseLocked → task.Current() = nil` panics. Attempt 2
+  (this session, side-table strategy with pristine `Process`
+  struct + top-level `ring3WrapperKT` entry, not committed)
+  produced a different regression: boot hangs in
+  `fsSendRead("sh.elf")` inside `setupUserspace` — the
+  spin-pumped `KEvent.Wait` never returns. Bisection isolated
+  the trigger to adding the `kschedInstallRing3Ctx(t)` *call*
+  inside `kschedLoopOnce`/`kschedLoop` (even when the function
+  body is no-op). Adding only the new `src/kthread_ring3.go`
+  file (with no callers from existing paths) does NOT break
+  boot. Next attempt should move the CR3 + TSS.RSP0 hook OUT
+  of the dispatch loop — install both at the top of
+  `ring3WrapperKT` after kschedSwitch has already put us on
+  the kthread's own stack — to avoid perturbing the existing
+  scheduler-loop compiled shape. See `no_goroutine_kernel_design/12_implementation_notes.md`
+  §M4.1 for the bisection detail and the attempt-3 plan.
 - [ ] M4.2 — `netRxLoop`, `udpEchoServer`, `tcpRTOScannerLoop`, `tcpEchoServer` + per-connection workers migrated to `kschedSpawn`. Unblocked by M4.0.
 - [ ] M4.3 — `sys_sleep` → `kschedTimedPark`; `sys_recvfrom` timeouts → bounded-poll; `afterTicks` channel shim deleted; `ring3StackPoolCh` replaced with `KQueue[int32]` or bitmap
 - [ ] M4.4 — Gate: `test_sleeptest_postrevert.sh ITERATIONS=50` ≥ 80 % (F1 closure); `test_net.sh` + `test_tcp_longidle.sh 300` + `test_smp_shell_preempt.sh` + `test_smp_release_gate.sh` + `test_smp_basic.sh` + `test_ps.sh` all PASS

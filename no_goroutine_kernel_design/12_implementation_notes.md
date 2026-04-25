@@ -28,7 +28,7 @@ Other commits intermixed in the range:
   ordering finding.
 - `6b2cac9` — repo hygiene (root `TODO_*.md` → `pasttodos/`).
 
-### M4.1 attempt-1 root-cause hypotheses
+### M4.1 attempt-1 root-cause hypotheses (reverted in `4ada612`)
 
 The attempt added an `ExitEv KEvent` field to the `Process`
 struct AND used a closure (`func() { ring3Wrapper(proc) }`) as
@@ -45,25 +45,80 @@ boot panic:
    chan/Mutex code path (the panic site is exactly inside
    `internal/task.PauseLocked` reading `task.Current()`).
 
-The re-attempt strategy avoids both: keep `Process` shape
-unchanged and use a top-level entry function that reads `proc`
-from a slot-indexed side table.
+### M4.1 attempt-2 (side-table strategy) — also reverted
+
+A second attempt was made in this session with a side-table
+strategy (`kthreadHostedProc[kthreadPoolCap]*Process` indexed by
+kthread `Slot`) and a top-level entry (`ring3WrapperKT`) instead
+of a closure. The `Process` struct stayed pristine.
+
+This attempt produced a **different** boot regression: instead
+of a `task.Current() = nil` panic, boot reaches `Scheduler:
+TinyGo goroutines active` and then **hangs in
+`fsSendRead("sh.elf")`** inside `setupUserspace` →
+`elfLoad` — `elfLoad`'s `ELF: loading sh.elf` print never
+fires. The periodic netDiag goroutine continues firing (so
+TinyGo's scheduler is still alive), but the spin-pumped
+`KEvent.Wait` in `fsSendRead` never returns.
+
+Bisection showed:
+
+- Adding only the new file `src/kthread_ring3.go` (with all the
+  symbols defined but nothing called from existing paths) →
+  boot reaches shell.
+- Adding the `kschedInstallRing3Ctx(t)` call inside
+  `kschedLoopOnce` and `kschedLoop` (even after no-op'ing the
+  hook body to `_ = t`) → boot hangs in fsSendRead.
+
+This rules out the hook's BODY as the cause and points at the
+scheduler-loop changes themselves (the call insertion, the
+re-arrangement of the dispatch sequence) as the trigger. The
+exact mechanism is not yet understood — kschedLoopOnce/kschedLoop
+are `//go:nosplit`, and `kschedInstallRing3Ctx` is also nosplit,
+so a stack-grow split shouldn't be the issue. Possibilities for
+the next investigation: a TinyGo function-call-prologue
+allocation, a register-clobber from the call disrupting the
+dispatch sequence, or a re-ordering effect that races with
+fsTask's wake.
+
+Both M4.1 attempts have been reverted; HEAD `cbad225` (M4.0 +
+M4.2.a) remains the working ceiling.
 
 ## Remaining work
 
 Listed in approximate execution order. Each item maps to one
 or more `TODO_NOGOTIN.md` checkboxes.
 
-### M4.1 re-attempt — ring3Wrapper as kernel thread (side-table)
+### M4.1 third attempt — ring3Wrapper as kernel thread
 
-The next step. Adds `kthreadHostedProc[kthreadPoolCap]*Process`
-side table indexed by kthread `Slot`. Spawn helper
-`kschedSpawnRing3Wrapper(proc)` records the entry; top-level
-`ring3WrapperKT()` reads it; dispatch hook
-`kschedInstallRing3Ctx(t)` writes CR3 + TSS.RSP0 from
-`kthreadHostedProc[t.Slot]`. `Process` struct stays untouched;
-`exitCh` channel notification path stays as-is (parent is still
-a goroutine in this milestone).
+After two reverts (the closure-spawn attempt and the
+side-table attempt — see §M4.1 attempt notes above), the next
+investigation needs to identify why simply *inserting a
+function call* into `kschedLoopOnce` + `kschedLoop` breaks
+fsSendRead's spin-pump even when the called function is no-op.
+
+Investigation candidates for the next attempt:
+
+1. Implement `kschedInstallRing3Ctx` as a `//go:noinline`
+   global asm-style stub or as a literal inline (no function
+   call) so the dispatch loop's compiled shape stays identical
+   to the working M4.0 baseline.
+2. Move the dispatch hook OUT of `kschedLoopOnce` entirely:
+   add the CR3 + TSS.RSP0 write at the top of `ring3WrapperKT`
+   instead. The kthread is already on its own stack at that
+   point (kschedSwitch returned), so CR3 swap is safe (kernel
+   half identity-mapped). TSS.RSP0 still gets installed before
+   any Ring 3 entry.
+3. Consider whether the `kschedSpawnRing3Wrapper` round-robin
+   counter pushes ring3Wrapper to a CPU where fsTask's
+   subsequent dispatch path conflicts; pinning ring3Wrapper to
+   a specific AP at spawn might isolate the issue.
+
+When attempt 3 succeeds: lands `kthreadHostedProc[
+kthreadPoolCap]*Process` side table, the spawn helper, the
+top-level entry function, and the modified `ring3Wrapper` body
++ `processExit` branch — same shape as attempt 2 minus the
+in-loop dispatch hook.
 
 ### M4.2.b — `udpEchoServer` migration
 
