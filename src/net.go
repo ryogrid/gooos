@@ -50,7 +50,14 @@ func netInit() {
 	// to netSpawnServices (called from main() after kschedSmokeRun)
 	// so the M0 smoke test isn't perturbed by long-running kthreads
 	// already on CPU 0's queue.
-	tcpInit()
+	//
+	// runMinimalKthreads (preempt_config.go) — when true, skip
+	// tcpInit so tcpRTOScanner + tcpEchoServer kthreads are not
+	// spawned. Used to bisect the post-Route-C `make run-smp`
+	// keyboard race.
+	if !runMinimalKthreads {
+		tcpInit()
+	}
 }
 
 // netSpawnServices spawns the long-running net kthreads

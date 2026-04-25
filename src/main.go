@@ -445,10 +445,12 @@ func main() {
 	// Route C M4.2.{b,e}: spawn net-service kthreads (netRxLoop,
 	// udpEchoServer) here so they're after the smoke test and
 	// before bspBootDone.
-	netSpawnServices()
-	if e1000Found {
-		// M4.2.g: periodic netDiag, was inline `go func()`.
-		kschedSpawn("netDiagLoop", netDiagLoop)
+	if !runMinimalKthreads {
+		netSpawnServices()
+		if e1000Found {
+			// M4.2.g: periodic netDiag, was inline `go func()`.
+			kschedSpawn("netDiagLoop", netDiagLoop)
+		}
 	}
 	runtime.Gosched()
 

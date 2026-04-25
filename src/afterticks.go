@@ -88,9 +88,18 @@ var (
 // M4.2.f: now a kthread (was `go timerDispatcher()`).
 // Idempotent kschedInit ensures we work whether called before
 // or after main()'s explicit kschedInit.
+//
+// BISECTION: pinned to CPU 0 (BSP) instead of round-robin
+// kschedSpawn. The boot shell ring3WrapperKT is also pinned to
+// CPU 0; with both on the same CPU, the timerDispatcher →
+// kschedWake(shell) hand-off becomes a same-CPU push (no IPI,
+// no cross-CPU SavedRSP visibility window). If the
+// `make run-smp` keyboard race goes away with this pin, the
+// race surface narrows to the cross-CPU kschedPush/kschedSwitch
+// hand-off when waker and target live on different CPUs.
 func afterTicksInit() {
 	kschedInit()
-	kschedSpawn("timerDispatcher", timerDispatcher)
+	kschedSpawnAt("timerDispatcher", timerDispatcher, 0)
 }
 
 // timerDispatcher is the single long-lived goroutine that owns

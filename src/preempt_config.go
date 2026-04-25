@@ -77,3 +77,33 @@ const runSleepAudit = false
 // boot path. scripts/test_kthread_smoke.sh flips this via sed +
 // rebuild.
 const runKthreadSmoke = false
+
+// runMinimalKthreads, when true, skips spawning every non-essential
+// kthread so we can bisect the post-Route-C `make run-smp` keyboard
+// race (see no_goroutine_kernel_design/12_implementation_notes.md
+// § Open issues + risks). With this flag set, only these kthreads
+// are spawned at boot:
+//   - timerDispatcher       (afterticks.go — required for kschedTimedPark)
+//   - fsTask                (CPU-0 pinned — required for in-mem FS)
+//   - ring3WrapperKT        (the boot shell on CPU 0)
+//   - smpBasicProbe         (gated by runSMPBasicProbe; orthogonal)
+//   - kpHog/kpMarker        (gated by runPreemptProbe; orthogonal)
+// Skipped (gated below by `if !runMinimalKthreads { ... }`):
+//   - netRxLoop             (e1000 RX dispatch)
+//   - udpEchoServer         (UDP port 7 echo)
+//   - tcpRTOScanner         (TCP retransmit scanner)
+//   - tcpEchoServer         (TCP port 8080 echo)
+//   - netDiagLoop           (periodic netDiag dump)
+// With this set true the requested workload still works:
+// keyboard input (PS/2 IRQ1 + ring), serial output (COM1),
+// in-memory FS (fsTask), GC (TinyGo runtime), smpprobe (gated
+// elsewhere), `ls` (uses FS only), and multicore preemption
+// (LAPIC timer + handlePreemptIPI are independent of these
+// kthreads). Networking, including ICMP and TCP/UDP echo
+// servers, is silently disabled.
+//
+// If the SMP keyboard race disappears with this flag set, the
+// race is in one of the disabled net kthreads' interaction with
+// the scheduler. If the race persists, it is in the timerDispatcher
+// / fsTask / ring3Wrapper / preempt-IPI core loop.
+const runMinimalKthreads = true
