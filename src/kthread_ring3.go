@@ -42,10 +42,27 @@ func kschedSpawnRing3Wrapper(proc *Process) *KernelThread {
 	// Record the proc BEFORE the push so a wake on the target CPU
 	// can resolve the proc as soon as the kthread is dispatched.
 	kthreadHostedProc[t.Slot] = proc
-	// Pin to CPU 0 so the BSP elf.go pump can dispatch via local
-	// pop without depending on AP idle hooks. Any subsequent
-	// processWait kschedTimedPark allows other CPUs to dispatch
-	// peer kthreads via their own waitForEvents idle hooks.
+	// Round-robin placement across online CPUs so exec'd children
+	// don't all queue behind the boot shell on CPU 0. The boot
+	// shell itself uses kschedSpawnRing3WrapperOnBSP to pin to
+	// CPU 0 (where the BSP elf.go pump dispatches it).
+	target := kschedSpawnRRCounter
+	kschedSpawnRRCounter++
+	if numCoresOnline == 0 {
+		target = 0
+	} else {
+		target = target % numCoresOnline
+	}
+	kschedPush(t, target)
+	return t
+}
+
+// kschedSpawnRing3WrapperOnBSP pins the kthread to CPU 0. Used for
+// the boot shell so the BSP elf.go pump's kschedLoopOnce(0) can
+// dispatch it via local pop without depending on AP idle hooks.
+func kschedSpawnRing3WrapperOnBSP(proc *Process) *KernelThread {
+	t := kschedSpawnInternal("ring3", ring3WrapperKT)
+	kthreadHostedProc[t.Slot] = proc
 	kschedPush(t, 0)
 	return t
 }
@@ -64,6 +81,9 @@ func kschedSpawnRing3Wrapper(proc *Process) *KernelThread {
 //go:nosplit
 func kthreadResumeRing3Ctx() {
 	cpu := cpuID()
+	if cpu >= maxCPUs {
+		return
+	}
 	t := kschedRunning[cpu]
 	if t == nil || t.Slot < 0 || int(t.Slot) >= kthreadPoolCap {
 		return

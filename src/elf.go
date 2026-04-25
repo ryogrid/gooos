@@ -254,13 +254,14 @@ func elfLoad(name string, args string) bool {
 	// at the right time. Pump kschedLoopOnce while polling proc.Exited
 	// (set by processExit before proc.exitCh send) so the BSP itself
 	// can dispatch the shell kthread when no AP is available.
-	kschedSpawnRing3Wrapper(proc)
+	kschedSpawnRing3WrapperOnBSP(proc)
 	for proc.Exited == 0 {
 		kschedLoopOnce()
-		// Yield to TinyGo scheduler so other goroutines (e.g.
-		// the periodic netDiag at main.go ~407) get scheduled.
-		// Without this the pump is a tight kthread-only loop
-		// and any remaining goroutine starves on -smp 1.
+		// Under scheduler=cores: yield to TinyGo scheduler so
+		// remaining goroutines (e.g. periodic netDiag) get
+		// scheduling time. Under scheduler=none: this is a no-op
+		// (no other goroutines); the loop becomes a tight
+		// kthread-dispatch pump for CPU 0.
 		runtime.Gosched()
 	}
 	serialPrintln("ELF: boot shell exited, halting")

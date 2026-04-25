@@ -183,34 +183,37 @@ const userStackBase = uintptr(0x7FFF0000)
 
 // currentProc returns the Process for the currently running
 // goroutine OR kthread, or nil if neither is hosting a Ring-3
-// process. Protected by procLock for the goroutine path.
+// process.
 //
-// M4.1.c: when called from a kthread context that has migrated
-// CPUs since first dispatch, taskCurrent() returns a different
-// stale TinyGo task pointer than what ring3WrapperKT stored under
-// in setCurrentProc — so procByTask lookup misses. Fall back to
-// procByPoolSlot[perCPUBlocks[cpuID()].CurrentPoolIdx], which
-// kthreadResumeRing3Ctx (M4.1.b) keeps current on every
-// kthread re-dispatch.
+// Primary path (M5-fix): procByPoolSlot[perCPUBlocks[cpu].CurrentPoolIdx]
+// — the per-CPU pool-slot index that ring3WrapperKT and
+// kthreadResumeRing3Ctx keep current on every dispatch. This is
+// always correct under scheduler=none where internal/task.Current()
+// returns a single global &mainTask shared by all kthreads (so
+// procByTask[mainTask] is overwritten by every setCurrentProc and
+// no longer disambiguates which process is running on THIS CPU).
+//
+// Fallback (legacy goroutine context): procByTask[taskCurrent()]
+// for any caller that's still a TinyGo goroutine and was registered
+// via setCurrentProc with a unique task. With M4.2.b-g + M5.2,
+// this fallback path has no live caller in the kernel; retained
+// in case a future addition reintroduces a goroutine-hosted
+// Ring-3 process.
 func currentProc() *Process {
+	cpu := cpuID()
+	if cpu < maxCPUs {
+		idx := perCPUBlocks[cpu].CurrentPoolIdx
+		if idx >= 0 && int(idx) < maxRing3Procs {
+			if p := procByPoolSlot[idx]; p != nil {
+				return p
+			}
+		}
+	}
 	flags := procLock.Acquire()
 	ensureProcMaps()
 	p := procByTask[taskCurrent()]
 	procLock.Release(flags)
-	if p != nil {
-		return p
-	}
-	// Kthread fallback: read pool slot installed by
-	// kthreadResumeRing3Ctx and resolve via procByPoolSlot.
-	cpu := cpuID()
-	if cpu >= maxCPUs {
-		return nil
-	}
-	idx := perCPUBlocks[cpu].CurrentPoolIdx
-	if idx < 0 || int(idx) >= maxRing3Procs {
-		return nil
-	}
-	return procByPoolSlot[idx]
+	return p
 }
 
 // setCurrentProc records proc as the Process for the current

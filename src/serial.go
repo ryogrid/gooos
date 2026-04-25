@@ -64,16 +64,28 @@ func serialWriteBytesUnlocked(b []byte) {
 	}
 }
 
+// serialLock serializes serialPrint{,ln,Bytes} writes across CPUs
+// so concurrent kthreads on different cores don't interleave their
+// output mid-line. M5-fix-1: was missing in the kthread-only model
+// (pre-M4.1, TinyGo's scheduler held a print lock; that path is
+// gone). Acquire/release wraps full lines, not individual bytes,
+// so transmit FIFO drain happens with IF=1 (panic-friendly).
+var serialLock Spinlock
+
 // serialPrint sends a string to COM1.
 func serialPrint(s string) {
+	flags := serialLock.Acquire()
 	serialWriteStringUnlocked(s)
+	serialLock.Release(flags)
 }
 
 // serialPrintln sends a string followed by a newline to COM1.
 func serialPrintln(s string) {
+	flags := serialLock.Acquire()
 	serialWriteStringUnlocked(s)
 	serialPutChar('\r')
 	serialPutChar('\n')
+	serialLock.Release(flags)
 }
 
 // serialPrintBytes is the allocation-free sibling of serialPrint.
@@ -82,5 +94,7 @@ func serialPrintln(s string) {
 //
 //go:nosplit
 func serialPrintBytes(b []byte) {
+	flags := serialLock.Acquire()
 	serialWriteBytesUnlocked(b)
+	serialLock.Release(flags)
 }
