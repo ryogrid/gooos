@@ -120,12 +120,20 @@ type consoleStdout struct{ toVGA bool }
 func (c consoleStdout) Read([]byte) (int, fdErr) { return 0, fdErrBad }
 
 func (c consoleStdout) Write(buf []byte) (int, fdErr) {
-	for i := 0; i < len(buf); i++ {
-		if c.toVGA {
+	// M5-fix: hold the serial lock for the whole buffer so a
+	// concurrent print on another CPU doesn't interleave bytes
+	// mid-line. VGA writes stay outside the serial lock (they
+	// have their own mechanism).
+	if c.toVGA {
+		for i := 0; i < len(buf); i++ {
 			vgaConsolePutChar(buf[i])
 		}
+	}
+	flags := serialLock.Acquire()
+	for i := 0; i < len(buf); i++ {
 		serialPutChar(buf[i])
 	}
+	serialLock.Release(flags)
 	return len(buf), fdErrOK
 }
 
