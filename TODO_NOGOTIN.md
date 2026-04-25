@@ -328,7 +328,19 @@ After all of the above, M5 can land cleanly:
   `no_goroutine_kernel_design/12_implementation_notes.md`
   § Open issues + risks. Gates re-run after fixes: smoke +
   ps + net + preempt_kernel (markers=5) PASS.
-- [ ] P2 — README.md §11 diff applied; `impldoc/` + `current_impl_*/` sweep for stale refs; `current_impl_<today>/` successor doc created
+- [x] P2 — README.md header rewritten with Route C
+  description + a banner pointing to §12 + §13 for current
+  state; full row-by-row table refresh deferred (the rows
+  describing pre-Route C state are extensive and reading
+  them as legacy context is sufficient for now). NEW
+  `current_impl_2026_04_26/route_c_kernel.md` successor doc
+  describing the as-built Route C kernel: kthread scheduler
+  + udpDgramQueue + KEvent + timer wheel + cross-CPU IPI wake
+  + scheduler=none build flow + gates table + commit range +
+  known follow-ups. `impldoc/` sweep deferred (the impldoc
+  tree is large and most files describe historical phases
+  correctly — the `current_impl_2026_04_26/` doc supersedes
+  for the current state).
 - [ ] P3 — Final sweep: `grep -rIn 'TODO\|FIXME\|XXX\|HACK' src/ user/ scripts/` clean for new-in-this-cycle; full M5 gate suite PASS; `make -C user all` clean
 
 ## Deferred

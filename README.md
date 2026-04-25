@@ -1,6 +1,17 @@
 # gooos
 
-An experimental x86_64 operating system written in **Go (TinyGo) + GNU assembly**. The kernel runs on **TinyGo's native goroutine runtime** (`scheduler=cores`, `gc=conservative`) with live multi-core work-stealing — service loops are plain `go func()` goroutines, IPC is Go's built-in `chan`, and Ring 3 processes are goroutines that `iretq` into userspace. Assembly is used only where the CPU demands it.
+An experimental x86_64 operating system written in **Go (TinyGo) + GNU assembly**. The kernel runs on a **custom kernel-thread scheduler under TinyGo `scheduler=none`** (`gc=conservative`) — service loops, IPC consumers, and every Ring-3 process host are gooos kernel threads (`kschedSpawn`); IPC is via the gooos `udpDgramQueue` / `fsReqQueue` MPSC primitives + the single-shot `KEvent`; no Go `chan` / `select` / `go` keyword in `src/*.go` (M5.2 invariant). Cross-CPU dispatch via per-CPU FIFO queues + work-stealing + an LAPIC wake IPI on remote-`kschedPush`. Assembly is used only where the CPU demands it.
+
+> **Status note (2026-04-26):** the README progress table below
+> still describes the pre-Route C state in many rows (TinyGo
+> goroutines, `scheduler=cores`, `gooosOnResume`, etc.). The
+> as-built state of the kernel post-M5.2 + the post-M5 P1
+> reviewer pass is documented in
+> `no_goroutine_kernel_design/12_implementation_notes.md` and
+> `no_goroutine_kernel_design/13_post_m5_completion.md`. A row-
+> by-row README refresh is the P2 follow-up; until that lands,
+> any row that mentions "TinyGo goroutines" or
+> "`scheduler=cores`" should be read as legacy context.
 
 ![gooos mascot](gooos_mascot2.png)
 
