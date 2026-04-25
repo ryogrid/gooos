@@ -61,6 +61,10 @@ func (e *KEvent) Wait() {
 		// Switch to the bootstrap context. When resumed, re-check
 		// the flag under the lock (classic re-check-then-return).
 		kschedSwitch(&kschedBootstrap[cpu], me)
+		// Resumed (possibly on a different CPU). Re-install
+		// CR3+TSS for Ring-3-hosting kthreads (M4.1.b). No-op
+		// for fsTask and other non-host kthreads.
+		kthreadResumeRing3Ctx()
 		// Loop back; on resume me.WakeLink has been cleared by
 		// Signal's snapshot-and-wake path.
 	}

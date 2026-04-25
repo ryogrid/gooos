@@ -142,6 +142,11 @@ func kschedPark(lock *Spinlock) {
 		spinlockRelease(&lock.locked)
 	}
 	kschedSwitch(&kschedBootstrap[cpu], t)
+	// Resumed (possibly on a different CPU). Re-install CR3+TSS
+	// for the calling Ring-3-hosting kthread (no-op otherwise).
+	// Must run BEFORE any further code that could trap to Ring 0
+	// expecting valid TSS.RSP0 / CR3 (e.g., subsequent syscall).
+	kthreadResumeRing3Ctx()
 	// On resume: ParkLock is stale; clear it. Primitives that need
 	// a re-acquired lock do so themselves (§03 condvar pattern).
 	t.ParkLock = nil

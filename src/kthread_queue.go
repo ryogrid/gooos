@@ -73,6 +73,9 @@ func (q *fsReqQueue) Push(v *fsRequest) {
 		me.ParkLock = &q.lock
 		q.lock.Release(flags)
 		kschedSwitch(&kschedBootstrap[cpu], me)
+		// Resumed (possibly on a different CPU). Re-install
+		// CR3+TSS for Ring-3-hosting kthreads (M4.1.b).
+		kthreadResumeRing3Ctx()
 		// Loop and re-check on resume.
 	}
 }
@@ -128,6 +131,10 @@ func (q *fsReqQueue) Pop() *fsRequest {
 		me.ParkLock = &q.lock
 		q.lock.Release(flags)
 		kschedSwitch(&kschedBootstrap[cpu], me)
+		// Resumed (possibly on a different CPU). Re-install
+		// CR3+TSS for Ring-3-hosting kthreads (M4.1.b). For
+		// fsTask (the singleton consumer) this is a no-op.
+		kthreadResumeRing3Ctx()
 	}
 }
 

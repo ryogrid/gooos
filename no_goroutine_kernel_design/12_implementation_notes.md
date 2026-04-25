@@ -21,7 +21,8 @@ Branch: `smp-no-goroutine-in-kernel`. Design base commit:
 | **M4.0** — gooos spinlock for `gcLock` | **Landed** | `bdfb06b` | Allocator path now cross-CPU safe without parking via `task.PauseLocked`; smoke PASS; `-smp 4` boot reaches shell |
 | **M4.1** — `ring3Wrapper` as kernel thread (attempt 1) | **Reverted** | `b00f2d1` (commit) → `4ada612` (revert) | Boot reached shell once but reproducibly panicked at `internal/task.PauseLocked → task.Current()=nil` after some boots |
 | **M4.2.a** — Delete Spike2 + afterTicks self-tests | **Landed** | `cbad225` | Removes 2 of the original 12 boot-time `go ` sites; `-smp 4` boot stable |
-| **M4.1** — `ring3Wrapper` as kernel thread (attempt 3 alpha) | **Landed** | (pending — this commit) | Boot reaches shell prompt cleanly; `test_ps.sh` PASS (header=1 row=1) proves `sys_exec → processWait → processExit` round-trip works with kthread-hosted shell. Dispatch-loop unchanged. sleeptest regresses to 0 % until M4.3 fixes `sys_sleep` chan-recv hazard. |
+| **M4.1** — `ring3Wrapper` as kernel thread (attempt 3 alpha) | **Landed** | `f6c65b8` | Boot reaches shell prompt cleanly; `test_ps.sh` PASS (header=1 row=1) proves `sys_exec → processWait → processExit` round-trip works with kthread-hosted shell. Dispatch-loop unchanged. sleeptest regresses to 0 % until M4.3 fixes `sys_sleep` chan-recv hazard. |
+| **M4.1.b** — Cross-CPU CR3+TSS re-install on kthread re-dispatch | **Landed** | (pending — this commit) | New `kthreadResumeRing3Ctx()` hooked into every post-`kschedSwitch` resume site (kschedYield, kschedPark, KEvent.Wait, fsReqQueue.Push/Pop). Dispatch loop still untouched. Preempt-IPI rewiring for kthread Ring 3 deferred to M4.1.c. Smoke + preempt + ps PASS. |
 
 Other commits intermixed in the range:
 - `cdc033e`, `3ca2cdb`, `5901490`, `23fdb3d` — session-stop notes

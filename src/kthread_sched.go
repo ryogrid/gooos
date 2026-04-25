@@ -267,6 +267,12 @@ func kschedLoopOnce() {
 // loop. Callable from a running kernel thread; returns when the
 // thread is scheduled again.
 //
+// On resume (post-kschedSwitch), kthreadResumeRing3Ctx re-installs
+// CR3 + TSS.RSP0 + per-CPU pool slot. This handles the cross-CPU
+// case where a kthread parks on one CPU and resumes on another
+// (work-stealing or wake-on-different-CPU). For Ring-3-hosting
+// kthreads only — non-host kthreads (fsTask etc.) get a no-op.
+//
 //go:nosplit
 func kschedYield() {
 	cpu := cpuID()
@@ -278,6 +284,8 @@ func kschedYield() {
 	// bootstrap context (= kschedLoop).
 	kschedPush(t, cpu)
 	kschedSwitch(&kschedBootstrap[cpu], t)
+	// Resumed (possibly on a different CPU) — re-install CR3+TSS.
+	kthreadResumeRing3Ctx()
 }
 
 // ---- Asm-side linkage ----

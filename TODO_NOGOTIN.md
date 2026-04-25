@@ -111,6 +111,28 @@ the dependency explicit.
   with kthread-hosted shell). `test_sleeptest_postrevert.sh`
   regresses to 0 % (hits the deferred sys_sleep hazard);
   expected to recover at M4.3.
+- [x] M4.1.b — Cross-CPU CR3+TSS re-install on kthread re-dispatch.
+  New `kthreadResumeRing3Ctx()` in `src/kthread_ring3.go`:
+  reads `kschedRunning[cpuID()]`, looks up
+  `kthreadHostedProc[t.Slot]`, writes CR3 + TSS.RSP0 +
+  `perCPUBlocks[cpu].CurrentPoolIdx`. No-op for non-Ring-3
+  kthreads (fsTask). Hooked in after every park-then-resume
+  `kschedSwitch(&kschedBootstrap[cpu], me)` site:
+  `kschedYield` (`src/kthread_sched.go`), `kschedPark`
+  (`src/kthread_lifecycle.go`), `KEvent.Wait`
+  (`src/kthread_event.go`), `fsReqQueue.Push`/`Pop`
+  (`src/kthread_queue.go`). The dispatch loop
+  (`kschedLoopOnce`/`kschedLoop`) is still NOT modified —
+  the per-resume install lives in caller code so the
+  attempt-2 compiler-effect risk is avoided. **Out of M4.1.b
+  scope** (deferred to M4.1.c): preempt-IPI rewiring for
+  kthread Ring 3 (`handleLAPICTimer` / `handlePreemptIPI`
+  currently rewrite the iretq frame for goroutine preempt
+  only; involuntary preempt of a kthread Ring 3 is silently
+  ignored — voluntary yield + syscall-driven re-scheduling
+  still works). **Gates**: `make build` clean;
+  `scripts/test_kthread_smoke.sh` PASS; `scripts/test_preempt_kernel.sh`
+  PASS; `scripts/test_ps.sh` PASS.
 - [ ] M4.2 — `netRxLoop`, `udpEchoServer`, `tcpRTOScannerLoop`, `tcpEchoServer` + per-connection workers migrated to `kschedSpawn`. Unblocked by M4.0.
 - [ ] M4.3 — `sys_sleep` → `kschedTimedPark`; `sys_recvfrom` timeouts → bounded-poll; `afterTicks` channel shim deleted; `ring3StackPoolCh` replaced with `KQueue[int32]` or bitmap
 - [ ] M4.4 — Gate: `test_sleeptest_postrevert.sh ITERATIONS=50` ≥ 80 % (F1 closure); `test_net.sh` + `test_tcp_longidle.sh 300` + `test_smp_shell_preempt.sh` + `test_smp_release_gate.sh` + `test_smp_basic.sh` + `test_ps.sh` all PASS

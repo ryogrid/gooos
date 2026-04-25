@@ -4,15 +4,19 @@
 // slot -> the *Process it hosts. Updated by kschedSpawnRing3Wrapper
 // at spawn time; cleared by processExit's kthread branch.
 //
-// CR3 + TSS.RSP0 install runs at the top of ring3WrapperKT, NOT in
-// the scheduler dispatch loop -- attempt 2 hit a non-deterministic
-// boot regression when any function call was added inside
-// kschedLoopOnce/kschedLoop. See no_goroutine_kernel_design/
-// 12_implementation_notes.md §M4.1 for the bisection record.
+// CR3 + TSS.RSP0 install runs at the top of ring3WrapperKT and
+// at every park-then-resume site (kschedYield, kschedPark,
+// KEvent.Wait, fsReqQueue.Push/Pop) via kthreadResumeRing3Ctx.
+// We intentionally do NOT add the call inside kschedLoopOnce or
+// kschedLoop — attempt 2 hit a non-deterministic boot regression
+// when any function call was added there. See
+// no_goroutine_kernel_design/12_implementation_notes.md §M4.1.
 //
-// Scope (M4.1 alpha): first-dispatch install only. Cross-CPU
-// preempt re-install is M4.1.b / M4.3 work — see plan §"Out of
-// scope".
+// M4.1.b lands cross-CPU re-install: when a kthread parks and is
+// re-dispatched on a different CPU, the new CPU's TSS.RSP0 is
+// stale and CR3 may have been changed by an intervening goroutine
+// (via gooosOnResume). The post-resume hook re-installs both
+// before any Ring-3 trap can land on the wrong stack/PML4.
 
 package main
 
@@ -80,11 +84,41 @@ func kschedSpawnRing3Wrapper(proc *Process) *KernelThread {
 	return t
 }
 
+// kthreadResumeRing3Ctx installs CR3 + TSS.RSP0 + per-CPU pool-slot
+// for the kthread currently running on this CPU. Called at first
+// dispatch (from ring3WrapperKT) AND after every park-then-resume
+// kschedSwitch in caller code (kschedYield, kschedPark, KEvent.Wait,
+// fsReqQueue.Push/Pop). No-op if the running kthread is not a
+// Ring-3 host (proc nil), which covers fsTask and other service
+// kthreads.
+//
+// nosplit: walks pointer side tables and writes CR3 — must not
+// allocate, park, or take a goroutine stack-grow path.
+//
+//go:nosplit
+func kthreadResumeRing3Ctx() {
+	cpu := cpuID()
+	t := kschedRunning[cpu]
+	if t == nil || t.Slot < 0 || int(t.Slot) >= kthreadPoolCap {
+		return
+	}
+	proc := kthreadHostedProc[t.Slot]
+	if proc == nil {
+		return
+	}
+	perCPUBlocks[cpu].CurrentPoolIdx = int32(t.Slot)
+	if proc.pml4 != 0 {
+		writeCR3(proc.pml4)
+	}
+	tssSetRSP0(uintptr(unsafe.Pointer(&t.Stack.Top)))
+}
+
 // ring3WrapperKT is the kthread entry point for a Ring-3 process.
-// Reads proc from the side table, installs CR3 + TSS.RSP0 for the
-// kthread's own kernel stack, then jumps into Ring 3. Never
-// returns in the success path -- Ring 3 -> processExit ->
-// kschedExit (via the kthread branch in processExit).
+// One-shot setup (proc.poolIdx + procByPoolSlot + setCurrentProc),
+// then kthreadResumeRing3Ctx for the per-resume install (also fired
+// on first dispatch). Never returns in the success path -- Ring 3
+// -> processExit -> kschedExit (via the kthread branch in
+// processExit).
 //
 func ring3WrapperKT() {
 	serialPrintln("ring3WrapperKT: enter cpuID=" + utoa(uint64(cpuID())))
@@ -100,12 +134,10 @@ func ring3WrapperKT() {
 		return
 	}
 
-	// Pool-slot bookkeeping for ISR-context Process lookup. Same
-	// shape as the goroutine-hosted ring3Wrapper at
-	// src/process.go:259-260.
+	// One-shot bookkeeping (not in kthreadResumeRing3Ctx because
+	// it's idempotent but unnecessary on every resume).
 	proc.poolIdx = int(t.Slot)
 	setProcByPoolSlot(int(t.Slot), proc)
-	perCPUBlocks[cpu].CurrentPoolIdx = int32(t.Slot)
 
 	// Bridge currentProc() lookups: syscall handlers call
 	// currentProc() which reads procByTask[taskCurrent()]. From a
@@ -113,20 +145,12 @@ func ring3WrapperKT() {
 	// TinyGo task (whatever was running when waitForEvents called
 	// kschedLoopOnce). Storing under that key lets syscall ISRs
 	// running on this kthread's stack resolve the proc through the
-	// usual path. Harmless because the kthread stays on its own
-	// stack and only this CPU will fire syscalls under this trap.
+	// usual path.
 	setCurrentProc(proc)
 
-	// Per-process CR3 swap (kernel half identity-mapped, so safe
-	// from kthread context).
-	if proc.pml4 != 0 {
-		writeCR3(proc.pml4)
-	}
-
-	// Install TSS.RSP0 to point at the top of THIS kthread's
-	// stack. This is the kernel stack the CPU will switch to on
-	// a Ring-3 -> Ring-0 transition (syscall, fault, IRQ).
-	tssSetRSP0(uintptr(unsafe.Pointer(&t.Stack.Top)))
+	// First-dispatch install (also re-fires on every wake via
+	// kthreadResumeRing3Ctx at the post-kschedSwitch sites).
+	kthreadResumeRing3Ctx()
 
 	serialPrintln("ring3WrapperKT: jumping to Ring 3 entry=0x" + hextoa(uint64(proc.EntryPoint)))
 	setGateDPL3(0x80)
