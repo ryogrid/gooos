@@ -173,3 +173,10 @@ See `no_goroutine_kernel_design/12_implementation_notes.md`
   Full report:
   `no_goroutine_kernel_design/12_implementation_notes.md`
   § Open issues + risks.
+
+  **M6 update (commit `6a5d0cb`):** `timerDispatcher` BSP
+  pin + `runMinimalKthreads=true` eliminate the cross-CPU
+  `kschedSwitch` PF (5/10 → 0/10 across 10 iters). A
+  second bug — boot shell never drains `gooosKbdRing`
+  after `KEvent.Signal` (M8 fires, M9 = 0) — is being
+  pursued in M6 step (a).

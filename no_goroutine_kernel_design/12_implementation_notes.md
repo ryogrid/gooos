@@ -404,6 +404,27 @@ deletions remove every `go ` site, the M5 flip won't compile.
   `kschedSwitch`'s saved-RSP write ordering. Investigation
   scoped as a post-Route-C M6 milestone.
 
+  **M6 bisection update (commit `6a5d0cb`):** confirmed
+  the cross-CPU `kschedSwitch` PF (`rip=0x100DA2`,
+  `addr=0x092BAA4ED8`) reproducibly disappears (5/10 →
+  0/10) when `timerDispatcher` is pinned to BSP via
+  `kschedSpawnAt("timerDispatcher", ..., 0)` AND the net
+  service kthreads are gated off via `runMinimalKthreads
+  = true`. Same-CPU `kschedWake → kschedPush` no longer
+  produces the cross-CPU SavedRSP visibility window. A
+  separate **second bug remains**: even with PF gone, the
+  shell kthread parked in `kschedTimedPark(1)` does not
+  return to drain `gooosKbdRing` after `KEvent.Signal`
+  fires — M8 marker (handleKeyboard ran) fires in 7/10
+  runs, but M9 marker (kthread drained the ring) = 0/10.
+  Hypotheses for the second bug: (1) `KEvent.Wait` resume
+  re-park loop where `e.flag` write is not visible to the
+  resumed kthread; (2) shell kthread work-stolen to an AP
+  whose TSS.RSP0 is stale; (3) `kschedLoop`'s pop ordering
+  starves the shell when timerDispatcher monopolises BSP.
+  Next bisection step (M6 step (a)): refuse `kschedSteal`
+  on the boot-shell kthread and re-measure.
+
 ### P1 reviewer-pass MINOR findings (post-§13 Phase 4)
 
 The Phase 4 reviewer pass found 2 BLOCKING items (both fixed
