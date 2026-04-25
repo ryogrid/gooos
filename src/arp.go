@@ -235,6 +235,13 @@ func arpResolve(ip uint32) ([6]byte, bool) {
 		if mac, ok := arpLookup(ip); ok {
 			return mac, true
 		}
-		runtime.Gosched()
+		// P1-fix: kthread fallback (runtime.Gosched is no-op under
+		// scheduler=none, leaving this a tight CPU spin from a
+		// kthread context).
+		if kschedRunning[cpuID()] != nil {
+			kschedTimedPark(1)
+		} else {
+			runtime.Gosched()
+		}
 	}
 }

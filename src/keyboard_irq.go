@@ -127,10 +127,14 @@ func keyboardReadEventBlocking() uint32 {
 			hlt()
 			continue
 		}
-		// AP path: use a bounded sleep rather than a tight yield loop,
-		// so a reader stranded on an AP against an empty ring does not
-		// monopolize the AP. 10 ms is 1 PIT tick — the same quantum
-		// LAPIC preemption uses elsewhere. E4 per TODO_FIX.md.
+		// AP path: bounded sleep. P1-fix: when caller is a kthread
+		// (post-M4.1 ring3-on-kthread), use kschedTimedPark to
+		// avoid the H-01 chan-recv hazard from bare afterTicks
+		// under scheduler=none.
+		if kschedRunning[cpuID()] != nil {
+			kschedTimedPark(1)
+			continue
+		}
 		<-afterTicks(1)
 	}
 }

@@ -312,7 +312,22 @@ After all of the above, M5 can land cleanly:
 
 ## Post-M5 work
 
-- [ ] P1 — Reviewer sub-agent pass; BLOCKING fixed; MINOR → `no_goroutine_kernel_design/12_implementation_notes.md`
+- [x] P1 — Reviewer sub-agent pass. 2 BLOCKING fixed in
+  this commit:
+  (a) `src/keyboard_irq.go:134` AP-path bare `<-afterTicks(1)`
+      → kthread fallback `kschedTimedPark(1)` (same H-01
+      pattern M4.3 closed for sys_sleep).
+  (b) `src/arp.go:238` arpResolve `runtime.Gosched()` (no-op
+      under scheduler=none — tight CPU spin from kthread)
+      → kthread fallback `kschedTimedPark(1)`.
+  (c) `src/spinlock.go` rank table extended to cover the 5
+      Route C primitives: fsReqQueue/udpDgramQueue (13a/b),
+      KEvent (14), kschedQueues (15), kthreadPoolLock (16),
+      serialLock (17 leaf).
+  6 MINOR items appended to
+  `no_goroutine_kernel_design/12_implementation_notes.md`
+  § Open issues + risks. Gates re-run after fixes: smoke +
+  ps + net + preempt_kernel (markers=5) PASS.
 - [ ] P2 — README.md §11 diff applied; `impldoc/` + `current_impl_*/` sweep for stale refs; `current_impl_<today>/` successor doc created
 - [ ] P3 — Final sweep: `grep -rIn 'TODO\|FIXME\|XXX\|HACK' src/ user/ scripts/` clean for new-in-this-cycle; full M5 gate suite PASS; `make -C user all` clean
 

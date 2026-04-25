@@ -357,6 +357,49 @@ deletions remove every `go ` site, the M5 flip won't compile.
   trim without flip → patch verification mismatch. M5.1 +
   M5.2 ship as a single tightly-coupled commit pair.
 
+### P1 reviewer-pass MINOR findings (post-§13 Phase 4)
+
+The Phase 4 reviewer pass found 2 BLOCKING items (both fixed
+in commit `<P1-fix>`: `keyboard_irq.go` AP path bare chan recv
++ `spinlock.go` rank table missing Route C primitives). The
+reviewer also surfaced these MINOR items:
+
+- **`src/process.go:580` `proc.exitCh <- exitCode`** runs
+  before the kthread branch. Works only because the chan has
+  cap=1 buffer and exactly one send per Process; if any path
+  ever resends to a full chan from kthread context,
+  `task.Pause()` would panic under scheduler=none. Consider
+  conditioning the send on `kschedRunning[idx] == nil` to
+  skip the legacy chan path on kthread context.
+- **`src/process.go:552-574` procLock + pageAllocLock
+  inversion.** procLock (rank 2) is held while calling
+  freePage which acquires pageAllocLock (rank 1). The inline
+  comment claims this is normative but rank-table convention
+  ("outermost first" = lower rank first) says the opposite.
+  Pre-existing (D1 in TODO_FIX.md), not introduced by Route C
+  but adjacent to where Route C added more locks.
+- **`src/kthread_ring3.go:30` `kthreadHostedProc` array** is
+  mutated without a lock. Single-writer-per-slot in practice
+  (spawn writes once before push; processExit clears once on
+  the kthread's own slot). Add a one-line comment documenting
+  the implicit invariant: "no lock — writer is exactly the
+  kthread spawn site or the kthread's own processExit; reader
+  is the kthread itself or its dispatch hook."
+- **`src/kthread_ring3.go:110, 114, 119, 141`
+  `serialPrintln` calls inside `ring3WrapperKT`** fire on
+  every dispatch. Reasonable for boot-time debugging but
+  consider gating behind a `runRing3KTDebug` flag for
+  steady-state reduction.
+- **`src/main.go:425` `checkKernelThreadOffset()`** is
+  redundant with `src/kthread_sched.go:151` (called from
+  `kschedInit`). Defensive but harmless.
+- Pipe / channel value types in `src/*.go`: `Process.exitCh`
+  (cap=1, one send), `pipe.ch chan byte` (used by ring3
+  pipe fds — under scheduler=none CAN park on full/empty and
+  panic). Document that scheduler=none does not yet support
+  pipe-using user binaries; cleanup pending if a user
+  program needs pipes.
+
 ## How this file is updated
 
 - After each Route C commit, the commit body's "what landed"
