@@ -625,8 +625,14 @@ func bootActivatePostShellReady() {
 	bspBootDone = 1
 
 	if runSMPBasicProbe {
-		// M4.2.g: was `go smpBasicProbe()`. kthread now.
-		kschedSpawn("smpBasicProbe", smpBasicProbe)
+		// M4.2.g: was `go smpBasicProbe()`. Pin to AP 1 (not BSP)
+		// so the test_smp_basic harness can observe non-zero cpuIDs
+		// (proves a kthread runs on an AP, not just BSP).
+		var apTarget uint32 = 1
+		if numCoresOnline <= 1 {
+			apTarget = 0
+		}
+		kschedSpawnAt("smpBasicProbe", smpBasicProbe, apTarget)
 	}
 
 	if preemptEnabled && runSMPShellPreemptProbe {

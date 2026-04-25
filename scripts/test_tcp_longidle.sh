@@ -30,14 +30,16 @@ qemu-system-x86_64 \
     -netdev user,id=n0,hostfwd=tcp::10080-:8080 &
 PID=$!
 
-# Bounded wait for Ring 3 to come up (max ~30 s).
+# Bounded wait for Ring 3 to come up (max ~30 s). Post-M4.1
+# the banner is "ring3WrapperKT:" (kthread-hosted); pre-M4.1
+# was "ring3Wrapper:" (goroutine-hosted). Match both.
 for i in $(seq 1 300); do
     kill -0 "$PID" 2>/dev/null || { echo "FAIL: QEMU died during boot"; exit 1; }
-    grep -q 'ring3Wrapper: jumping to Ring 3' "$OUT" 2>/dev/null && break
+    grep -qE 'ring3Wrapper(KT)?: jumping to Ring 3' "$OUT" 2>/dev/null && break
     sleep 0.1
 done
 
-if ! grep -q 'ring3Wrapper: jumping to Ring 3' "$OUT" 2>/dev/null; then
+if ! grep -qE 'ring3Wrapper(KT)?: jumping to Ring 3' "$OUT" 2>/dev/null; then
     echo "FAIL: Ring 3 shell did not come up within 30 s"
     kill "$PID" 2>/dev/null; wait "$PID" 2>/dev/null
     tail -30 "$OUT"
