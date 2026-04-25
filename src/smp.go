@@ -337,12 +337,13 @@ func apEntry(apIndex uint64) {
 	}
 }
 
-// apSchedulerEntry bridges into TinyGo's apScheduler() function
-// which enters the scheduler loop without reinitializing the heap
-// or calling main.
-//
-//go:linkname apSchedulerEntry runtime.apScheduler
-func apSchedulerEntry()
+// apSchedulerEntry was the AP entry into TinyGo's apScheduler.
+// M5.2 (scheduler=none): runtime.apScheduler doesn't exist
+// without a goroutine scheduler. Replace with the gooos kthread
+// scheduler loop directly.
+func apSchedulerEntry() {
+	kschedLoop()
+}
 
 // ---------- ACPI MADT Parsing ----------
 

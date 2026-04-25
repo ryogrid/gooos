@@ -444,7 +444,7 @@ new file mode 100644
 index 00000000..3cadea13
 --- /dev/null
 +++ b/src/runtime/runtime_gooos.go
-@@ -0,0 +1,286 @@
+@@ -0,0 +1,273 @@
 +//go:build gooos && baremetal && kernelspace
 +
 +// gooos-local runtime bodies for bare-metal x86_64 Ring 0.
@@ -588,23 +588,9 @@ index 00000000..3cadea13
 +	futexLock     gooosSpinLock
 +)
 +
-+// gooosCpuID is already declared in scheduler_cooperative.go (Wave 1
-+// patch) at the same package scope; reuse it here via the in-package
-+// reference in currentCPU below.
-+
-+// currentCPU is the linkname target scheduler_cores.go consumes
-+// to index its cpuTasks[numCPU] / systemStack[numCPU] arrays.
-+//
-+//go:linkname currentCPU runtime.currentCPU
-+//go:nosplit
-+func currentCPU() uint32 { return gooosCpuID() }
-+
-+// Keep currentTask (scheduler_cores.go:293) alive against TinyGo's
-+// DCE. It is called only via the task_stack_multicore.go linkname
-+// `Current -> runtime.currentTask`, which the linker's dead-code
-+// pass can drop on our build even though RP2 keeps it through other
-+// reachability. Forcing a package-level reference pins the symbol.
-+var _ = currentTask
++// M5.1: currentCPU + currentTask references moved to
++// runtime_gooos_sched_cores.go (gated by !scheduler.none) so this
++// file compiles under scheduler=none too.
 +
 +// gcPauseCore is called by gc_stack_cores.go's gcMarkReachable
 +// to stop every peer core before scanning. M3 stub: returns
@@ -1234,3 +1220,33 @@ index f1487e39..18980b11 100644
  
  package runtime
  
+diff --git a/src/runtime/runtime_gooos_sched_cores.go b/src/runtime/runtime_gooos_sched_cores.go
+new file mode 100644
+index 00000000..4becca77
+--- /dev/null
++++ b/src/runtime/runtime_gooos_sched_cores.go
+@@ -0,0 +1,25 @@
++//go:build gooos && baremetal && kernelspace && !scheduler.none
++
++// gooos-local runtime declarations specific to scheduler=cores
++// (and scheduler=cooperative). Under scheduler=none these symbols
++// (gooosCpuID, currentTask) are not defined by upstream
++// scheduler_*.go, and the consumers (cpuTasks indexing,
++// task_stack_multicore.go's Current linkname) are not compiled
++// either, so this file is excluded.
++
++package runtime
++
++// currentCPU is the linkname target scheduler_cores.go consumes
++// to index its cpuTasks[numCPU] / systemStack[numCPU] arrays.
++//
++//go:linkname currentCPU runtime.currentCPU
++//go:nosplit
++func currentCPU() uint32 { return gooosCpuID() }
++
++// Keep currentTask (scheduler_cores.go:293) alive against TinyGo's
++// DCE. It is called only via the task_stack_multicore.go linkname
++// `Current -> runtime.currentTask`, which the linker's dead-code
++// pass can drop on our build even though RP2 keeps it through other
++// reachability. Forcing a package-level reference pins the symbol.
++var _ = currentTask

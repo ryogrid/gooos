@@ -6,7 +6,7 @@
     "goos": "linux",
     "goarch": "amd64",
     "gc": "conservative",
-    "scheduler": "cores",
+    "scheduler": "none",
     "default-stack-size": 8192,
     "automatic-stack-size": true,
     "panic-strategy": "trap",
