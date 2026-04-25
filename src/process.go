@@ -412,7 +412,7 @@ func elfSpawn(filename, args string, parent *Process) (*Process, bool) {
 	}
 
 	serialPrintln("elfSpawn: loaded " + filename)
-	go ring3Wrapper(child)
+	kschedSpawnRing3Wrapper(child)
 	return child, true
 }
 
@@ -439,7 +439,25 @@ func processWait(proc *Process) uintptr {
 			" wait=" + utoa(uint64(waitPID)))
 	}
 	setForegroundProc(proc)
-	exitCode := <-proc.exitCh
+	// M4.1: when the caller is a kthread (post-ring3Wrapper migration),
+	// `<-proc.exitCh` is the H-01 hazard — Go chan recv from a kthread
+	// parks via TinyGo's task.PauseLocked which writes RSP into a
+	// stale task.Current() and corrupts the kthread context. Spin-
+	// yield instead: kschedYield re-enqueues self; when re-dispatched
+	// we re-check proc.Exited (set by processExit before exitCh send).
+	// Cross-CPU CR3+TSS re-install on re-dispatch is M4.1.b; for the
+	// common case where the parent kthread re-dispatches on the same
+	// CPU it was first dispatched on, the previously-installed CR3+TSS
+	// remain correct.
+	var exitCode uintptr
+	if kschedRunning[cpuID()] != nil {
+		for proc.Exited == 0 {
+			kschedYield()
+		}
+		exitCode = proc.ExitCode
+	} else {
+		exitCode = <-proc.exitCh
+	}
 	setForegroundProc(prevForeground)
 	serialPrintln("MARKER: M6 processWait post-exitCh-recv")
 	if runSMPProbeShellTest {
@@ -576,6 +594,22 @@ func processExit(exitCode uintptr) {
 	}
 	if perCPUBlocks[idx].SyscallDepth > 0 {
 		perCPUBlocks[idx].SyscallDepth--
+	}
+	// M4.1: if the host is a kernel thread (post-M4.1 ring3Wrapper),
+	// clear the side-table entry and exit via kschedExit so the
+	// scheduler reclaims the slot. The legacy goroutine path (still
+	// reachable while ring3Wrapper(...) goroutine call survives in
+	// any pre-M4 untouched site) falls through to taskPause.
+	if kschedRunning[idx] != nil {
+		t := kschedRunning[idx]
+		if t.Slot >= 0 && int(t.Slot) < kthreadPoolCap {
+			kthreadHostedProc[t.Slot] = nil
+		}
+		kschedExit(exitCode)
+		// kschedExit never returns; defensive halt.
+		for {
+			hlt()
+		}
 	}
 	taskPause() // never returns for this goroutine
 	for {

@@ -432,7 +432,16 @@ func sysFsListHandler(frame *SyscallFrame) {
 // --- Syscall 7: sys_yield ---
 
 func sysYieldHandler(frame *SyscallFrame) {
-	runtime.Gosched()
+	// M4.1: from a kthread-hosted Ring-3 process the syscall ISR
+	// runs on the kthread's kernel stack, not a TinyGo goroutine
+	// stack. runtime.Gosched would push taskCurrent() (garbage from
+	// kthread context) onto the TinyGo runqueue and page-fault in
+	// internal/task.Queue.Push. Use kschedYield instead.
+	if kschedRunning[cpuID()] != nil {
+		kschedYield()
+	} else {
+		runtime.Gosched()
+	}
 	frame.RAX = 0
 }
 

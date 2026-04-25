@@ -243,12 +243,19 @@ func elfLoad(name string, args string) bool {
 	proc.EntryPoint = entry
 	proc.StackTop = stackTop
 
-	serialPrintln("ELF: spawning boot shell goroutine at 0x" + hextoa(uint64(entry)))
+	serialPrintln("ELF: spawning boot shell kthread at 0x" + hextoa(uint64(entry)))
 
-	// Spawn the shell on its own goroutine. main() then blocks on
-	// proc.exitCh — if the shell ever exits, the kernel halts.
-	go ring3Wrapper(proc)
-	<-proc.exitCh
+	// Spawn the shell on its own kernel thread (M4.1). The waiter
+	// is the BSP main goroutine; without driving the scheduler from
+	// here, dispatch of the kthread depends on AP idle hooks firing
+	// at the right time. Pump kschedLoopOnce while polling proc.Exited
+	// (set by processExit before proc.exitCh send) so the BSP itself
+	// can dispatch the shell kthread when no AP is available.
+	kschedSpawnRing3Wrapper(proc)
+	for proc.Exited == 0 {
+		kschedLoopOnce()
+		gooosPause()
+	}
 	serialPrintln("ELF: boot shell exited, halting")
 	for {
 		hlt()

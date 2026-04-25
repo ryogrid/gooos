@@ -81,27 +81,36 @@ the dependency explicit.
   networking reaches shell prompt (was hanging at M3.3 when
   netRxLoop was attempted as a kthread — that was the symptom
   M4.0 fixes).
-- [ ] M4.1 — `ring3Wrapper` kernel-thread rewrite. **Two
-  session attempts; both reverted.** Attempt 1 (commit
-  `b00f2d1`, reverted in `4ada612`) added an `ExitEv KEvent`
-  field to `Process` and used a closure entry for
-  `kschedSpawnProc`; produced non-deterministic
-  `task.PauseLocked → task.Current() = nil` panics. Attempt 2
-  (this session, side-table strategy with pristine `Process`
-  struct + top-level `ring3WrapperKT` entry, not committed)
-  produced a different regression: boot hangs in
-  `fsSendRead("sh.elf")` inside `setupUserspace` — the
-  spin-pumped `KEvent.Wait` never returns. Bisection isolated
-  the trigger to adding the `kschedInstallRing3Ctx(t)` *call*
-  inside `kschedLoopOnce`/`kschedLoop` (even when the function
-  body is no-op). Adding only the new `src/kthread_ring3.go`
-  file (with no callers from existing paths) does NOT break
-  boot. Next attempt should move the CR3 + TSS.RSP0 hook OUT
-  of the dispatch loop — install both at the top of
-  `ring3WrapperKT` after kschedSwitch has already put us on
-  the kthread's own stack — to avoid perturbing the existing
-  scheduler-loop compiled shape. See `no_goroutine_kernel_design/12_implementation_notes.md`
-  §M4.1 for the bisection detail and the attempt-3 plan.
+- [x] M4.1 — `ring3Wrapper` kernel-thread rewrite (alpha:
+  first-dispatch CR3+TSS install in `ring3WrapperKT` body;
+  dispatch loop unchanged from M4.0). Attempt 3 lands the
+  side-table strategy after attempts 1+2 were reverted (see
+  `no_goroutine_kernel_design/12_implementation_notes.md`
+  §M4.1). New `src/kthread_ring3.go` defines
+  `kthreadHostedProc[kthreadPoolCap]*Process`,
+  `kschedSpawnRing3Wrapper`, and `ring3WrapperKT`.
+  `src/elf.go` boot-shell spawn + `src/process.go:415`
+  exec'd-child spawn → `kschedSpawnRing3Wrapper`.
+  `processExit` (`src/process.go`) branches on
+  `kschedRunning[cpu]` and calls `kschedExit(exitCode)` when
+  on a kthread; legacy goroutine path retained. `processWait`
+  spin-yields via `kschedYield()` instead of `<-proc.exitCh`
+  when the parent is a kthread (Go chan recv from kthread is
+  the H-01 hazard). `sysYieldHandler` (`src/userspace.go`)
+  branches: `kschedYield()` from kthread, `runtime.Gosched()`
+  from goroutine. **Out of M4.1 alpha scope** (deferred to
+  M4.1.b / M4.3): cross-CPU CR3+TSS re-install on kthread
+  re-dispatch (reading the existing `gooosOnResume`-equivalent
+  for kthread context); `sys_sleep` still uses
+  `<-afterTicks(d)` from kthread context which page-faults at
+  `runtime.lockAtomics` — sleeptest hits this. **Gates**:
+  `make build` clean; `scripts/test_kthread_smoke.sh` PASS
+  (A=5 B=5 ok=1); `scripts/test_preempt_kernel.sh` PASS
+  (markers=5); `scripts/test_ps.sh` PASS (header=1 row=1 —
+  proves shell exec + processWait + processExit round-trip
+  with kthread-hosted shell). `test_sleeptest_postrevert.sh`
+  regresses to 0 % (hits the deferred sys_sleep hazard);
+  expected to recover at M4.3.
 - [ ] M4.2 — `netRxLoop`, `udpEchoServer`, `tcpRTOScannerLoop`, `tcpEchoServer` + per-connection workers migrated to `kschedSpawn`. Unblocked by M4.0.
 - [ ] M4.3 — `sys_sleep` → `kschedTimedPark`; `sys_recvfrom` timeouts → bounded-poll; `afterTicks` channel shim deleted; `ring3StackPoolCh` replaced with `KQueue[int32]` or bitmap
 - [ ] M4.4 — Gate: `test_sleeptest_postrevert.sh ITERATIONS=50` ≥ 80 % (F1 closure); `test_net.sh` + `test_tcp_longidle.sh 300` + `test_smp_shell_preempt.sh` + `test_smp_release_gate.sh` + `test_smp_basic.sh` + `test_ps.sh` all PASS

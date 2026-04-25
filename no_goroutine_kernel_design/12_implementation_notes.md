@@ -21,6 +21,7 @@ Branch: `smp-no-goroutine-in-kernel`. Design base commit:
 | **M4.0** — gooos spinlock for `gcLock` | **Landed** | `bdfb06b` | Allocator path now cross-CPU safe without parking via `task.PauseLocked`; smoke PASS; `-smp 4` boot reaches shell |
 | **M4.1** — `ring3Wrapper` as kernel thread (attempt 1) | **Reverted** | `b00f2d1` (commit) → `4ada612` (revert) | Boot reached shell once but reproducibly panicked at `internal/task.PauseLocked → task.Current()=nil` after some boots |
 | **M4.2.a** — Delete Spike2 + afterTicks self-tests | **Landed** | `cbad225` | Removes 2 of the original 12 boot-time `go ` sites; `-smp 4` boot stable |
+| **M4.1** — `ring3Wrapper` as kernel thread (attempt 3 alpha) | **Landed** | (pending — this commit) | Boot reaches shell prompt cleanly; `test_ps.sh` PASS (header=1 row=1) proves `sys_exec → processWait → processExit` round-trip works with kthread-hosted shell. Dispatch-loop unchanged. sleeptest regresses to 0 % until M4.3 fixes `sys_sleep` chan-recv hazard. |
 
 Other commits intermixed in the range:
 - `cdc033e`, `3ca2cdb`, `5901490`, `23fdb3d` — session-stop notes
@@ -83,6 +84,68 @@ fsTask's wake.
 
 Both M4.1 attempts have been reverted; HEAD `cbad225` (M4.0 +
 M4.2.a) remains the working ceiling.
+
+### M4.1 attempt 3 — landed (alpha)
+
+The attempt-3 plan (move CR3 + TSS.RSP0 install into
+`ring3WrapperKT` body, leave dispatch loop untouched) lands
+cleanly. New file `src/kthread_ring3.go` defines:
+
+- `kthreadHostedProc[kthreadPoolCap]*Process` — slot → proc
+  side table.
+- `kschedSpawnRing3Wrapper(proc *Process) *KernelThread` —
+  mirrors `kschedSpawn` body with side-table store before
+  enqueue and `Entry = ring3WrapperKT`.
+- `ring3WrapperKT()` — reads `kschedRunning[cpuID()].Slot`,
+  resolves proc, sets `proc.poolIdx`/`procByPoolSlot`/
+  `perCPUBlocks[cpu].CurrentPoolIdx`, calls
+  `setCurrentProc(proc)` (so syscall-handler `currentProc()`
+  resolves), `writeCR3(proc.pml4)`, `tssSetRSP0(&t.Stack.Top)`,
+  `setGateDPL3(0x80)`, `jumpToRing3(...)`.
+
+Modifications:
+
+- `src/elf.go` boot-shell spawn (`go ring3Wrapper(proc); 
+  <-proc.exitCh`) → `kschedSpawnRing3Wrapper(proc); for 
+  proc.Exited == 0 { kschedLoopOnce(); gooosPause() }`. The
+  pump is needed because the BSP main goroutine waiting on
+  the chan would otherwise never give the kthread a CPU; the
+  pump drives one-iteration scheduling from BSP context until
+  the boot shell exits.
+- `src/process.go:415` exec'd-child spawn → `kschedSpawnRing3Wrapper`.
+- `src/process.go` `processExit` final park: branches on
+  `kschedRunning[cpu] != nil`. From kthread context, clears
+  `kthreadHostedProc[t.Slot]` and calls `kschedExit(exitCode)`
+  (legacy path falls through to `taskPause()`).
+- `src/process.go` `processWait`: branches on
+  `kschedRunning[cpu] != nil`. From kthread context, spin-
+  yields via `for proc.Exited == 0 { kschedYield() }`. The
+  goroutine path keeps `<-proc.exitCh`.
+- `src/userspace.go` `sysYieldHandler`: branches on kthread
+  context — `kschedYield()` instead of `runtime.Gosched()`.
+  This is the first H-01-hazard call site uncovered by the
+  shell autorun path; `runtime.Gosched()` from kthread
+  page-faults at `internal/task.Queue.Push` because
+  `taskCurrent()` returns garbage.
+
+Gates passing (post-attempt-3): `make build` clean;
+`scripts/test_kthread_smoke.sh` PASS (A=5 B=5 ok=1);
+`scripts/test_preempt_kernel.sh` PASS (markers=5);
+`scripts/test_ps.sh` PASS (header=1 row=1, proves
+shell-exec → child-run → processWait round-trip works).
+
+Known regression (deferred to M4.1.b / M4.3):
+`scripts/test_sleeptest_postrevert.sh` regresses to 0 % —
+`sleeptest` calls `sys_sleep` which uses `<-afterTicks(d)`
+(Go chan recv) from kthread context, page-faulting at
+`runtime.lockAtomics`. Same H-01 family as the
+`runtime.Gosched()` issue. M4.3 substitutes
+`kschedTimedPark`. There is also a residual cross-CPU CR3+TSS
+re-install hazard if the kthread is preempted in Ring 3 and
+re-dispatched on a different CPU — `gooosOnResume` runs only
+for goroutines, not kthreads. M4.1.b is the targeted fix
+(`handleLAPICTimer` / `handlePreemptIPI` rewiring + per-
+dispatch CR3+TSS).
 
 ## Remaining work
 
