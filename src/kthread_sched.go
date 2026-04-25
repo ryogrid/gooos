@@ -86,6 +86,15 @@ func kschedPopLocked(q *kschedReadyQueue) *KernelThread {
 // kschedPush enqueues t onto cpu's ready queue. Sets t.State and
 // t.OwnerCPU. Safe from any context.
 //
+// M5-fix-3: when target cpu is remote, send a wake IPI via
+// gooosWakeupCPU so the AP leaves its hlt-idle in kschedLoop and
+// dispatches the just-pushed thread. Without this, cross-CPU
+// wakes from KEvent.Signal -> kschedWake -> kschedPush would
+// queue work on the AP but the AP would never see it (it sleeps
+// in sti;hlt;cli until the next 100 Hz LAPIC tick — which
+// happens to wake it eventually but with up-to-10ms latency,
+// breaking timer-driven workloads like sleeptest and kpMarker).
+//
 //go:nosplit
 func kschedPush(t *KernelThread, cpu uint32) {
 	if cpu >= maxCPUs {
@@ -97,6 +106,9 @@ func kschedPush(t *KernelThread, cpu uint32) {
 	t.OwnerCPU = cpu
 	kschedPushLocked(q, t)
 	q.lock.Release(flags)
+	if cpu != cpuID() {
+		gooosWakeupCPU(cpu)
+	}
 }
 
 // kschedPop dequeues one thread from cpu's local queue. nil on empty.
@@ -180,11 +192,20 @@ func kschedLoop() {
 			}
 		}
 		if t == nil {
-			// No runnable work. In M0 we spin briefly and re-check so
-			// the smoke test can make progress while TinyGo is
-			// time-sharing with us; later milestones substitute the
-			// real idle thread (sti; hlt; cli).
-			gooosPause()
+			// M5-fix-3: actually halt the CPU on empty queue. hlt
+			// wakes on the next interrupt — either the cross-CPU
+			// wake IPI from kschedPush (vector 0xFC) or the AP's
+			// own 100 Hz LAPIC timer. gooosPause was a `pause`
+			// spin-hint that did NOT halt; under scheduler=none
+			// that left APs spinning without polling their queues
+			// after a remote kschedPush.
+			//
+			// Smoke test: kschedSmokeAllDone short-circuit at
+			// loop top still fires before this branch on empty,
+			// so the smoke harness's kschedLoop returns cleanly.
+			sti()
+			hlt()
+			cli()
 			continue
 		}
 		// Skip exiting threads; reclaim their slot.
