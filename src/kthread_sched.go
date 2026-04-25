@@ -196,9 +196,6 @@ func kschedLoop() {
 		t.State = uint32(KStateRunning)
 		t.OwnerCPU = cpu
 		t.Quantum = kschedDefaultQuantum
-		if t.Proc != nil {
-			kschedInstallRing3Ctx(t)
-		}
 		kschedSwitch(t, &kschedBootstrap[cpu])
 		// Return point: t has parked, exited, or been preempted. The
 		// thread-side code has already set t.State appropriately.
@@ -255,9 +252,6 @@ func kschedLoopOnce() {
 	t.State = uint32(KStateRunning)
 	t.OwnerCPU = cpu
 	t.Quantum = kschedDefaultQuantum
-	if t.Proc != nil {
-		kschedInstallRing3Ctx(t)
-	}
 	kschedSwitch(t, &kschedBootstrap[cpu])
 	// Returned: thread parked / yielded / exited. Symmetric cli
 	// while we tear down the dispatch record.

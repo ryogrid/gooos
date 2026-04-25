@@ -186,10 +186,8 @@ func elfLoad(name string, args string) bool {
 		", " + utoa(uint64(len(phdrs))) + " PT_LOAD segment(s)")
 
 	// Phase B: allocate a fresh Process for the boot shell. No
-	// parent — processExit signals ExitEv but the main goroutine
-	// is what Waits on it.
-	// Route C M4.1: ExitEv (KEvent) replaces exitCh.
-	proc := &Process{parent: nil, poolIdx: -1}
+	// parent — processExit on this goroutine prints and halts.
+	proc := &Process{parent: nil, exitCh: make(chan uintptr, 1), poolIdx: -1}
 	procInitStdio(proc)     // boot shell gets console fds 0,1,2
 	setForegroundProc(proc) // boot shell starts as foreground
 	proc.ArgLen = len(args)
@@ -247,12 +245,10 @@ func elfLoad(name string, args string) bool {
 
 	serialPrintln("ELF: spawning boot shell goroutine at 0x" + hextoa(uint64(entry)))
 
-	// Route C M4.1: host the boot shell on a gooos kernel
-	// thread. main() (this caller) then blocks on proc.ExitEv —
-	// if the shell ever exits, the kernel halts.
-	kschedInit()
-	kschedSpawnProc("ring3Wrapper", func() { ring3Wrapper(proc) }, proc)
-	proc.ExitEv.Wait()
+	// Spawn the shell on its own goroutine. main() then blocks on
+	// proc.exitCh — if the shell ever exits, the kernel halts.
+	go ring3Wrapper(proc)
+	<-proc.exitCh
 	serialPrintln("ELF: boot shell exited, halting")
 	for {
 		hlt()

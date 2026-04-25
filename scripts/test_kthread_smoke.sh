@@ -25,7 +25,7 @@ cp "$CONF" "$BACKUP"
 restore_config() {
     if [ -f "$BACKUP" ]; then
         mv "$BACKUP" "$CONF"
-        rm -f tmp/kernel.iso tmp/kernel.bin
+        rm -f tmp/kernel.iso
     fi
 }
 trap restore_config EXIT
@@ -36,7 +36,7 @@ if ! grep -q 'const runKthreadSmoke = true' "$CONF"; then
     exit 1
 fi
 
-rm -f tmp/kernel.iso tmp/kernel.bin
+rm -f tmp/kernel.iso
 echo "building kthread-smoke ISO..."
 if ! make iso >/dev/null 2>&1; then
     echo "FAIL: make iso"
