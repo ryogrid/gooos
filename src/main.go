@@ -340,27 +340,16 @@ func main() {
 	vgaWriteLine(11, "Timer: "+tickStr+" ticks")
 	serialPrintln("Timer: " + tickStr + " ticks")
 
-	// Spike 2 probe — trivial TinyGo goroutine + channel round-trip.
-	// Proves scheduler=tasks + gooos runtime patch links and runs.
-	// Removed once the full migration lands.
-	{
-		ch := make(chan int, 1)
-		go func() { ch <- 42 }()
-		v := <-ch
-		if v == 42 {
-			serialPrintln("Spike2: goroutine+chan OK")
-		} else {
-			serialPrintln("Spike2: FAIL")
-		}
-	}
-
-	// afterTicks self-test (item 12 fallback). Spawned in the
-	// background so a slow timer cannot stall boot. Logs to serial
-	// when the channel fires (~20 ms).
-	go func() {
-		<-afterTicks(2)
-		serialPrintln("afterTicks: OK")
-	}()
+	// (Route C M4.2.a: removed the Spike2 chan probe and the
+	// afterTicks self-test that used to live here. Both were
+	// boot-time TinyGo goroutine probes — the first existed only
+	// to prove scheduler=tasks + the runtime patch link, which
+	// is now established by the entire kernel; the second was
+	// observable-only ("afterTicks: OK") and not consumed by any
+	// harness. Deleting them removes 2 of the 12 `go` sites that
+	// blocked the M5 scheduler=none flip; deletion also resolves
+	// the M4.1 smoke-test boot panic that surfaced in the
+	// internal/task.PauseLocked path the chan probe walks.)
 
 	// (Route C M0: the Phase 4.3 kernelThreadInit / ktPool machinery
 	// has been superseded by the gooos-owned kthread scheduler in

@@ -81,7 +81,27 @@ the dependency explicit.
   networking reaches shell prompt (was hanging at M3.3 when
   netRxLoop was attempted as a kthread — that was the symptom
   M4.0 fixes).
-- [ ] M4.1 — `ring3Wrapper` kernel-thread rewrite; `tssSetRSP0ForKernelThread` helper; `kschedSwitchPostCR3` hook (extends `kschedLoopOnce` to write CR3 + TSS.RSP0 when the dispatched thread has a `Proc` field set); `gInfoByTask` / `gooosOnResume` / `registerRing3G` / `unregisterRing3G` deleted; `Process.exitCh` → `ExitEv KEvent` + `ExitCode uintptr`; `processExit` + `processWait` rewired. The `Process *Process` field needs to be added to `KernelThread` or tracked in a parallel `kthreadProc[slot]` table.
+- [ ] M4.1 — `ring3Wrapper` kernel-thread rewrite. **Session-4
+  attempt landed but caused a non-deterministic boot panic
+  (`internal/task.PauseLocked → task.Current() = nil`) in the
+  TinyGo chan/Mutex path even on plain `-smp 4` boots, so the
+  commit was reverted via `git revert b00f2d1` (revert SHA
+  `4ada612`). Hypothesis for next attempt: the panic is tied
+  to adding a `KEvent` field to `Process` (struct-layout shift
+  may have perturbed something in the concurrent boot
+  goroutine schedule), or to the closure-spawned
+  `kschedSpawnProc` invocation reaching an AP whose
+  `currentTasks[cpu]` slot is still nil. Re-attempt strategy:
+  (a) keep `Process` shape unchanged — store `*KEvent` in a
+  parallel `kthreadByPID[pid] = *KernelThread` table or in the
+  hosting `KernelThread.WakeLink` slot, not as a Process
+  field; (b) instead of `kschedSpawnProc` with a closure entry,
+  use a Go top-level `ring3WrapperKT` that reads the proc
+  pointer from a side table indexed by kthread slot. Original
+  scope still applies: `kschedSwitchPostCR3` hook in
+  `kschedLoopOnce` writing CR3 + TSS.RSP0 when `t.Proc != nil`;
+  `processExit` calling `kschedExit` instead of `taskPause`;
+  `gInfoByTask` deletion deferred to M5.
 - [ ] M4.2 — `netRxLoop`, `udpEchoServer`, `tcpRTOScannerLoop`, `tcpEchoServer` + per-connection workers migrated to `kschedSpawn`. Unblocked by M4.0.
 - [ ] M4.3 — `sys_sleep` → `kschedTimedPark`; `sys_recvfrom` timeouts → bounded-poll; `afterTicks` channel shim deleted; `ring3StackPoolCh` replaced with `KQueue[int32]` or bitmap
 - [ ] M4.4 — Gate: `test_sleeptest_postrevert.sh ITERATIONS=50` ≥ 80 % (F1 closure); `test_net.sh` + `test_tcp_longidle.sh 300` + `test_smp_shell_preempt.sh` + `test_smp_release_gate.sh` + `test_smp_basic.sh` + `test_ps.sh` all PASS
