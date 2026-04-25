@@ -164,3 +164,12 @@ See `no_goroutine_kernel_design/12_implementation_notes.md`
   CAN park on full/empty and panic. Document that scheduler=none
   does not yet support pipe-using user binaries; wire in
   `KQueue[byte]` when the first pipe-using program lands.
+- **`make run-smp` keyboard-input crash** (Route C SMP race).
+  Under `-smp 4`, keystrokes corrupt CPU state. 10-iter
+  measurement at HEAD `a4cfe0d`: 0/10 successful commands,
+  5/10 fatal traps (panic / `#DE` / PF in `kschedSwitch`
+  / iretq onto bogus RIP). Use `make run` for interactive
+  use until rooted. Scoped as post-Route-C M6 follow-up.
+  Full report:
+  `no_goroutine_kernel_design/12_implementation_notes.md`
+  § Open issues + risks.

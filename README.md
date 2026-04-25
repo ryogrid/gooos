@@ -337,6 +337,19 @@ Multi-core (SMP):
 make run-smp        # -smp 4 for 4 cores
 ```
 
+> ⚠️ **Known issue (Route C, post-`a4cfe0d`):** under `-smp 4`,
+> keystrokes (HMP `sendkey` or the QEMU window) reproducibly
+> corrupt CPU state. 10-iter measurement: 0/10 successful
+> commands, 5/10 fatal traps (panic / `#DE` / PF in
+> `kschedSwitch` or via iretq onto a non-canonical RIP). Boot
+> itself is clean. Use `make run` (single core) for **interactive**
+> sessions; reserve `make run-smp` for headless / non-interactive
+> SMP testing (the existing `scripts/test_smp_*.sh` gates avoid
+> keyboard injection on purpose for this reason). Root-cause
+> investigation tracked as a post-Route-C M6 follow-up in
+> `no_goroutine_kernel_design/12_implementation_notes.md`
+> § Open issues + risks.
+
 With the e1000 NIC attached for networking demos:
 
 ```bash

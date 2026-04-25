@@ -356,6 +356,53 @@ deletions remove every `go ` site, the M5 flip won't compile.
   order: target.json flip without trim → link error;
   trim without flip → patch verification mismatch. M5.1 +
   M5.2 ship as a single tightly-coupled commit pair.
+- **`make run-smp` keyboard input crashes the kernel.**
+  Confirmed at HEAD `a4cfe0d` (post-Route-C-complete). Under
+  `-smp 4`, the first few PS/2 keystrokes (HMP `sendkey` or
+  the QEMU window) reproducibly corrupt CPU state. Across
+  10 consecutive runs of `qemu -smp 4` + HMP `sendkey h e l
+  p ret`: **0/10 successfully ran `help`**, **5/10 hit a
+  fatal trap**, and the surviving 5 silently dropped the
+  keystrokes. Observed traps include:
+  (a) `panic: runtime error at 0x102bfa: index out of range`
+       — `cpuID()` returns > 16 inside `timerDispatcher` →
+       `kschedYield` → `cmp $0x10,%eax; ja lookupPanic`,
+  (b) `#DE: division error` (vector 0),
+  (c) `PF: addr=… rip=0x100DA2` (`kschedSwitch` `mov (%rdi),%rsp`
+       — `*KernelThread` from ready queue pointed to garbage),
+  (d) `PF: addr=0xFFFFFFFFFFFFFF99 rip=0x202` — RIP loaded
+       with what looks like a RFLAGS value (iretq frame
+       misalignment / stack corruption),
+  (e) `PF: addr=rip=0x7FFF4000` — control transferred to
+       garbage (an iretq popped a non-canonical RIP).
+  These point to **stack/frame corruption** rather than a
+  single race in one symbol. Symptom (c) reproduced via an
+  experimental serial-RX shim (IRQ4 path), so any non-timer
+  IRQ that triggers a scheduler dispatch under `-smp > 1`
+  can hit it. Removing the `serialPrintln` in handleKeyboard
+  ISR (held `serialLock` + `IF=0` for ~3.5 ms) did not
+  improve the rate, so the ~3.5 ms cli window is not the
+  trigger.
+  Under `-smp 1` (`make run`, `test_ps.sh`, all SMP-1
+  paths) everything works cleanly. Workaround: use
+  `make run` for interactive shell sessions; reserve
+  `make run-smp` for headless non-interactive testing
+  (the existing 50-iter SMP gates already avoid keyboard
+  injection per `test_smp_shell_distribution.sh` comment
+  "QEMU HMP sendkey latency flake under -smp > 1" — that
+  flake comment was masking what is actually this corruption
+  race).
+  Root-cause hypothesis: cross-CPU race in the
+  `kschedWake` → `kschedPush` → `kschedLoop` →
+  `kschedSwitch` hand-off, where the just-pushed
+  `*KernelThread` is observed by a peer CPU's stealer
+  before its `SavedRSP`/state is fully written. The IRQ1
+  path is the easiest trigger because PIC pass-through
+  routes IRQ1 to BSP while `timerDispatcher` has been
+  work-stolen onto an AP. Proper fix needs a fence + state
+  machine review of `kschedPushLocked` / `kschedSteal` /
+  `kschedSwitch`'s saved-RSP write ordering. Investigation
+  scoped as a post-Route-C M6 milestone.
 
 ### P1 reviewer-pass MINOR findings (post-§13 Phase 4)
 
