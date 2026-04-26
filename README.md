@@ -234,6 +234,23 @@ sudo apt install -y build-essential grub-pc-bin grub-common xorriso mtools qemu-
 # Then install TinyGo from the .deb release linked above.
 ```
 
+### Alternative: Docker-based build environment
+
+If you'd rather not install the toolchain on your host (or
+want a build environment that stays reproducible long-term
+against apt-repo / TinyGo-release decay), gooos ships a
+[`Dockerfile`](Dockerfile) at the project root that bundles
+all of the above on top of `ubuntu:24.04`. A prebuilt image
+tarball is hosted at
+[`https://ryogird.net/dist/gooos-dev.tar.gz`](https://ryogird.net/dist/gooos-dev.tar.gz)
+for users who want to skip the local build step. See
+**[docs/docker_dev_environment.md](docs/docker_dev_environment.md)**
+for the full walkthrough — image acquire (load or build),
+container run with a host bind mount for ISO extraction,
+and host-side QEMU invocation. (QEMU itself is **not**
+included in the image; the container only produces
+`tmp/kernel.iso`.)
+
 ### User-writable TinyGo copy + runtime patches (required)
 
 gooos needs a set of local changes to TinyGo's runtime for
@@ -549,6 +566,7 @@ Walkthroughs:
 - [docs/networking_demos.md](docs/networking_demos.md) — 5 networking demo paths (A–E)
 - [docs/user_programs.md](docs/user_programs.md) — gochan / tinyc / edit + program roster
 - [docs/repo_layout.md](docs/repo_layout.md) — full repository tree
+- [docs/docker_dev_environment.md](docs/docker_dev_environment.md) — Docker-based build environment (toolchain bundled, ISO extracted via bind mount)
 
 ## License
 

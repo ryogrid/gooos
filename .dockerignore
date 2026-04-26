@@ -1,0 +1,25 @@
+# gooos/.dockerignore
+#
+# The Dockerfile clones a fresh master from github.com/ryogrid/gooos
+# inside the image, so the build context is mostly unused. Keep the
+# context small anyway in case someone runs `docker build .` from a
+# working tree with a populated tmp/ — sending multi-MiB ISO/object
+# files into the daemon for nothing is wasteful.
+
+# Build artifacts
+tmp/
+user/build/
+
+# Saved Docker image (excluded from git too — see .gitignore)
+gooos-dev.tar.gz
+
+# Local Claude Code state
+.claude/
+
+# Local scratch
+hoge.md
+TODO.md
+
+# Backup archive of reference docs
+62cc81656d955f9c12cc7ee4f4c083c7-*.zip
+62cc81656d955f9c12cc7ee4f4c083c7-*/

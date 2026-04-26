@@ -11,3 +11,8 @@ TODO.md
 # Backup archive of reference docs (not tracked; originals live at repo root)
 62cc81656d955f9c12cc7ee4f4c083c7-*.zip
 62cc81656d955f9c12cc7ee4f4c083c7-*/
+
+# Saved Docker image (built via Dockerfile + docker save).
+# Local convenience copy; canonical hosted copy at
+# https://ryogird.net/dist/gooos-dev.tar.gz — too large to commit.
+gooos-dev.tar.gz
