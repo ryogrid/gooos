@@ -412,18 +412,25 @@ deletions remove every `go ` site, the M5 flip won't compile.
   service kthreads are gated off via `runMinimalKthreads
   = true`. Same-CPU `kschedWake → kschedPush` no longer
   produces the cross-CPU SavedRSP visibility window. A
-  separate **second bug remains**: even with PF gone, the
-  shell kthread parked in `kschedTimedPark(1)` does not
+  separate **second bug** also surfaced: even with PF gone,
+  the shell kthread parked in `kschedTimedPark(1)` did not
   return to drain `gooosKbdRing` after `KEvent.Signal`
-  fires — M8 marker (handleKeyboard ran) fires in 7/10
-  runs, but M9 marker (kthread drained the ring) = 0/10.
-  Hypotheses for the second bug: (1) `KEvent.Wait` resume
-  re-park loop where `e.flag` write is not visible to the
-  resumed kthread; (2) shell kthread work-stolen to an AP
-  whose TSS.RSP0 is stale; (3) `kschedLoop`'s pop ordering
-  starves the shell when timerDispatcher monopolises BSP.
-  Next bisection step (M6 step (a)): refuse `kschedSteal`
-  on the boot-shell kthread and re-measure.
+  fires — M8 marker fired in 7/10 runs, but M9 marker = 0/10.
+
+  **M6 RESOLVED** (branch `uni-proc-kernel-but-usrprog-smp`,
+  commits `aad1a04..f1aa3fe`). Bisection-driven design shift
+  documented in
+  `no_goroutine_kernel_design/14_uniprocessor_kernel.md`:
+  the gooos kernel now runs as a uniprocessor on the BSP
+  (`uniprocessorKernel = true` in `src/preempt_config.go`).
+  Every kthread is BSP-pinned; APs idle in `sti; hlt;` until
+  Ring-3 dispatch lands in M7. Both bugs disappear by
+  construction (no cross-CPU `kschedWake → kschedPush →
+  kschedSwitch` hand-off). Post-§14 measurement on the new
+  `scripts/test_run_smp_keyboard.sh` harness:
+  helpRan=10/10, M8=10/10, M9=10/10, PF=0/10. Net regression
+  (`scripts/test_net.sh`) PASS. The 5 SMP-distribution
+  scripts SKIP under the flag and become M7 work.
 
 ### P1 reviewer-pass MINOR findings (post-§13 Phase 4)
 

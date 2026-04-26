@@ -337,18 +337,18 @@ Multi-core (SMP):
 make run-smp        # -smp 4 for 4 cores
 ```
 
-> ⚠️ **Known issue (Route C, post-`a4cfe0d`):** under `-smp 4`,
-> keystrokes (HMP `sendkey` or the QEMU window) reproducibly
-> corrupt CPU state. 10-iter measurement: 0/10 successful
-> commands, 5/10 fatal traps (panic / `#DE` / PF in
-> `kschedSwitch` or via iretq onto a non-canonical RIP). Boot
-> itself is clean. Use `make run` (single core) for **interactive**
-> sessions; reserve `make run-smp` for headless / non-interactive
-> SMP testing (the existing `scripts/test_smp_*.sh` gates avoid
-> keyboard injection on purpose for this reason). Root-cause
-> investigation tracked as a post-Route-C M6 follow-up in
-> `no_goroutine_kernel_design/12_implementation_notes.md`
-> § Open issues + risks.
+> **Note (M6 — uniprocessor kernel, see
+> `no_goroutine_kernel_design/14_uniprocessor_kernel.md`):**
+> from M6 the gooos kernel runs as a uniprocessor on the BSP
+> regardless of `-smp N`. APs are kernel-mode idle (`sti; hlt;`)
+> and reserved for Ring-3 user processes. The cross-CPU
+> `kschedSwitch` race that broke `make run-smp` keyboard input
+> at HEAD `a4cfe0d` is structurally eliminated; 10-iter
+> `qemu -smp 4` HMP `sendkey h e l p ret` now scores 10/10
+> success, 0/10 PF. Userspace SMP (multiple Ring-3 processes
+> running concurrently on APs) is the M7 follow-up; for now
+> `-smp 4` provides hardware-level isolation but only BSP
+> executes Ring-3 work.
 
 With the e1000 NIC attached for networking demos:
 

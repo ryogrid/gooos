@@ -19,7 +19,7 @@ Branch: `smp-no-goroutine-in-kernel`. Starting HEAD:
 - [x] Step 5 — SMP-distribution tests SKIP/re-purposed (§6.2)
 - [x] Step 6 — lock-rank doc + RR counter cleanup (§4)
 - [x] Reviewer sub-agent pass (`hoge.md` §5)
-- [ ] README + impldoc refresh (`hoge.md` §6)
+- [x] README + impldoc refresh (`hoge.md` §6)
 - [ ] Final sweep — grep TODO/FIXME/XXX/HACK + verification
 
 ## Baseline (HEAD `0cd9095`)

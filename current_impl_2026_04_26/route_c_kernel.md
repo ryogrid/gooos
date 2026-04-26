@@ -168,15 +168,18 @@ See `no_goroutine_kernel_design/12_implementation_notes.md`
   Under `-smp 4`, keystrokes corrupt CPU state. 10-iter
   measurement at HEAD `a4cfe0d`: 0/10 successful commands,
   5/10 fatal traps (panic / `#DE` / PF in `kschedSwitch`
-  / iretq onto bogus RIP). Use `make run` for interactive
-  use until rooted. Scoped as post-Route-C M6 follow-up.
-  Full report:
+  / iretq onto bogus RIP). Scoped as post-Route-C M6
+  follow-up. Full report:
   `no_goroutine_kernel_design/12_implementation_notes.md`
   § Open issues + risks.
 
-  **M6 update (commit `6a5d0cb`):** `timerDispatcher` BSP
-  pin + `runMinimalKthreads=true` eliminate the cross-CPU
-  `kschedSwitch` PF (5/10 → 0/10 across 10 iters). A
-  second bug — boot shell never drains `gooosKbdRing`
-  after `KEvent.Signal` (M8 fires, M9 = 0) — is being
-  pursued in M6 step (a).
+  **M6 RESOLVED** (branch `uni-proc-kernel-but-usrprog-smp`,
+  commits `aad1a04..f1aa3fe`). The "uniprocessor kernel"
+  policy in
+  `no_goroutine_kernel_design/14_uniprocessor_kernel.md`
+  pins every kthread to BSP and idles APs in kernel mode.
+  10-iter `qemu -smp 4` HMP `sendkey h e l p ret`:
+  helpRan=10/10, M8=10/10, M9=10/10, PF=0/10. Both Bug A
+  (cross-CPU `kschedSwitch` PF) and Bug B (parked shell
+  never drains) are eliminated by construction. Userspace
+  SMP (Ring-3 dispatch on APs) is the M7 follow-up.
