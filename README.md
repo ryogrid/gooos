@@ -337,18 +337,21 @@ Multi-core (SMP):
 make run-smp        # -smp 4 for 4 cores
 ```
 
-> **Note (M6 — uniprocessor kernel, see
-> `no_goroutine_kernel_design/14_uniprocessor_kernel.md`):**
-> from M6 the gooos kernel runs as a uniprocessor on the BSP
-> regardless of `-smp N`. APs are kernel-mode idle (`sti; hlt;`)
-> and reserved for Ring-3 user processes. The cross-CPU
-> `kschedSwitch` race that broke `make run-smp` keyboard input
-> at HEAD `a4cfe0d` is structurally eliminated; 10-iter
-> `qemu -smp 4` HMP `sendkey h e l p ret` now scores 10/10
-> success, 0/10 PF. Userspace SMP (multiple Ring-3 processes
-> running concurrently on APs) is the M7 follow-up; for now
-> `-smp 4` provides hardware-level isolation but only BSP
-> executes Ring-3 work.
+> **Note (M7 — userspace SMP on APs, see
+> `no_goroutine_kernel_design/15_userspace_smp_on_aps.md`):**
+> the gooos kernel runs as a uniprocessor on BSP for all
+> kernel-side work (services, interrupts, I/O); user
+> processes (`hello`, `ls`, `cpuhog`, `markerprint`,
+> `smpprobe`, etc.) run in parallel on APs. Exec'd children
+> round-robin onto APs via the new Ring-3 ready-queue
+> tier; the boot shell stays on BSP (foreground keyboard
+> owner). M6's keyboard correctness invariant
+> (`scripts/test_run_smp_keyboard.sh` 10/10 helpRan, 0
+> PF) is preserved; new `scripts/test_ring3_distribution.sh`
+> verifies Ring-3 lands on AP. Toggle off via
+> `userspaceSMP = false` in `src/preempt_config.go` to
+> revert to M6 (uniprocessor kernel + AP idle in kernel
+> mode).
 
 With the e1000 NIC attached for networking demos:
 

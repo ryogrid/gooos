@@ -183,3 +183,20 @@ See `no_goroutine_kernel_design/12_implementation_notes.md`
   (cross-CPU `kschedSwitch` PF) and Bug B (parked shell
   never drains) are eliminated by construction. Userspace
   SMP (Ring-3 dispatch on APs) is the M7 follow-up.
+
+  **M7 LANDED** (branch `uni-proc-kernel-but-usrprog-smp2`,
+  commits `aad1a04..4065d8f`). Ring-3 dispatch on APs per
+  `no_goroutine_kernel_design/15_userspace_smp_on_aps.md` /
+  `16_m7_execution_plan.md` / `17_m7_test_strategy.md`.
+  Userspace SMP enabled by default
+  (`const userspaceSMP = true` in `src/preempt_config.go`).
+  Boot shell stays BSP-pinned per R4; service kthreads
+  stay BSP per R1; exec'd children round-robin onto AP
+  Ring-3 queues. New harness
+  `scripts/test_ring3_distribution.sh` is the M7 PASS bar
+  (markerprint observed on cpu != 0 within 15 s). M6
+  invariants preserved: `test_run_smp_keyboard.sh` 10/10
+  helpRan + 0 PF, `test_shell_post_exec_prompt.sh` 8/10
+  helloPrinted (cross-CPU exec latency requires 14s wait
+  window vs M6's 6s; latency tracked as M7-perf Deferred
+  item).

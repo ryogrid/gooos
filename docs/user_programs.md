@@ -4,6 +4,18 @@ Demo walkthroughs for the non-networking Ring-3 programs shipped
 in the `user/cmd/` tree. Networking demos (UDP/TCP/DHCP) live in
 [`networking_demos.md`](networking_demos.md).
 
+> **M7 dispatch model** (see
+> [`../no_goroutine_kernel_design/15_userspace_smp_on_aps.md`](../no_goroutine_kernel_design/15_userspace_smp_on_aps.md)):
+> when launched under `make run-smp` (`-smp 4`), exec'd
+> children round-robin onto APs (CPUs 1..N-1) via the gooos
+> Ring-3 ready-queue tier, while the boot shell stays on BSP
+> (CPU 0). The kernel itself remains uniprocessor on BSP per
+> M6; user processes run in true parallel. `gooos.GetCpuID()`
+> from any program reports the AP it was dispatched to.
+> Toggle off via `userspaceSMP = false` in
+> `src/preempt_config.go` to revert to M6 (single-CPU user
+> dispatch).
+
 ## gochan — native userspace goroutines + channels
 
 `gochan` is a shell-invokable user program that exercises native

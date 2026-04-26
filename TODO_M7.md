@@ -21,7 +21,7 @@ Branch: `uni-proc-kernel-but-usrprog-smp`. Starting HEAD:
 - [x] Step 4 — exec'd children land on AP queues (`kschedSpawnRing3Wrapper`)
 - [x] Step 5 — re-purpose 5 SMP-distribution harnesses (SKIP gate flip)
 - [x] Step 6 — flip `userspaceSMP=true` default + lock-rank doc + RR cleanup
-- [ ] Step 7 — README + `docs/` refresh
+- [x] Step 7 — README + `docs/` refresh
 - [ ] Reviewer sub-agent pass (`hoge.md` §5, 9-item checklist)
 - [ ] Final sweep — grep TODO/FIXME/XXX/HACK + TODO ↔ codebase ↔ R1..R13 cross-check + report
 
