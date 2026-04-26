@@ -107,3 +107,16 @@ const runKthreadSmoke = false
 // the scheduler. If the race persists, it is in the timerDispatcher
 // / fsTask / ring3Wrapper / preempt-IPI core loop.
 const runMinimalKthreads = true
+
+// uniprocessorKernel runs the gooos kthread scheduler on BSP only.
+// APs are kernel-mode idle (sti; hlt) and reserved for Ring-3 user
+// processes (dispatch path is M7 future work). When true:
+//   - kschedSpawn / kschedSpawnAt always target CPU 0
+//   - kschedSteal returns nil
+//   - kschedLoop's steal block is bypassed
+//   - apSchedulerEntry idles instead of calling kschedLoop
+//   - pitWakeAPs is bypassed
+//   - runMinimalKthreads has no effect (kept for revert ergonomics)
+//
+// See no_goroutine_kernel_design/14_uniprocessor_kernel.md.
+const uniprocessorKernel = true

@@ -12,7 +12,7 @@ Branch: `smp-no-goroutine-in-kernel`. Starting HEAD:
 
 - [x] Bootstrap — create this tracker, run baseline smoke tests
 - [x] Step 0 — add `scripts/test_run_smp_keyboard.sh` harness
-- [ ] Step 1 — add `const uniprocessorKernel = true`
+- [x] Step 1 — add `const uniprocessorKernel = true`
 - [ ] Step 2 — pin every kthread spawn to BSP (§3.2/§3.3/§3.6)
 - [ ] Step 3 — APs idle in kernel mode (§3.1/§3.4/§3.5)
 - [ ] Step 4 — re-enable net services on BSP (§3.7/§3.8)
