@@ -143,4 +143,4 @@ const uniprocessorKernel = true
 // stay BSP-pinned regardless of this flag, per §15 §2 R1+R3a.
 //
 // See no_goroutine_kernel_design/15_userspace_smp_on_aps.md.
-const userspaceSMP = false
+const userspaceSMP = true

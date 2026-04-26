@@ -68,6 +68,38 @@
 //   kernel is `git revert` of the §14 commit range.
 //   See no_goroutine_kernel_design/14_uniprocessor_kernel.md
 //   §4 for the rationale.
+//
+// §15 (M7) — Userspace SMP on APs addendum:
+//   Under userspaceSMP = true (preempt_config.go), Ring-3
+//   processes dispatch on APs via the new
+//   kschedQueuesRing3[cpu] tier. Ranks 2 + 13..16 regain
+//   cross-CPU contention for the Ring-3 path:
+//     - Rank 2 (procLock): foreground-process transitions
+//         (setForegroundProc) and processWait crossings now
+//         span BSP↔AP. Spinlock semantics already correct.
+//     - Rank 13 (fsReqQueue, udpDgramQueue): producers may
+//         be Ring-3 hosts on APs. Same-CPU-only inside
+//         Spinlock; safe.
+//     - Rank 14 (KEvent.lock): KEvent.Wait/Signal cross BSP
+//         (timerDispatcher signal) and AP (parked Ring-3
+//         host) regularly. The "drop e.lock before
+//         kschedWake" rule still matters for the rank-15
+//         nesting that follows.
+//     - Rank 15 (kschedQueues[cpu].lock): unchanged —
+//         service tier still BSP-only.
+//     - Rank 15a NEW (kschedQueuesRing3[cpu].lock): same
+//         rank as 15. Per-CPU Ring-3 ready queue. AP↔AP
+//         steal: holds 15a once on the source, drops, then
+//         15a on self in the dispatch path; never nested
+//         simultaneously with kschedQueues[cpu].lock.
+//     - Rank 16 (kthreadPoolLock): alloc/free now happens
+//         on any CPU (Ring-3 host alloc on BSP via
+//         processExec; free on AP via kthreadPoolFree
+//         inside kschedLoopRing3Only). Spinlock-safe.
+//   Rollback: flip userspaceSMP=false in preempt_config.go,
+//   rebuild — APs return to M6 idle. See
+//   no_goroutine_kernel_design/15_userspace_smp_on_aps.md
+//   §6 for the full rationale.
 
 package main
 

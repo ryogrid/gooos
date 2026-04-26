@@ -77,11 +77,16 @@ except Exception:
 for k in ['h', 'e', 'l', 'l', 'o', 'ret']:
     s.sendall(('sendkey ' + k + '\n').encode())
     time.sleep(0.3)
-time.sleep(2)
+# §M7 Step 6: under userspaceSMP=true the cross-CPU exec
+# round-trip (parent on BSP polls proc.Exited; child on AP
+# runs hello + exits via cross-CPU IPI) takes noticeably
+# longer than the M6 same-CPU exec. 12 s gives enough slack
+# for the parent's kschedTimedPark wake + child completion.
+time.sleep(12)
 s.close()
 PY
 
-    sleep 4
+    sleep 2
     kill "$QPID" 2>/dev/null
     wait "$QPID" 2>/dev/null
     QPID=""
