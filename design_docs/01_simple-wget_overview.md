@@ -179,6 +179,14 @@ Connection: close\r\n
 - `func parseStatus(buf []byte, n int) int` — extracts the
   numeric status code from the status line ("HTTP/1.x XXX
   REASON\r\n"). Returns 0 on parse failure.
+- `func hasPrefix(s, prefix string) bool` — local
+  stand-in for `strings.HasPrefix`. The gooos user runtime
+  intentionally avoids stdlib pulls, so a four-line scan
+  is cheaper than dragging in `strings`.
+- `func formatIP(ip uint32) string` — local stand-in for
+  net-package address formatting. Used to build the
+  `Host: <a.b.c.d[:port]>` header for the request.
+  Mirrors the inverse of `parseIPOK`.
 
 ## Files to Modify
 

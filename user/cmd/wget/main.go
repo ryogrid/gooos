@@ -340,13 +340,14 @@ func formatIP(ip uint32) string {
 		strconv.Itoa(c) + "." + strconv.Itoa(d)
 }
 
-// splitSpace — copied from user/cmd/tcpcli/main.go:58–82.
+// splitSpace — copied verbatim from user/cmd/tcpcli/main.go:58–82.
 // The 2-tokens-then-tail behavior is irrelevant for wget's
 // single-arg input; we use only tokens[0].
 func splitSpace(s string) []string {
 	var out []string
 	i := 0
 	for i < len(s) {
+		// Skip spaces.
 		for i < len(s) && (s[i] == ' ' || s[i] == '\t') {
 			i++
 		}
@@ -354,6 +355,7 @@ func splitSpace(s string) []string {
 			break
 		}
 		if len(out) >= 2 {
+			// Remainder becomes the last token verbatim.
 			out = append(out, s[i:])
 			return out
 		}
