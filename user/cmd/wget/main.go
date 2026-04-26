@@ -30,11 +30,51 @@ func main() {
 		gooos.Println(errMsg)
 		return
 	}
-	gooos.Println("wget: url=" + url)
-	gooos.Println("wget: ip=" + formatIP(ip) +
-		" port=" + strconv.Itoa(int(port)) +
-		" path=" + path +
-		" filename=" + filename)
+	_ = filename // used in step 5 (file output)
+
+	// Build the HTTP/1.0 GET request. Connection: close lets
+	// the server signal end-of-body by closing the socket
+	// (RFC 1945 §7.2.2), so we don't need Content-Length or
+	// chunked-decoding logic.
+	hostport := formatIP(ip)
+	if port != 80 {
+		hostport += ":" + strconv.Itoa(int(port))
+	}
+	req := "GET " + path + " HTTP/1.0\r\n" +
+		"Host: " + hostport + "\r\n" +
+		"User-Agent: gooos-wget/0.1\r\n" +
+		"Connection: close\r\n" +
+		"\r\n"
+
+	fd := gooos.TCPSocket()
+	if fd < 0 {
+		gooos.Println("wget: TCPSocket failed")
+		return
+	}
+	defer gooos.Close(fd)
+
+	if gooos.TCPConnect(fd, ip, port, 0) < 0 {
+		gooos.Println("wget: TCPConnect failed")
+		return
+	}
+
+	reqBytes := []byte(req)
+	if gooos.TCPSendAll(fd, reqBytes) != len(reqBytes) {
+		gooos.Println("wget: TCPSendAll short/failed")
+		return
+	}
+
+	// Read up to one 4 KiB buffer of response. Step 4 will
+	// replace this with readHeaders() proper.
+	var buf [4096]byte
+	n := gooos.TCPRecv(fd, buf[:], 0)
+	if n < 0 {
+		gooos.Println("wget: TCPRecv error " + strconv.Itoa(n))
+		return
+	}
+	gooos.Println("wget: response (" + strconv.Itoa(n) + " bytes):")
+	gooos.Println(string(buf[:n]))
+	gooos.TCPShutdown(fd, gooos.SHUT_WR)
 }
 
 // parseURL splits an HTTP URL of the form
