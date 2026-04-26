@@ -64,17 +64,106 @@ func main() {
 		return
 	}
 
-	// Read up to one 4 KiB buffer of response. Step 4 will
-	// replace this with readHeaders() proper.
 	var buf [4096]byte
-	n := gooos.TCPRecv(fd, buf[:], 0)
-	if n < 0 {
-		gooos.Println("wget: TCPRecv error " + strconv.Itoa(n))
+	status, bodyOff, totalRead, hErr := readHeaders(fd, buf[:])
+	if hErr != "" {
+		gooos.Println(hErr)
 		return
 	}
-	gooos.Println("wget: response (" + strconv.Itoa(n) + " bytes):")
-	gooos.Println(string(buf[:n]))
+	gooos.Println("wget: HTTP " + strconv.Itoa(status) +
+		" (header " + strconv.Itoa(bodyOff) +
+		"B, body-prefix " + strconv.Itoa(totalRead-bodyOff) + "B)")
 	gooos.TCPShutdown(fd, gooos.SHUT_WR)
+}
+
+// readHeaders accumulates response bytes from fd into buf
+// until "\r\n\r\n" appears. It rescans buf[:totalRead]
+// after every successful recv so a sentinel that straddles
+// two TCPRecv returns is still found. Returns:
+//
+//   - on success: status (parsed from the status line),
+//     bodyOff (first body byte index in buf), totalRead
+//     (total bytes accumulated so far), errMsg = "".
+//   - on TCPRecv n < 0: errMsg = "wget: recv error <n>".
+//   - on TCPRecv n == 0 (clean EOF before sentinel):
+//     errMsg = "wget: server closed before headers".
+//   - on buffer-full without sentinel:
+//     errMsg = "wget: header too large (>4 KiB)".
+func readHeaders(fd int, buf []byte) (status int, bodyOff int, totalRead int, errMsg string) {
+	sentinel := []byte{'\r', '\n', '\r', '\n'}
+	for totalRead < len(buf) {
+		n := gooos.TCPRecv(fd, buf[totalRead:], 0)
+		if n < 0 {
+			errMsg = "wget: recv error " + strconv.Itoa(n)
+			return
+		}
+		if n == 0 {
+			errMsg = "wget: server closed before headers"
+			return
+		}
+		totalRead += n
+		idx := indexOfSeq(buf, totalRead, sentinel)
+		if idx >= 0 {
+			bodyOff = idx + len(sentinel)
+			status = parseStatus(buf, totalRead)
+			return
+		}
+	}
+	errMsg = "wget: header too large (>4 KiB)"
+	return
+}
+
+// indexOfSeq returns the first index i in buf[:n] where
+// buf[i:i+len(seq)] == seq, or -1 if not present.
+// Always called with the full accumulated length so a
+// straddled sentinel is caught.
+func indexOfSeq(buf []byte, n int, seq []byte) int {
+	if n < len(seq) {
+		return -1
+	}
+	for i := 0; i <= n-len(seq); i++ {
+		match := true
+		for j := 0; j < len(seq); j++ {
+			if buf[i+j] != seq[j] {
+				match = false
+				break
+			}
+		}
+		if match {
+			return i
+		}
+	}
+	return -1
+}
+
+// parseStatus extracts the numeric HTTP status code from the
+// first response line (e.g. "HTTP/1.0 200 OK\r\n" → 200).
+// Returns 0 on parse failure.
+func parseStatus(buf []byte, n int) int {
+	// Find the first space (between "HTTP/1.x" and the code).
+	i := 0
+	for i < n && buf[i] != ' ' && buf[i] != '\r' && buf[i] != '\n' {
+		i++
+	}
+	if i >= n || buf[i] != ' ' {
+		return 0
+	}
+	i++
+	// Read decimal digits.
+	v := 0
+	digits := 0
+	for i < n && buf[i] >= '0' && buf[i] <= '9' {
+		v = v*10 + int(buf[i]-'0')
+		i++
+		digits++
+		if digits > 4 {
+			return 0
+		}
+	}
+	if digits == 0 {
+		return 0
+	}
+	return v
 }
 
 // parseURL splits an HTTP URL of the form
