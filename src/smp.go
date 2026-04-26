@@ -349,6 +349,15 @@ func apEntry(apIndex uint64) {
 // comment so a future `git revert` of the §14 commit restores
 // the SMP kernel scheduler in one diff.
 func apSchedulerEntry() {
+	// §15 §3.2 / §16 Step 3: M7 dispatch path. When userspaceSMP
+	// is true, APs run the Ring-3-only dispatcher and consume
+	// from kschedQueuesRing3[cpuID()]. Service kthreads stay
+	// BSP-only per R1+R2; this loop never pops from the
+	// service tier.
+	if userspaceSMP {
+		kschedLoopRing3Only(cpuID())
+		return
+	}
 	if uniprocessorKernel {
 		// M6: AP kernel-mode idle. Per-CPU LAPIC timer continues
 		// to fire (initialised in apEntry); handlePreemptIPI

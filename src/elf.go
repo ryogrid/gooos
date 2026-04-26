@@ -257,6 +257,15 @@ func elfLoad(name string, args string) bool {
 	kschedSpawnRing3WrapperOnBSP(proc)
 	for proc.Exited == 0 {
 		kschedLoopOnce()
+		// §15 §3.2 / §16 Step 3: M7 combined BSP pump. Drive
+		// both tiers — service (kschedQueues[0]) and Ring-3
+		// (kschedQueuesRing3[0], where the boot shell lives
+		// once Step 4 lands) — so the boot shell still runs on
+		// BSP regardless of the userspaceSMP flag value.
+		// kschedLoopRing3OnlyOnce is a no-op when the queue is
+		// empty (pre-Step-4: empty since shell still on service
+		// tier; post-Step-4: holds the shell).
+		kschedLoopRing3OnlyOnce(0)
 		// Under scheduler=cores: yield to TinyGo scheduler so
 		// remaining goroutines (e.g. periodic netDiag) get
 		// scheduling time. Under scheduler=none: this is a no-op

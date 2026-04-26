@@ -17,7 +17,7 @@ Branch: `uni-proc-kernel-but-usrprog-smp`. Starting HEAD:
 - [x] Step 0 — add `scripts/test_ring3_distribution.sh` per `17_*.md` §1
 - [x] Step 1 — add `const userspaceSMP = false` to `src/preempt_config.go`
 - [x] Step 2 — Ring-3 tier scaffolding (`kschedQueuesRing3` + helpers)
-- [ ] Step 3 — APs dispatch Ring-3 tier under flag + BSP combined pump
+- [x] Step 3 — APs dispatch Ring-3 tier under flag + BSP combined pump
 - [ ] Step 4 — exec'd children land on AP queues (`kschedSpawnRing3Wrapper`)
 - [ ] Step 5 — re-purpose 5 SMP-distribution harnesses (SKIP gate flip)
 - [ ] Step 6 — flip `userspaceSMP=true` default + lock-rank doc + RR cleanup
@@ -45,6 +45,15 @@ Branch: `uni-proc-kernel-but-usrprog-smp`. Starting HEAD:
   output, and reported FAIL with `distinct_cpus=0..1`
   (cpuhog + markerprint run entirely on BSP under M6 —
   the very condition M7 fixes).
+- **Step 3** (HEAD `9360477` + Step 3 edits, default
+  `userspaceSMP=false`): regression-only run because Step 3
+  alone changes no behaviour (the `if userspaceSMP` branch
+  in apSchedulerEntry stays inert; the new
+  `kschedLoopRing3OnlyOnce(0)` in the BSP combined pump is
+  a no-op until Step 4 routes the boot shell into the
+  Ring-3 tier). Measured: keyboard 9/10 helpRan
+  10/10 M9 0/10 PF (PASS); post-exec 10/10 helloPrinted
+  0/10 panics (PASS).
 
 ## Deferred
 
