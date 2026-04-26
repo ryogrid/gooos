@@ -1,0 +1,40 @@
+# TODO_M6 — Uniprocessor kernel milestone
+
+Tracker for the execution cycle defined by
+`no_goroutine_kernel_design/14_uniprocessor_kernel.md` and
+driven by `hoge.md`. One TODO item per commit; tick `[x]`
+only after the corresponding commit lands.
+
+Branch: `smp-no-goroutine-in-kernel`. Starting HEAD:
+`0cd9095 add doc: uni core kernel design`.
+
+## Steps
+
+- [x] Bootstrap — create this tracker, run baseline smoke tests
+- [ ] Step 0 — add `scripts/test_run_smp_keyboard.sh` harness
+- [ ] Step 1 — add `const uniprocessorKernel = true`
+- [ ] Step 2 — pin every kthread spawn to BSP (§3.2/§3.3/§3.6)
+- [ ] Step 3 — APs idle in kernel mode (§3.1/§3.4/§3.5)
+- [ ] Step 4 — re-enable net services on BSP (§3.7/§3.8)
+- [ ] Step 5 — SMP-distribution tests SKIP/re-purposed (§6.2)
+- [ ] Step 6 — lock-rank doc + RR counter cleanup (§4)
+- [ ] Reviewer sub-agent pass (`hoge.md` §5)
+- [ ] README + impldoc refresh (`hoge.md` §6)
+- [ ] Final sweep — grep TODO/FIXME/XXX/HACK + verification
+
+## Baseline (HEAD `0cd9095`)
+
+- `scripts/test_kthread_smoke.sh`: PASS (A=5 B=5 ok=1)
+- `scripts/test_ps.sh`: PASS (header=1 row=1)
+- 10-iter `qemu -smp 4` HMP `sendkey h e l p ret`
+  (measured in M6 bisection at `193e205`):
+  0/10 helpRan, 0/10 PF (with M6 partial fix), 0/10 M9-drained.
+  This is the regression that §14 fixes.
+
+## Per-step measurements
+
+(populated as each step lands)
+
+## Deferred
+
+(items punted from this cycle; surface in final report)
