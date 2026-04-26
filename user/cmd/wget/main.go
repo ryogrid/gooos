@@ -30,7 +30,6 @@ func main() {
 		gooos.Println(errMsg)
 		return
 	}
-	_ = filename // used in step 5 (file output)
 
 	// Build the HTTP/1.0 GET request. Connection: close lets
 	// the server signal end-of-body by closing the socket
@@ -70,10 +69,62 @@ func main() {
 		gooos.Println(hErr)
 		return
 	}
-	gooos.Println("wget: HTTP " + strconv.Itoa(status) +
-		" (header " + strconv.Itoa(bodyOff) +
-		"B, body-prefix " + strconv.Itoa(totalRead-bodyOff) + "B)")
+	if status != 200 {
+		gooos.Println("wget: HTTP " + strconv.Itoa(status))
+		gooos.TCPShutdown(fd, gooos.SHUT_WR)
+		return
+	}
+
+	outfd := gooos.Open(filename, gooos.OpenWrite)
+	if outfd < 0 {
+		gooos.Println("wget: open " + filename + " failed (" +
+			strconv.Itoa(outfd) + ")")
+		gooos.TCPShutdown(fd, gooos.SHUT_WR)
+		return
+	}
+
+	totalBody := 0
+
+	// Body prefix that arrived in the same recv as the
+	// header tail.
+	if totalRead > bodyOff {
+		prefix := buf[bodyOff:totalRead]
+		w := gooos.Write(outfd, prefix)
+		if w != len(prefix) {
+			gooos.Println("wget: short write (FS limit ~256 KiB)")
+			gooos.Close(outfd)
+			gooos.TCPShutdown(fd, gooos.SHUT_WR)
+			return
+		}
+		totalBody += len(prefix)
+	}
+
+	// Stream the rest of the body until clean EOF or error.
+	for {
+		n := gooos.TCPRecv(fd, buf[:], 0)
+		if n == 0 {
+			break // clean EOF — server closed (RFC 1945 §7.2.2)
+		}
+		if n < 0 {
+			gooos.Println("wget: recv error " + strconv.Itoa(n))
+			gooos.Close(outfd)
+			gooos.TCPShutdown(fd, gooos.SHUT_WR)
+			return
+		}
+		w := gooos.Write(outfd, buf[:n])
+		if w != n {
+			gooos.Println("wget: short write (FS limit ~256 KiB)")
+			gooos.Close(outfd)
+			gooos.TCPShutdown(fd, gooos.SHUT_WR)
+			return
+		}
+		totalBody += n
+	}
+
+	gooos.Close(outfd)
 	gooos.TCPShutdown(fd, gooos.SHUT_WR)
+	gooos.Println("wget: saved " + filename + " (" +
+		strconv.Itoa(totalBody) + " bytes)")
 }
 
 // readHeaders accumulates response bytes from fd into buf
