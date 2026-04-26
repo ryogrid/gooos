@@ -9,7 +9,7 @@ Design doc: [design_docs/01_simple-wget_overview.md](design_docs/01_simple-wget_
 - [x] 3. HTTP transaction (TCP connect + send GET + read raw response into 4 KiB buf, print)
 - [x] 4. Header parser (readHeaders, parseStatus, indexOfSeq; print status + body-prefix length)
 - [x] 5. Body streaming + status gating (Open/Write/Close output file; non-200 → no file)
-- [ ] 6. Embed + kernel rebuild (regenerate src/user_binaries.go via embed_elfs.sh)
+- [x] 6. Embed + kernel rebuild (regenerate src/user_binaries.go via embed_elfs.sh)
 - [ ] 7. Documentation updates (README.md L42, docs/user_programs.md, docs/repo_layout.md)
 
 ## Deferred
