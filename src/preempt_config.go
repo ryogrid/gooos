@@ -126,3 +126,21 @@ const runMinimalKthreads = false
 //
 // See no_goroutine_kernel_design/14_uniprocessor_kernel.md.
 const uniprocessorKernel = true
+
+// userspaceSMP enables Ring-3 process dispatch on APs while
+// the kernel itself stays uniprocessor on BSP. When false,
+// M6 semantics apply: APs idle in `sti; hlt;` and exec'd
+// children land on BSP. When true:
+//   - apSchedulerEntry runs kschedLoopRing3Only(cpuID()) on each AP
+//   - kschedSpawnRing3Wrapper round-robins exec'd children
+//     onto AP queues (1..numCoresOnline-1)
+//   - kschedSpawnRing3WrapperOnBSP keeps the boot shell on
+//     BSP via the Ring-3 tier (so the BSP combined pump
+//     dispatches it)
+//   - kschedStealRing3 enables AP↔AP stealing for Ring-3 hosts
+//
+// Service kthreads (timerDispatcher, fsTask, net/tcp, etc.)
+// stay BSP-pinned regardless of this flag, per §15 §2 R1+R3a.
+//
+// See no_goroutine_kernel_design/15_userspace_smp_on_aps.md.
+const userspaceSMP = false
