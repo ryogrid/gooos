@@ -444,7 +444,7 @@ new file mode 100644
 index 00000000..3cadea13
 --- /dev/null
 +++ b/src/runtime/runtime_gooos.go
-@@ -0,0 +1,273 @@
+@@ -0,0 +1,272 @@
 +//go:build gooos && baremetal && kernelspace
 +
 +// gooos-local runtime bodies for bare-metal x86_64 Ring 0.
@@ -1225,7 +1225,7 @@ new file mode 100644
 index 00000000..4becca77
 --- /dev/null
 +++ b/src/runtime/runtime_gooos_sched_cores.go
-@@ -0,0 +1,25 @@
+@@ -0,0 +1,24 @@
 +//go:build gooos && baremetal && kernelspace && !scheduler.none
 +
 +// gooos-local runtime declarations specific to scheduler=cores
