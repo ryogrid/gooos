@@ -20,7 +20,7 @@ Branch: `smp-no-goroutine-in-kernel`. Starting HEAD:
 - [x] Step 6 — lock-rank doc + RR counter cleanup (§4)
 - [x] Reviewer sub-agent pass (`hoge.md` §5)
 - [x] README + impldoc refresh (`hoge.md` §6)
-- [ ] Final sweep — grep TODO/FIXME/XXX/HACK + verification
+- [x] Final sweep — grep TODO/FIXME/XXX/HACK + verification
 
 ## Baseline (HEAD `0cd9095`)
 
@@ -67,6 +67,22 @@ Branch: `smp-no-goroutine-in-kernel`. Starting HEAD:
   `make verify-globals` clean; K5 preserved — user-side
   build untouched). The only MINOR is the README refresh,
   which is the next workflow step.
+- **Final §8 verification matrix** (HEAD `3113e3b`):
+  - `scripts/test_run_smp_keyboard.sh`: 10/10 helpRan,
+    10/10 M8, 10/10 M9, 0/10 PF — **PASS** (above bar).
+  - `scripts/test_kthread_smoke.sh`: PASS (A=5 B=5 ok=1).
+  - `scripts/test_ps.sh`: PASS (header=1 row=1).
+  - `scripts/test_net.sh`: PASS (UDP echo round-trip).
+  - `scripts/test_tcp_longidle.sh 15`: PASS.
+  - `scripts/test_tcp_phase[1-5].sh`: 5/5 PASS.
+  - `make build` / `make lint` / `make verify-globals`:
+    clean (`verify-globals: OK (4 symbols ...)`).
+  - `make -C user all`: clean ("Nothing to be done").
+  - 5 SMP-distribution scripts: SKIP under flag.
+  - `grep -rIn 'TODO\|FIXME\|XXX\|HACK' src/ scripts/`:
+    only 3 pre-existing references to TODO_FIX.md /
+    TODO_SMP4.md inside source comments — **none added
+    by this M6 cycle**.
 
 ## Deferred
 
