@@ -17,7 +17,7 @@ Branch: `smp-no-goroutine-in-kernel`. Starting HEAD:
 - [x] Step 3 — APs idle in kernel mode (§3.1/§3.4/§3.5)
 - [x] Step 4 — re-enable net services on BSP (§3.7/§3.8)
 - [x] Step 5 — SMP-distribution tests SKIP/re-purposed (§6.2)
-- [ ] Step 6 — lock-rank doc + RR counter cleanup (§4)
+- [x] Step 6 — lock-rank doc + RR counter cleanup (§4)
 - [ ] Reviewer sub-agent pass (`hoge.md` §5)
 - [ ] README + impldoc refresh (`hoge.md` §6)
 - [ ] Final sweep — grep TODO/FIXME/XXX/HACK + verification
@@ -56,6 +56,9 @@ Branch: `smp-no-goroutine-in-kernel`. Starting HEAD:
   M8=10/10, M9=10/10, PF=0/10. ✅ Holding the §14 §8 bar.
   `scripts/test_net.sh` PASS (UDP echo round-trip, ARP,
   ICMP, netbuf lifecycle).
+- **Step 6** (HEAD `e49d47f` + Step 6 doc edits): keyboard
+  10-iter helpRan=10/10, M8=10/10, M9=10/10, PF=0/10. ✅
+  Doc-only changes do not regress correctness.
 
 ## Deferred
 

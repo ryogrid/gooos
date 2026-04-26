@@ -45,6 +45,11 @@ var kschedInitialized uint32
 // placement. Racey increment is acceptable; kschedSpawn takes
 // kschedQueues[target].lock around the push so the resulting push
 // is well-ordered (§02 rule 2).
+//
+// §14 invariant U4: the counter is unread under uniprocessorKernel
+// (kschedSpawn / kschedSpawnRing3Wrapper bypass the round-robin
+// block). The variable is reserved for M7 (Ring-3 dispatch on APs)
+// when AP-side kthread placement returns; do not delete.
 var kschedSpawnRRCounter uint32
 
 // kschedDefaultQuantum is the per-thread starting quantum in LAPIC

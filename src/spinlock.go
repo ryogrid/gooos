@@ -48,6 +48,26 @@
 // See impldoc/smp_percpu_and_sync.md §4 for the pre-Route-C
 // design and no_goroutine_kernel_design/03_sync_primitives.md
 // for the Route C primitives.
+//
+// §14 (M6) — Uniprocessor kernel addendum:
+//   Under uniprocessorKernel = true (preempt_config.go), the
+//   gooos kthread scheduler runs on BSP only; APs idle in
+//   kernel mode. Ranks 13..16 lose cross-CPU contention:
+//     - Rank 13 (fsReqQueue.lock, udpDgramQueue.lock):
+//         producers may still be ISRs (cross-context) but
+//         never cross-CPU. Same-CPU ISR ↔ kthread is handled
+//         by Spinlock.Acquire's cli.
+//     - Rank 14 (KEvent.lock): same-CPU only.
+//     - Rank 15 (kschedQueues[cpu].lock): only
+//         kschedQueues[0] is ever contended; others see no
+//         writes (kschedSpawn{,At} clamp targetCPU=0).
+//     - Rank 16 (kthreadPoolLock): all alloc/free on BSP.
+//   Rank 17 (serialLock): unchanged — kept because ISRs
+//   from APs (their own LAPIC timer) still write to COM1.
+//   The ranked table itself is unchanged; rollback to SMP
+//   kernel is `git revert` of the §14 commit range.
+//   See no_goroutine_kernel_design/14_uniprocessor_kernel.md
+//   §4 for the rationale.
 
 package main
 
