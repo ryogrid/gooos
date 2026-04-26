@@ -139,20 +139,41 @@ Branch: `uni-proc-kernel-but-usrprog-smp`. Starting HEAD:
 ## Deferred
 
 - **M7 cross-CPU exec latency** (post-Step-6, perf only): under
-  `userspaceSMP=true` the round-trip from `gooos.Exec("hello.elf")`
-  on BSP-resident shell to `Hello, World ...` reaching serial
-  takes substantially longer than the M6 same-CPU path
-  (sometimes 6-12 s vs sub-second). Cause: parent's
-  `processWait` poll loop uses 1-tick (10 ms) `kschedTimedPark`
-  iterations + cross-CPU `gooosWakeupCPU` IPI for each wake.
-  Not a correctness regression — child always completes
-  eventually (verified 20s manual run). The
-  `scripts/test_shell_post_exec_prompt.sh` harness was
-  updated to a 14s wait window to absorb this.
-  Investigation should profile where the latency lives
-  (poll period? IPI delivery delay? AP idle wakeup?) and
-  consider tightening processWait's poll interval or
-  switching to a KEvent-based wait.
-  Tracked under §15 §12 (M8+) "process migration after spawn"
-  — adjacent territory. Pre-M8 mitigation could be a
-  shorter `kschedTimedPark` interval for `processWait`.
+  `userspaceSMP=true` the round-trip from `gooos.Exec(...)`
+  on BSP-resident shell to child completion takes
+  substantially longer than the M6 same-CPU path. Measured:
+  - `hello`: 6-12 s (vs M6 sub-second)
+  - `goprobe`: ~10-15 s
+  - `smpprobe` (4 worker children, each requiring its own
+    cross-CPU sys_wait): ~40-50 s
+
+  Cause: parent's `processWait` poll loop uses 1-tick
+  (10 ms) `kschedTimedPark` iterations + cross-CPU
+  `gooosWakeupCPU` IPI for each wake. Each parent↔child
+  exit cycle adds latency. Multi-child waiters
+  (`smpprobe` calls Wait 4×) compound it.
+
+  Not a correctness regression — every child eventually
+  completes, parent's last sys_wait returns, exit code
+  reaches the shell, `$ ` prompt re-emerges. Verified by
+  serial logs ending with `MARKER: M6 processWait
+  post-exitCh-recv` followed by `$ `.
+
+  User-facing impact: long-running interactive commands
+  appear to "hang" because the shell prompt doesn't
+  return for tens of seconds. **No data loss; eventually
+  succeeds.**
+
+  Mitigations to investigate:
+  1. Tighten `processWait`'s `kschedTimedPark(1)` interval
+     OR replace the poll loop with a KEvent that
+     `processExit` signals.
+  2. Profile where the latency actually lives
+     (kschedTimedPark wake-up? IPI delivery? AP idle
+     latency? procLock contention on procByPID?).
+  3. Add an `EventOnExit` per-Process so the parent waits
+     on a Signal directly rather than polling.
+
+  Tracked under §15 §12 (M8+) "process migration after
+  spawn" — adjacent territory. Pre-M8 mitigation could
+  be the EventOnExit pattern (item 3).
