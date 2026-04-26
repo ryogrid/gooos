@@ -45,6 +45,12 @@ planning.
 | 09 | [`09_incremental_migration_plan.md`](09_incremental_migration_plan.md) | M0 → M5 milestone plan with gating tests | Everyone |
 | 10 | [`10_risks_rollback_and_open_questions.md`](10_risks_rollback_and_open_questions.md) | What goes wrong, how to back out, reviewer MINOR parking lot | Everyone |
 | 11 | [`11_readme_update_plan.md`](11_readme_update_plan.md) | README diff shape (no README edit this cycle) | Implementers of M4/M5 |
+| 12 | [`12_implementation_notes.md`](12_implementation_notes.md) | Reviewer-pass MINOR findings + post-cycle Open issues + risks | Everyone |
+| 13 | [`13_post_m5_completion.md`](13_post_m5_completion.md) | Route C M5 close-out + invariants verification matrix | Everyone |
+| 14 | [`14_uniprocessor_kernel.md`](14_uniprocessor_kernel.md) | M6: kernel runs as a uniprocessor on BSP; APs idle in kernel mode | Implementers + Everyone |
+| 15 | [`15_userspace_smp_on_aps.md`](15_userspace_smp_on_aps.md) | M7: Ring-3 user processes dispatch on APs (design contract; R1..R13 invariants) | Implementers + Everyone |
+| 16 | [`16_m7_execution_plan.md`](16_m7_execution_plan.md) | M7 Step 0..7 work order (one commit per Step, decision rules, gating measurements) | Implementers |
+| 17 | [`17_m7_test_strategy.md`](17_m7_test_strategy.md) | M7 new harness spec + 5 SKIP-gate rewrites + failure-mode catalog | Implementers |
 
 ## Cross-reference map
 
