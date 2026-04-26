@@ -30,11 +30,23 @@ The five paths:
 
 | Path | Listener | Host-side port | What it exercises |
 |---|---|---|---|
-| A | Kernel-builtin UDP echo | `127.0.0.1:9999` (hostfwd → guest 7) | `e1000` RX → `netRxLoop` → `ethernetDispatch` → `ipv4Handle` → `udpHandle` → kernel goroutine → `ipv4Send` → `e1000Transmit` TX |
-| B | Userspace `udpecho.elf` | `127.0.0.1:19999` (hostfwd → guest 17) | Path A's RX half + `socketFd.recvCh` → `sys_recvfrom` → Ring-3 `UDPRecvFrom` → `UDPSendTo` → `sys_sendto` → `udpSend` → TX |
-| C | Userspace `dhcp.elf` | Broadcast to `255.255.255.255:67` via `sys_sendto_bcast` / QEMU slirp's built-in DHCP server at `10.0.2.2` | Full DORA, `sys_net_config` lease apply, `/network.conf` persistence |
-| D | Kernel-builtin TCP echo | `127.0.0.1:10080` (hostfwd → guest 8080) | `ipv4Handle` → `tcpHandle` → TCB state machine (LISTEN → SYN_RECEIVED → ESTABLISHED → CLOSE_WAIT → LAST_ACK → CLOSED) + `tcpEchoServer` goroutine + `tcpSendSegment` → `ipv4Send` → TX |
-| E | Userspace `tcpecho.elf` | `127.0.0.1:10081` (hostfwd → guest 8081) | Path D's state machine + `sys_accept` → Ring-3 `TCPAccept` → `TCPRecv` / `TCPSendAll` → `sys_tcp_send`/`sys_tcp_recv` → `tcpTCBDrainTX` → TX |
+| A | Kernel-builtin UDP echo | `127.0.0.1:9999` (hostfwd → guest 7) | `e1000` RX → `netRxLoop` **kernel kthread (BSP-pinned per M6/M7 R1)** → `ethernetDispatch` → `ipv4Handle` → `udpHandle` → kernel echo path → `ipv4Send` → `e1000Transmit` TX |
+| B | Userspace `udpecho.elf` | `127.0.0.1:19999` (hostfwd → guest 17) | Path A's RX half + `socketFd.recvQ` (`udpDgramQueue` MPSC) → `sys_recvfrom` → Ring-3 `UDPRecvFrom` → `UDPSendTo` → `sys_sendto` → `udpSend` → TX. Under M7, `udpecho.elf` itself runs on an AP — its `KEvent.Wait` parks on the AP, BSP `netRxLoop` `Signal`s, cross-CPU wake via `gooosWakeupCPU` IPI `0xFC` |
+| C | Userspace `dhcp.elf` | Broadcast to `255.255.255.255:67` via `sys_sendto_bcast` / QEMU slirp's built-in DHCP server at `10.0.2.2` | Full DORA, `sys_net_config` lease apply, `/network.conf` persistence. Under M7, `dhcp.elf` runs on an AP; the broadcast send is BSP-mediated through the same `udpSend` path. |
+| D | Kernel-builtin TCP echo | `127.0.0.1:10080` (hostfwd → guest 8080) | `ipv4Handle` → `tcpHandle` → TCB state machine (LISTEN → SYN_RECEIVED → ESTABLISHED → CLOSE_WAIT → LAST_ACK → CLOSED) + `tcpEchoServer` **kernel kthread (BSP-pinned)** + `tcpSendSegment` → `ipv4Send` → TX |
+| E | Userspace `tcpecho.elf` | `127.0.0.1:10081` (hostfwd → guest 8081) | Path D's state machine + `sys_accept` → Ring-3 `TCPAccept` → `TCPRecv` / `TCPSendAll` → `sys_tcp_send`/`sys_tcp_recv` → `tcpTCBDrainTX` → TX. Under M7, `tcpecho.elf` runs on an AP and parks on `KEvent.Wait`; segment arrival on BSP `netRxLoop` triggers cross-CPU wake. |
+
+> **M7 routing summary** (per
+> [`../no_goroutine_kernel_design/15_userspace_smp_on_aps.md`](../no_goroutine_kernel_design/15_userspace_smp_on_aps.md)):
+> all hardware IRQs (PIT, PS/2 keyboard, e1000) land on **BSP only**
+> via PIC pass-through. The protocol-handling kthreads
+> (`netRxLoop`, `udpEcho`, `tcpRTOScanner`, `tcpEcho`,
+> `netDiagLoop`) are BSP-pinned per R1. AP-resident user
+> processes do their socket I/O via `KEvent` park/wake; the
+> BSP service kthread that handles the IRQ → protocol
+> demux → `KEvent.Signal` wakes the AP via wake-IPI `0xFC`.
+> e1000 IRQ steering to APs is **deferred to M8**
+> (`15_userspace_smp_on_aps.md` §12).
 
 ## Communication flow (ASCII)
 

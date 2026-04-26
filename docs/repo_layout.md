@@ -1,7 +1,8 @@
 # Repository layout
 
-Refreshed 2026-04-19 against `tcp-take2`. Run `ls` in any
-subdirectory for the current authoritative listing.
+Refreshed 2026-04-26 against `master` (post-M7 — userspace
+SMP on APs landed). Run `ls` in any subdirectory for the
+current authoritative listing.
 
 ```
 gooos/
@@ -11,22 +12,53 @@ gooos/
 ├── LICENSE
 ├── gooos_mascot2.png                      # mascot
 ├── go.mod                                 # module github.com/ryogrid/gooos
-├── TODO_NET4.md                           # fix checklist (most recent; prior ones in pasttodos/)
+├── TODO_M6.md                             # M6 (uniprocessor kernel) tracker
+├── TODO_M7.md                             # M7 (userspace SMP on APs) tracker
+├── TODO_NET4.md                           # legacy (pre-Route-C net fix; prior ones in pasttodos/)
 │
 ├── docs/                                  # README-companion walkthroughs
 │   ├── networking_demos.md                # Path A/B/C/D/E end-to-end walkthrough
 │   ├── user_programs.md                   # gochan / tinyc / edit / fdprobe / ...
 │   └── repo_layout.md                     # this file
 │
-├── current_impl_doc/                      # as-built reference (8 files)
-│   ├── overview.md                        # architecture, boot, memory layout
-│   ├── syscalls.md                        # 34-syscall ABI reference
-│   ├── scheduler.md                       # task management, process lifecycle
-│   ├── memory.md                          # page allocator, page tables
-│   ├── ipc.md                             # channels, service tasks
-│   ├── userland.md                        # SDK, build system, user programs
-│   ├── glossary.md                        # terminology (Ring-3 wrapper, goroutine kinds, etc.)
-│   └── known_issues.md                    # active workarounds + resolved bugs
+├── no_goroutine_kernel_design/            # ACTIVE design (Route C → M5 → M6 → M7)
+│   ├── 00_index.md                        # TOC, reading order, conventions
+│   ├── 01_overview_and_motivation.md      # why Route C
+│   ├── 02_kernel_thread_runtime.md        # KernelThread, asm switch, ready queues
+│   ├── 03_sync_primitives.md              # KEvent, KQueue, kschedTimedPark
+│   ├── 04_preemption_and_isr.md           # preempt-IPI, ISR / spinlock invariants
+│   ├── 05_gc_integration.md               # STW broadcast freeze IPI design (M8 future)
+│   ├── 06_service_migration.md            # 1:1 chan → primitive mapping
+│   ├── 07_userspace_boundary.md           # ring3WrapperKT, K5 invariant
+│   ├── 08_build_config_and_tinygo_patch.md # scheduler=cores → none flip
+│   ├── 09_incremental_migration_plan.md   # M0..M5 milestone plan
+│   ├── 10_risks_rollback_and_open_questions.md
+│   ├── 11_readme_update_plan.md
+│   ├── 12_implementation_notes.md         # § Open issues + risks (M6 + M7 updates)
+│   ├── 13_post_m5_completion.md           # Route C M5 close-out
+│   ├── 14_uniprocessor_kernel.md          # M6 design (kernel uniprocessor on BSP)
+│   ├── 15_userspace_smp_on_aps.md         # M7 design (userspace SMP)
+│   ├── 16_m7_execution_plan.md            # M7 Step 0..7 work order
+│   └── 17_m7_test_strategy.md             # M7 harness rewrites + new gates
+│
+├── current_impl_0421_night/               # pre-Route-C as-built reference (12 files; substrate
+│   │                                      # boot/IRQ/VM/networking still applies)
+│   ├── 00_index.md
+│   ├── 01_boot_and_kernel_init.md
+│   ├── 02_cpu_descriptors_traps_interrupts.md
+│   ├── 03_smp_lapic_timer_ipi.md
+│   ├── 04_scheduler_runtime_preemption.md  # ← legacy goroutine scheduler; superseded by no_goroutine_kernel_design/02
+│   ├── 05_process_elf_ring3_syscalls_signals.md
+│   ├── 06_memory_vm_allocator_gc.md
+│   ├── 07_filesystem_fd_shell_io.md
+│   ├── 08_network_stack_driver_to_socket.md
+│   ├── 09_userland_abi_and_embedded_elves.md
+│   ├── 10_test_harnesses_and_instability_map.md
+│   └── 11_traceability_matrix.md
+│
+├── current_impl_2026_04_24/               # pre-Route-C SMP fix-plan deliverables
+├── current_impl_2026_04_26/               # Route C close-out + M6 RESOLVED + M7 LANDED
+│   └── route_c_kernel.md
 │
 ├── impldoc/                               # design docs (English, ~55 files)
 │   ├── busybox_*.md                       # original shell/syscall design (5 files)
@@ -124,7 +156,7 @@ gooos/
     ├── trampoline.S                       # AP trampoline (16-bit → 64-bit for SMP)
     ├── stubs.S                            # port I/O, CPU control, GC support
     ├── linker.ld                          # section layout, heap, .pagetables, _alloc_start
-    ├── target.json                        # TinyGo target: gc=conservative, scheduler=tasks, kernelspace
+    ├── target.json                        # TinyGo target: gc=conservative, scheduler=none, kernelspace (M5.2 — gooos kthread sched)
     │
     │   # Core kernel infrastructure
     ├── main.go                            # kernel entry: init + service goroutine spawns
@@ -159,10 +191,23 @@ gooos/
     ├── elf.go                             # ELF64 parser and loader
     ├── user_binaries.go                   # generated: embedded user ELF byte arrays
     │
+    │   # Route C kernel-thread scheduler (M0..M5; M6/M7 dispatch tier additions)
+    ├── kthread.go                         # KernelThread struct, KState, kthreadPool layout
+    ├── kthread_pool.go                    # spinlock-protected slot bitmap (rank 16)
+    ├── kthread_sched.go                   # kschedLoop / kschedLoopOnce + service tier kschedQueues + M7 Ring-3 tier kschedQueuesRing3 + kschedLoopRing3Only(Once)
+    ├── kthread_lifecycle.go               # kschedSpawn / kschedSpawnAt / kschedWake (Ring-3 routing) / kschedExit
+    ├── kthread_switch.S                   # asm context switch (callee-saved + RFLAGS save/restore)
+    ├── kthread_ring3.go                   # ring3WrapperKT, kschedSpawnRing3Wrapper(OnBSP), kthreadResumeRing3Ctx
+    ├── kthread_event.go                   # KEvent (single-shot wait/signal, rank 14)
+    ├── kthread_queue.go                   # fsReqQueue + udpDgramQueue MPSC primitives (rank 13)
+    ├── kthread_smoke.go                   # M0 smoke test (gated by runKthreadSmoke)
+    ├── ring3_pool.go                      # Ring-3 user-process kernel-stack pool (M6.fix-1: spinlock free-bitmap)
+    ├── preempt_config.go                  # uniprocessorKernel + userspaceSMP + preempt/probe gates
+    │
     │   # Shell/FS/pipes/keyboard/VGA
-    ├── fs.go                              # in-memory FS + go fsTask() over native chan
+    ├── fs.go                              # in-memory FS; fsTask is a kthread (kschedSpawnAt(.., 0)) over fsReqQueue MPSC + per-request KEvent
     ├── fd.go                              # FileDesc abstractions (stdin/stdout/file/pipe/socket)
-    ├── pipe.go                            # anonymous pipes (chan byte backed)
+    ├── pipe.go                            # anonymous pipes (chan byte backed; user-side, K5)
     ├── keyboard.go                        # PS/2 keyboard IRQ handler (ISR-safe)
     ├── keyboard_irq.go                    # SPSC ring buffer + blocking keyboard-read wait path
     ├── vga.go                             # VGA console with cursor and scrolling
@@ -196,8 +241,12 @@ gooos/
 
 - `tmp/` is a scratch directory (not under version control; used
   for test-run output, serial logs, ISO builds).
-- `user/target.json` sets `gc=conservative` + `scheduler=tasks`;
-  `src/target.json` adds `kernelspace` to disambiguate the patched
-  TinyGo runtime bodies in `~/.local/tinygo/src/runtime/`.
+- `user/target.json` sets `gc=conservative` + `scheduler=tasks`
+  (K5 invariant — user side stays cooperative).
+  `src/target.json` sets `gc=conservative` + `scheduler=none`
+  (Route C M5.2 — kernel runs the gooos `kschedLoop` instead
+  of TinyGo's goroutine scheduler) and adds `kernelspace` to
+  disambiguate the patched TinyGo runtime bodies in
+  `~/.local/tinygo/src/runtime/`.
 - Commit tags follow `scope(subsys): ...` conventions; walk
   `git log --oneline` for examples.

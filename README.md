@@ -2,16 +2,22 @@
 
 An experimental x86_64 operating system written in **Go (TinyGo) + GNU assembly**. The kernel runs on a **custom kernel-thread scheduler under TinyGo `scheduler=none`** (`gc=conservative`) — service loops, IPC consumers, and every Ring-3 process host are gooos kernel threads (`kschedSpawn`); IPC is via the gooos `udpDgramQueue` / `fsReqQueue` MPSC primitives + the single-shot `KEvent`; no Go `chan` / `select` / `go` keyword in `src/*.go` (M5.2 invariant). Cross-CPU dispatch via per-CPU FIFO queues + work-stealing + an LAPIC wake IPI on remote-`kschedPush`. Assembly is used only where the CPU demands it.
 
-> **Status note (2026-04-26):** the README progress table below
-> still describes the pre-Route C state in many rows (TinyGo
-> goroutines, `scheduler=cores`, `gooosOnResume`, etc.). The
-> as-built state of the kernel post-M5.2 + the post-M5 P1
-> reviewer pass is documented in
-> `no_goroutine_kernel_design/12_implementation_notes.md` and
-> `no_goroutine_kernel_design/13_post_m5_completion.md`. A row-
-> by-row README refresh is the P2 follow-up; until that lands,
-> any row that mentions "TinyGo goroutines" or
-> "`scheduler=cores`" should be read as legacy context.
+> **Status note (2026-04-26):** the table below now reflects the
+> as-built state through **M7** (userspace SMP on APs). The kernel
+> runs as a uniprocessor on the BSP under TinyGo `scheduler=none`
+> (Route C, M5.2). All long-lived service loops are gooos kernel
+> threads (`kschedSpawnAt(...)`); IPC uses `KEvent` + the
+> `fsReqQueue` / `udpDgramQueue` MPSC primitives — no `chan` /
+> `select` / `go` in `src/*.go` (M5.2 invariant). Under
+> `userspaceSMP=true` (M7 default), exec'd Ring-3 children
+> round-robin onto APs via the Ring-3 ready-queue tier
+> (`kschedQueuesRing3[1..N-1]`); the boot shell stays on BSP
+> (`kschedQueuesRing3[0]`). Design set:
+> `no_goroutine_kernel_design/{02,03,04}_*.md` (Route C primitives),
+> `14_uniprocessor_kernel.md` (M6), `15_userspace_smp_on_aps.md`
+> +`16_m7_execution_plan.md`+`17_m7_test_strategy.md` (M7),
+> plus `12_implementation_notes.md` and `13_post_m5_completion.md`
+> for the migration history. Rows below should match the source.
 
 ![gooos mascot](gooos_mascot2.png)
 
@@ -26,11 +32,11 @@ An experimental x86_64 operating system written in **Go (TinyGo) + GNU assembly*
 | PIT / timer | Done | PIT channel 0 at 100 Hz, global tick counter, drives `sleepTicks` for `time.Sleep` |
 | PS/2 keyboard driver | Done | IRQ1 handler, scancode set 1 → ASCII, lock-free SPSC ring buffer drained directly by blocking stdin readers |
 | Virtual memory management | Done | Page fault handler, `mapPage`/`unmapPage` with 4 KiB granularity, bump + LIFO free stack with `allocPagesContig` for kernel stacks |
-| Scheduler | Done (preemptive) | **TinyGo native goroutines** (`scheduler=cores` — multi-core, per-CPU runqueues + work-stealing, **preemptive**). BSP's 100 Hz LAPIC timer broadcasts preempt IPI vector 0xFB to every AP (feature 2.1); each AP's `handlePreemptIPI` checks safe-points then calls `runtime.Gosched()`. Ring-3 user goroutines preempted via kernel-delivered SIGALRM (feature 2.2, iretq-frame rewrite). TSS.RSP0 updated per-Ring-3-goroutine via the `gooosOnResume` hook |
-| Userspace | Done | Ring 3 execution via `iretq`, TSS for privilege transitions, `int 0x80` syscall interface (39 syscalls — see the Syscall ABI row below and `current_impl_0421_night/05_process_elf_ring3_syscalls_signals.md`); each user process is a `ring3Wrapper` goroutine; user goroutines are preemptive via kernel-delivered SIGALRM (feature 2.2, `impldoc/preempt_user_goroutines.md`) |
-| Filesystem | Done | In-memory flat filesystem: `Create`/`Write`/`Read`/`List`/`Delete` (32 entries, 256 KiB each); served by `fsTask` goroutine over native `chan *fsRequest` |
-| SMP | Done (v2 on TinyGo 0.40.1, multi-core `scheduler=cores`) | **Multi-processor scheduling.** Per-CPU storage (`IA32_GS_BASE`), per-CPU GDT/TSS/IDT, per-CPU runqueues (`runqueues[cpuID()]`), LAPIC timer (BSP), IPI wakeup vector 0xFC, spinlocks (page allocator, process maps, Queue, sleep/timer queues), per-CPU `cpuTasks`/`systemStack` via `runtime.systemStackPtr`. APs boot via INIT-SIPI-SIPI, load their own IDT/GDT/TSS, then enter TinyGo's scheduler (`runtime.apScheduler`) after `bspBootDone`. `stealWork` is **wired live**: when an AP's local queue is empty it steals from peers. `scheduleTask` broadcasts an IPI via `schedulerWake → gooosWakeupCPU` so idle APs wake and drain work. Observed: kernel goroutines and the Ring-3 shell goroutine routinely migrate to AP 1/3 (verified by `scripts/test_smp_basic.sh`). **Ring-3 process spawn distribution (2026-04-24 cycle, B1)**: `elfSpawn` now uses a round-robin counter + new `runtime.migrateAndPause` bridge (patched into `scheduler_cores.go`) to place each new `ring3Wrapper` on a different target CPU's runqueue at spawn time; previously all workers landed on BSP until `stealWork` happened to pick them up. See `current_impl_2026_04_24/fix_plan_deferred_1_5/02_ring3wrapper_round_robin_distribution.md`. **Preemption**: feature 2.1 — BSP broadcasts preempt IPI vector 0xFB at every 100 Hz LAPIC tick; each AP's `handlePreemptIPI` safe-point-checks and calls `runtime.Gosched()`. A tight compute-bound kernel goroutine on an AP gets ~10 ms quantum. Ring-3 user goroutines are preempted via kernel-delivered SIGALRM (feature 2.2). **Known gap**: the AP LAPIC timer's per-CPU tick remains deferred (second-order hang, see `impldoc/smp_deferred_and_known_issues.md §2.2`); 2.1 chose BSP-broadcast IPI which gives coarser IPI-latency quantum without the hang. See `impldoc/smp_unblock_overview.md` for the M2/M3/M4 unblock write-up and `impldoc/smp_migration_overview.md` for the 0.33.0 → 0.40.1 migration background |
-| Channel IPC + select | Done | **Native Go `chan` and `select`** in Ring 0. `fsReqCh` and per-process `exitCh` are native Go channels constructed by the TinyGo runtime |
+| Scheduler | Done (preemptive, Route C M5.2) | **gooos kernel-thread scheduler** under TinyGo `scheduler=none` — every long-lived loop is a `KernelThread` dispatched by `kschedLoop` / `kschedLoopOnce` (BSP) / `kschedLoopRing3Only` (AP, M7). Per-CPU FIFO ready queues split into a **service tier** (`kschedQueues[0]`) and a **Ring-3 tier** (`kschedQueuesRing3[0..N-1]`, M7). Park primitives: `KEvent.Wait` / `kschedTimedPark` (no `chan` recv in `src/*.go`). **Preemption** (feature 2.1, unchanged): BSP's 100 Hz LAPIC timer broadcasts preempt-IPI vector `0xFB` to every CPU; each AP's `handlePreemptIPI` (`src/goroutine_irq.go`) safe-point-checks then calls `kschedYield()` — which under M7 routes Ring-3 hosts back through `kschedPushRing3` so they re-dispatch on their AP. Ring-3 user goroutines (intra-process) still preempted via kernel-delivered SIGALRM (feature 2.2, `impldoc/preempt_user_goroutines.md`). TSS.RSP0 + CR3 reinstalled on every park-then-resume by `kthreadResumeRing3Ctx` (`src/kthread_ring3.go`) — cross-CPU safe by design. Design: `no_goroutine_kernel_design/02_kernel_thread_runtime.md` + `04_preemption_and_isr.md`. |
+| Userspace | Done | Ring 3 execution via `iretq`, TSS for privilege transitions, `int 0x80` syscall interface (39 syscalls — see the Syscall ABI row below and `current_impl_0421_night/05_process_elf_ring3_syscalls_signals.md`); **each user process is a `ring3Wrapper` kernel thread** (`kschedSpawnRing3Wrapper` for exec'd children, `kschedSpawnRing3WrapperOnBSP` for the boot shell). M7 round-robins exec'd children onto AP queues (`kschedQueuesRing3[1..N-1]`); boot shell stays BSP-pinned. User-side TinyGo runtime keeps `scheduler=tasks` (cooperative, intra-process) — INVARIANT K5. User-level goroutines preemptive via kernel-delivered SIGALRM (feature 2.2). |
+| Filesystem | Done | In-memory flat filesystem: `Create`/`Write`/`Read`/`List`/`Delete` (32 entries, 256 KiB each). Served by **`fsTask` kernel thread** (BSP-pinned via `kschedSpawnAt("fsTask", fsTask, 0)` per M6/M7 R1) over the **`fsReqQueue` MPSC primitive** (`src/kthread_queue.go`, rank 13) + per-request `KEvent` for the response. AP-resident user processes that call `gooos.ReadFile` enqueue a request, park on `KEvent.Wait`, BSP `fsTask` dispatches and `Signal`s — cross-CPU wake via `kschedPushRing3` + `gooosWakeupCPU` IPI (`0xFC`). |
+| SMP | Done (M7 — userspace SMP on APs, kernel uniprocessor on BSP) | **M6 (`uniprocessorKernel = true`):** the gooos kernel itself runs as a uniprocessor on BSP. All service kthreads (`fsTask`, `timerDispatcher`, `netRxLoop`, `udpEcho`, `tcpRTOScanner`, `tcpEcho`, `netDiagLoop`, etc.) are BSP-pinned via `kschedSpawnAt("...", 0)` (R1+R2). The cross-CPU `kschedSwitch` PF that broke `make run-smp` keyboard input pre-M6 is structurally eliminated. **M7 (`userspaceSMP = true`):** Ring-3 user processes dispatch on APs in parallel via the new sibling `kschedQueuesRing3[cpu]` tier. `kschedSpawnRing3Wrapper` round-robins exec'd children onto `kschedQueuesRing3[1..numCoresOnline-1]`; each AP runs `kschedLoopRing3Only(cpuID())` from `apSchedulerEntry` (`src/smp.go`). `kschedStealRing3` allows AP↔AP load-balance on empty queue (BSP excluded as steal source per R6 — protects the boot-shell). Cross-CPU wake on every Ring-3 host push uses `gooosWakeupCPU` (vector `0xFC`) so APs leave `sti; hlt;` idle. **What's still BSP-only**: all hardware interrupts (PIT IRQ0, PS/2 IRQ1, e1000 IRQ11) via PIC pass-through; `netRxLoop` and TCP/UDP service kthreads. Toggle off via `userspaceSMP = false` in `src/preempt_config.go` to revert to pure M6. New gating harness `scripts/test_ring3_distribution.sh` (≥1 marker on cpu != 0). Design: `no_goroutine_kernel_design/14_uniprocessor_kernel.md` (M6, U1..U10) + `15_userspace_smp_on_aps.md` (M7, R1..R13). |
+| Kernel IPC primitives | Done (Route C M3) | `KEvent` (single-shot one-to-many wait/signal, `src/kthread_event.go`), `fsReqQueue` / `udpDgramQueue` (bounded MPSC, `src/kthread_queue.go`), `kschedTimedPark` (1-tick timer-driven park, `src/afterticks.go`), `ring3StackPool` (spinlock free-bitmap after M6.fix-1, `src/ring3_pool.go`). **No `chan` / `select` / `go` keyword in `src/*.go`** (M5.2 invariant; `make lint` enforces). The pre-Route-C native-`chan` `fsReqCh` / `exitCh` are gone. Design: `no_goroutine_kernel_design/03_sync_primitives.md`. |
 | Syscall ABI | Done | 39-syscall register-based dispatch (all numbered; see `current_impl_0421_night/05_process_elf_ring3_syscalls_signals.md` for the canonical table and dispatch notes). Base set: `sys_exit`, `sys_write`, `sys_read`, `sys_exec`, `sys_fs_read/write/list`, `sys_yield`, `sys_sleep`, `sys_getargs`, `sys_sbrk`, `sys_vga_clear`, `sys_open`, `sys_close`, `sys_dup2`, `sys_spawn`, `sys_wait`, `sys_pipe`, `sys_read_key`, `sys_vga_write_at`, `sys_vga_set_cursor`, `sys_getcpuid`. Net stack adds `sys_socket`/`sys_bind`/`sys_sendto`/`sys_recvfrom`/`sys_net_config`/`sys_sendto_bcast` (Phase 5) and `sys_listen`/`sys_accept`/`sys_connect`/`sys_tcp_send`/`sys_tcp_recv`/`sys_shutdown` (TCP phases). Preempt+shell batch adds `sys_waitpid` (#34, WNOHANG-only non-blocking wait; feature 2.4), `sys_sigaction` (#35, register SIGALRM handler; feature 2.2), `sys_sigreturn` (#36, restore context after SIGALRM; feature 2.2), `sys_listprocs` (#37, process-table snapshot; feature 2.5) and `sys_shell_ready` (#38, event-driven startup gate for preempt fanout). |
 | ELF64 loader | Done | Parse ELF64 headers, map PT_LOAD segments, per-process page tracking, parent page save/restore for exec |
 | BusyBox-style shell | Done | Interactive shell (`sh.elf`) with built-in commands (help, echo, clear, exit) and external ELF commands (ls, cat, wc, hello, fdprobe, goprobe, gochan, tinyc, edit, ps, cpuhog, markerprint, plus net-stack demos `udpecho`, `dhcp`, `tcpecho`, `tcpcli`, `smpprobe`) compiled with TinyGo; supports `<`/`>`/`>>` redirection, N-stage `\|` pipes, and `&` background execution with a 16-slot jobs table (feature 2.4, `impldoc/shell_background_jobs.md`). `ps` enumerates the process table via `sys_listprocs` (feature 2.5, `impldoc/shell_ps_command.md`). Deterministic SMP shell-command probing can be enabled with `runSMPProbeShellTest` and exercised by `scripts/test_smp_shell_smpprobe.sh`. |
@@ -124,37 +130,68 @@ Go cannot express certain CPU-level operations. These remain in assembly:
                               |  - Serial, IDT, PIC, PIT, Keyboard, VM      |
                               |  - afterTicksInit() — timer-wheel dispatcher|
                               |  - SMP: INIT-SIPI-SIPI multi-core boot      |
-                              |  - GDT + TSS (per-task kernel stacks)       |
-                              |  - Scheduler init, service tasks            |
+                              |  - GDT + TSS (per-CPU kernel stacks)        |
+                              |  - kschedInit() + spawn service kthreads    |
                               |  - Store user ELFs in filesystem            |
-                              |  - Load sh.elf → Ring 3 shell               |
+                              |  - Load sh.elf → Ring 3 shell (BSP)         |
                               +----------------------------------------------+
                                                      |
-                  +----------------------------------+----------------------------------+
-                  |                                  |                                  |
-    Kernel goroutines (Ring 0)             Shell goroutine (Ring 3)    External Commands (Ring 3)
-    ┌──────────────────────┐        ┌──────────────────┐          ┌──────────────────┐
-    │ go fsTask()          │        │ go ring3Wrapper  │          │ ls.elf / cat.elf │
-    │  for req := range    │        │   (sh.elf)       │  exec    │ hello.elf / wc.elf│
-    │    fsReqCh {…}       │        │  $ prompt        │ -------> │  go ring3Wrapper │
-    ├──────────────────────┤        │  built-in: help, │          │   (cmd.elf)      │
-    │ go keyboardPump()    │        │   echo, clear    │ <------- │  sys_exit → proc │
-    │  ring → keyboardCh   │        │  external: ls,   │  exit    │  .exitCh delivers│
-    ├──────────────────────┤        └──────────────────┘          └──────────────────┘
-    │ go netRxLoop()       │
-    │  drain e1000 RX ring │
-    ├──────────────────────┤
-    │ go timerDispatcher() │
-    │  fire afterTicks()   │
-    │  matured channels    │
-    ├──────────────────────┤
-    │ go tcpRTOScannerLoop │
-    │  50 ms RTO/TIMEWAIT  │
-    ├──────────────────────┤
-    │ go udpEchoServer     │
-    │ go tcpEchoServer     │
-    └──────────────────────┘
+                                          (M5.2 scheduler=none; M6 uniprocessor kernel; M7 userspace SMP)
+                                                     |
+                                                     v
++======================== BSP (CPU 0) =========================+    +========= AP 1..N-1 (M7 userspace SMP) =========+
+|                                                              |    |                                                |
+|  ┌──── kschedQueues[0] (service tier, BSP-only, R1+R2) ───┐  |    |  ┌──── kschedQueuesRing3[ap] (Ring-3 only) ──┐  |
+|  │                                                         │  |    |  │                                            │  |
+|  │  kschedSpawnAt("fsTask", fsTask, 0)                    │  |    |  │  kschedSpawnRing3Wrapper(child) round-robins │  |
+|  │   ↳ fsReqQueue MPSC ◀─ rank-13 spinlock                │  |    |  │   onto AP queues (1..N-1) under userspaceSMP │  |
+|  │  kschedSpawnAt("timerDispatcher", ..., 0)              │  |    |  │                                            │  |
+|  │   ↳ KEvent.Signal on expired timers                    │  |    |  │  apSchedulerEntry → kschedLoopRing3Only(ap)│  |
+|  │  kschedSpawnAt("netRxLoop", ..., 0)                    │  |    |  │   pops Ring-3 host kthreads only           │  |
+|  │   ↳ drains e1000 RX ring                               │  |    |  │   (kthreadHostedProc[t.Slot] != nil)       │  |
+|  │  kschedSpawnAt("udpEcho", ..., 0)                      │  |    |  │                                            │  |
+|  │  kschedSpawnAt("tcpRTOScanner", ..., 0)                │  |    |  │  AP↔AP kschedStealRing3 on empty queue     │  |
+|  │  kschedSpawnAt("tcpEcho", ..., 0)                      │  |    |  │   (BSP excluded as source per R6)          │  |
+|  │  kschedSpawnAt("netDiagLoop", ..., 0)                  │  |    |  │                                            │  |
+|  └─── dispatched by kschedLoopOnce()  ─────────────────────┘  |    |  └────────────────────────────────────────────┘  |
+|                       ▲                                       |    |                       ▲                          |
+|                       │                                       |    |                       │                          |
+|  ┌──── kschedQueuesRing3[0] (Ring-3, BSP) ─────────────────┐  |    |  ┌── Ring-3 worker process (e.g. cpuhog,     │  |
+|  │                                                         │  |    |  │   markerprint, smpprobe child) ───────────┐│  |
+|  │  Boot shell kthread:                                    │  |    |  │     $ exec'd via kschedSpawnRing3Wrapper  ││  |
+|  │   kschedSpawnRing3WrapperOnBSP(sh.elf) → queue[0]       │  |    |  │     parks in KEvent.Wait / kschedTimedPark││  |
+|  │   $ prompt — built-ins (help/echo/clear/exit) +         │  |    |  └────────────────────────────────────────────┘│  |
+|  │   external ELF (`gooos.Exec`) round-robined to APs ───┐ │  |    |                                                  |
+|  └─── dispatched by kschedLoopRing3OnlyOnce(0) ──────────┼─┘  |    |                                                  |
+|       (BSP combined pump alternates service & Ring-3) ──┘    |    |                                                  |
+|                                                              |    |                                                  |
+|  Hardware IRQs (PIC pass-through, BSP-only):                 |    |                                                  |
+|    IRQ0 PIT, IRQ1 PS/2 keyboard, IRQ11 e1000 → BSP ISRs      |    |                                                  |
+|                                                              |    |                                                  |
++======================== BSP (CPU 0) =========================+    +================================================+
+                  │                                                                  ▲
+                  │  preempt-IPI vector 0xFB (BSP 100 Hz LAPIC timer broadcast) ────►│
+                  │  wake-IPI    vector 0xFC (gooosWakeupCPU on cross-CPU push) ────►│
+                  │                                                                  │
+                  └──── Ring-3 host wake (KEvent.Signal → kschedWake → ─────────────┘
+                        kschedPushRing3(t, t.OwnerCPU) → IPI 0xFC → AP pops → resume)
 ```
+
+Notes:
+- The kernel proper has zero `go` / `chan` / `select` (M5.2
+  invariant; `make lint` rejects). Service IPC is `KEvent`
+  + `fsReqQueue` / `udpDgramQueue` (`src/kthread_queue.go`).
+- Service-tier kthreads (BSP-only, R1+R2) have no AP
+  presence — APs run only Ring-3 hosts under M7. AP↔AP
+  steal moves Ring-3 hosts when an AP empties its queue.
+- IRQs land on BSP only (PIC pass-through). AP-resident
+  user processes that need an I/O response (NW / FS / etc.)
+  park on `KEvent`; the BSP service kthread that handles
+  the IRQ signals the event, waking the AP via `0xFC` IPI.
+- Toggle `userspaceSMP = false` in `src/preempt_config.go`
+  to revert to pure M6 (boot shell + every exec'd child
+  on BSP); `uniprocessorKernel = false` reverts further to
+  pre-M6 SMP-kernel mode (development-only).
 
 ## Repository layout
 
@@ -287,10 +324,20 @@ rm ~/.local/tinygo0.40.1/src/runtime/wait_gooos_user.go
 patch -R -p1 -d ~/.local/tinygo0.40.1 < scripts/tinygo_runtime.patch
 ```
 
-Rationale: `impldoc/goroutine_design_scheduler.md §5.1` explains
-why the runtime files are needed; `impldoc/phase_b_ring3_and_exec.md §4`
-explains `gooosOnResume` and the `stackTop` field;
-`impldoc/smp_percpu_and_sync.md` covers the per-CPU queue story.
+Rationale: the patched runtime files supply the legacy bridge
+points (`gooosOnResume`, `tinygo_startTask`, etc.) that
+remained necessary on the user side (TinyGo `scheduler=tasks`,
+K5 invariant). On the kernel side under Route C
+`scheduler=none`, those bridges are mostly inert — see
+`no_goroutine_kernel_design/02_kernel_thread_runtime.md`
+for the gooos kthread runtime, `08_build_config_and_tinygo_patch.md`
+for the per-hunk audit of what stayed/was-flipped, and
+`14_uniprocessor_kernel.md` + `15_userspace_smp_on_aps.md`
+for the M6/M7 dispatch model. The pre-Route-C
+`impldoc/goroutine_design_scheduler.md` /
+`impldoc/phase_b_ring3_and_exec.md` /
+`impldoc/smp_percpu_and_sync.md` remain as historical
+design references (some sections superseded by Route C).
 
 ## Build
 
@@ -426,7 +473,7 @@ Hello, World from gooos userspace!
 - **Sleep granularity is 10 ms.** `time.Sleep` (and the local
   `afterTicks` replacement in `src/afterticks.go`) build on
   the PIT counter at 100 Hz, so any requested duration rounds
-  up to the next 10 ms tick. No kernel goroutine currently
+  up to the next 10 ms tick. No kernel kthread currently
   needs sub-10-ms sleep; if a future caller does, retrofit
   `~/.local/tinygo0.40.1/src/runtime/runtime_gooos.go:sleepTicks`
   to use the LAPIC timer in one-shot mode (see
@@ -445,17 +492,37 @@ Hello, World from gooos userspace!
   separately.
 ## Documentation
 
-Reference docs live under `current_impl_0421_night/` (current,
-authoritative) and `impldoc/` (design notes). Companion walkthroughs
-under `docs/`.
+Active design + execution docs (M5/M6/M7) live under
+`no_goroutine_kernel_design/`. Pre-Route-C "as-built"
+references (still useful for boot/IRQ/VM/networking
+substrate) live under `current_impl_0421_night/`. Route-C
+implementation history snapshots are under
+`current_impl_2026_04_24/` and `current_impl_2026_04_26/`.
+Legacy design notes are under `impldoc/`. Companion
+walkthroughs are under `docs/`.
 
-Current implementation reference (start here):
+**Active design (Route C → M5 → M6 → M7) — start here:**
+
+- [`no_goroutine_kernel_design/00_index.md`](no_goroutine_kernel_design/00_index.md) — TOC, reading order, conventions
+- [`02_kernel_thread_runtime.md`](no_goroutine_kernel_design/02_kernel_thread_runtime.md) — `KernelThread`, asm context switch, ready queues
+- [`03_sync_primitives.md`](no_goroutine_kernel_design/03_sync_primitives.md) — `KEvent`, `KQueue`, `kschedTimedPark`
+- [`04_preemption_and_isr.md`](no_goroutine_kernel_design/04_preemption_and_isr.md) — preempt-IPI, ISR / spinlock invariants
+- [`13_post_m5_completion.md`](no_goroutine_kernel_design/13_post_m5_completion.md) — Route C M5 close-out
+- [`14_uniprocessor_kernel.md`](no_goroutine_kernel_design/14_uniprocessor_kernel.md) — M6 design (uniprocessor kernel on BSP)
+- [`15_userspace_smp_on_aps.md`](no_goroutine_kernel_design/15_userspace_smp_on_aps.md) — M7 design (userspace SMP)
+- [`16_m7_execution_plan.md`](no_goroutine_kernel_design/16_m7_execution_plan.md) — M7 Step 0..7 work order
+- [`17_m7_test_strategy.md`](no_goroutine_kernel_design/17_m7_test_strategy.md) — M7 harness rewrites + new gates
+- [`12_implementation_notes.md`](no_goroutine_kernel_design/12_implementation_notes.md) — § Open issues + risks
+- Trackers: [`TODO_M6.md`](TODO_M6.md), [`TODO_M7.md`](TODO_M7.md)
+
+**Pre-Route-C as-built reference (boot/IRQ/VM/networking
+substrate, still applies):**
 
 - [00 Index](current_impl_0421_night/00_index.md) — scope, reading order, invariants
 - [01 Boot and Init](current_impl_0421_night/01_boot_and_kernel_init.md)
 - [02 Descriptors/Traps](current_impl_0421_night/02_cpu_descriptors_traps_interrupts.md)
 - [03 SMP/LAPIC/IPI](current_impl_0421_night/03_smp_lapic_timer_ipi.md)
-- [04 Scheduler/Preemption](current_impl_0421_night/04_scheduler_runtime_preemption.md)
+- [04 Scheduler/Preemption](current_impl_0421_night/04_scheduler_runtime_preemption.md) — *legacy goroutine scheduler; superseded by §02 of `no_goroutine_kernel_design/`*
 - [05 Process/ELF/Syscalls](current_impl_0421_night/05_process_elf_ring3_syscalls_signals.md)
 - [06 Memory/VM/GC](current_impl_0421_night/06_memory_vm_allocator_gc.md)
 - [07 FS/FD/Shell I/O](current_impl_0421_night/07_filesystem_fd_shell_io.md)
@@ -464,12 +531,18 @@ Current implementation reference (start here):
 - [10 Harnesses + Instability Map](current_impl_0421_night/10_test_harnesses_and_instability_map.md)
 - [11 Traceability Matrix](current_impl_0421_night/11_traceability_matrix.md)
 
-Design docs (deeper dives — many superseded by as-builts; see
-`docs/repo_layout.md` for a staleness-aware map):
+Route-C implementation history snapshots:
 
-- `impldoc/net_overview.md`, `impldoc/net_tcp_*.md` — networking stack design
-- `impldoc/smp_*.md` — SMP v1 / v2 design
-- `impldoc/userspace_*.md`, `impldoc/goroutine_design_*.md` — Phase B migration notes
+- [`current_impl_2026_04_24/`](current_impl_2026_04_24/) — pre-Route-C SMP fix-plan deliverables
+- [`current_impl_2026_04_26/route_c_kernel.md`](current_impl_2026_04_26/route_c_kernel.md) — Route C close-out + M6 RESOLVED + M7 LANDED notes
+
+Legacy design notes (historical; superseded for kernel-side
+scheduling/SMP — see `no_goroutine_kernel_design/` instead):
+
+- `impldoc/net_overview.md`, `impldoc/net_tcp_*.md` — networking stack design (still applies; data plane unchanged)
+- `impldoc/smp_*.md` — pre-Route-C SMP design (largely superseded by M6+M7)
+- `impldoc/userspace_*.md` — user-side TinyGo `scheduler=tasks` design (still applies; K5 invariant)
+- `impldoc/goroutine_design_*.md` — Phase B migration notes (kernel-side superseded by Route C)
 
 Walkthroughs:
 
