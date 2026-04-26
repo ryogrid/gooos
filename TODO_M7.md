@@ -22,7 +22,7 @@ Branch: `uni-proc-kernel-but-usrprog-smp`. Starting HEAD:
 - [x] Step 5 — re-purpose 5 SMP-distribution harnesses (SKIP gate flip)
 - [x] Step 6 — flip `userspaceSMP=true` default + lock-rank doc + RR cleanup
 - [x] Step 7 — README + `docs/` refresh
-- [ ] Reviewer sub-agent pass (`hoge.md` §5, 9-item checklist)
+- [x] Reviewer sub-agent pass (`hoge.md` §5, 9-item checklist)
 - [ ] Final sweep — grep TODO/FIXME/XXX/HACK + TODO ↔ codebase ↔ R1..R13 cross-check + report
 
 ## Baseline (HEAD `80a9fae`, pre-M7 code)
@@ -88,6 +88,37 @@ Branch: `uni-proc-kernel-but-usrprog-smp`. Starting HEAD:
     every time given enough time; the slow runs are
     not hangs (verified by 20s manual run). The latency
     increase is recorded as a Deferred M7-perf item.
+- **Reviewer pass** (HEAD `8735e39`): general-purpose
+  sub-agent reviewed against `15_*.md` R1..R13 + M6
+  U1..U10 + 9-item checklist from `hoge.md` §5. Result:
+  **fix-then-ship — 1 BLOCKING + 3 MINOR**.
+  - **BLOCKING-1 fixed in place**: `kschedYield` (`src/
+    kthread_sched.go:475`) was re-pushing Ring-3 hosts
+    to the service tier — same bug class as the M6
+    `kschedWake` fix landed in Step 4. Without this
+    fix, a CPU-bound Ring-3 host preempted via the
+    LAPIC-timer safe-point lands on
+    `kschedQueues[ap]` where `kschedLoopRing3Only`
+    never pops it. Fix mirrors `kschedWake`'s Ring-3
+    detection (`kthreadHostedProc[t.Slot] != nil`) →
+    route to `kschedPushRing3` instead of `kschedPush`.
+  - **MINOR-1 carried to Deferred**: `15_*.md` §4
+    file:line drift; fix opportunistically.
+  - **MINOR-2 carried to design-doc Deferred**:
+    `test_ring3_distribution.sh` PASS bar refined to
+    "≥ 1 marker on cpu != 0" (process migration is
+    M8+); `15_*.md` §10 still cites "≥ 2 distinct
+    cpuIDs". Doc edit pending.
+  - **MINOR-3 ticking the tracker**: this row.
+  Verification of the BLOCKING-1 fix:
+  - `test_ring3_distribution.sh` still PASS.
+  - `test_smp_shell_preempt.sh` PASS (markers=5; the
+    harness also needed `runSMPBasicProbe=true` for
+    the launcher to fire — same fix as
+    `test_ring3_distribution.sh` Step 4 supplement).
+  - 30 s manual run with cpuhog: cpuhog runs on AP 2,
+    markerprint runs on AP 1, both progress to
+    completion (markerprint 20/20 markers + done).
 
 ## Deferred
 

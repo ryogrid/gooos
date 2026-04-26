@@ -471,6 +471,15 @@ func kschedLoopRing3OnlyOnce(cpu uint32) {
 // (work-stealing or wake-on-different-CPU). For Ring-3-hosting
 // kthreads only — non-host kthreads (fsTask etc.) get a no-op.
 //
+// §15 §3.3 / §16 Step 4 (M7) reviewer-pass BLOCKING-1 fix:
+// Route Ring-3 hosts (kthreads with kthreadHostedProc[t.Slot] != nil)
+// back to the Ring-3 tier (kschedQueuesRing3) so AP dispatchers
+// (kschedLoopRing3Only) can pick them up. Without this, a CPU-bound
+// Ring-3 host that is preempted via the LAPIC-timer safe-point
+// (src/goroutine_irq.go:150,186 → kschedYield) lands on the
+// service-tier kschedQueues[ap], where kschedLoopRing3Only never
+// pops from — the kthread is permanently orphaned.
+//
 //go:nosplit
 func kschedYield() {
 	cpu := cpuID()
@@ -480,7 +489,12 @@ func kschedYield() {
 	}
 	// Put self back on the ready queue, then switch to the
 	// bootstrap context (= kschedLoop).
-	kschedPush(t, cpu)
+	if t.Slot >= 0 && int(t.Slot) < kthreadPoolCap &&
+		kthreadHostedProc[t.Slot] != nil {
+		kschedPushRing3(t, cpu)
+	} else {
+		kschedPush(t, cpu)
+	}
 	kschedSwitch(&kschedBootstrap[cpu], t)
 	// Resumed (possibly on a different CPU) — re-install CR3+TSS.
 	kthreadResumeRing3Ctx()

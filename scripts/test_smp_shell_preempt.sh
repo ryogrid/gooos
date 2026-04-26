@@ -51,6 +51,11 @@ if ! grep -q 'const runSMPShellPreemptProbe = true' "$CONF"; then
     echo "FAIL: could not enable runSMPShellPreemptProbe"
     exit 1
 fi
+# §M7 Step 5 (re-purpose): the launcher for cpuhog+markerprint
+# lives inside smpBasicProbe (src/main.go:742-752); without
+# runSMPBasicProbe=true the launcher never fires and 0 markers
+# are emitted. Enable both gates for the harness.
+sed -i 's/const runSMPBasicProbe = false/const runSMPBasicProbe = true/' "$CONF"
 
 rm -f tmp/kernel.iso
 make iso >/dev/null 2>&1 || { restore_config; echo "FAIL: make iso"; exit 1; }
