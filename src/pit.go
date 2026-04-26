@@ -63,7 +63,11 @@ func handleTimer(vector uint64) {
 	} else {
 		picSendEOI(0)
 	}
-	if numCoresOnline > 1 {
+	// §14 invariant U9: under uniprocessorKernel APs hold no
+	// kthread state to wake; the periodic wake-IPI broadcast
+	// is wasted work. Body kept (gated below) for one-revert
+	// M7 restoration.
+	if numCoresOnline > 1 && !uniprocessorKernel {
 		pitWakeAPs()
 	}
 	// F1 audit: every 200 ticks (~2 s) emit a compact counter line

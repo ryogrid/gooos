@@ -15,7 +15,7 @@ Branch: `smp-no-goroutine-in-kernel`. Starting HEAD:
 - [x] Step 1 — add `const uniprocessorKernel = true`
 - [x] Step 2 — pin every kthread spawn to BSP (§3.2/§3.3/§3.6)
 - [x] Step 3 — APs idle in kernel mode (§3.1/§3.4/§3.5)
-- [ ] Step 4 — re-enable net services on BSP (§3.7/§3.8)
+- [x] Step 4 — re-enable net services on BSP (§3.7/§3.8)
 - [ ] Step 5 — SMP-distribution tests SKIP/re-purposed (§6.2)
 - [ ] Step 6 — lock-rank doc + RR counter cleanup (§4)
 - [ ] Reviewer sub-agent pass (`hoge.md` §5)
@@ -50,6 +50,12 @@ Branch: `smp-no-goroutine-in-kernel`. Starting HEAD:
   PF) and Bug B (parked shell never drains) eliminated by the
   apSchedulerEntry idle-loop change. The §14 hypothesis is
   confirmed.
+- **Step 4** (HEAD `67f6f40` + Step 4 edits, net services
+  back on BSP, runMinimalKthreads=false default,
+  pitWakeAPs gated): keyboard 10-iter helpRan=10/10,
+  M8=10/10, M9=10/10, PF=0/10. ✅ Holding the §14 §8 bar.
+  `scripts/test_net.sh` PASS (UDP echo round-trip, ARP,
+  ICMP, netbuf lifecycle).
 
 ## Deferred
 

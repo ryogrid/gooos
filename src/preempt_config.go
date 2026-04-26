@@ -106,7 +106,13 @@ const runKthreadSmoke = false
 // race is in one of the disabled net kthreads' interaction with
 // the scheduler. If the race persists, it is in the timerDispatcher
 // / fsTask / ring3Wrapper / preempt-IPI core loop.
-const runMinimalKthreads = true
+// §14 §3.8 / Step 4: superseded by uniprocessorKernel.
+// The two if-gates that used to consume this in src/main.go
+// and src/net.go are dropped because the kthread BSP-pin
+// already provides the §14 §6.2 isolation. Default flips
+// back to false so net regression suite (test_net.sh) and
+// related TCP gates pass on the post-§14 build.
+const runMinimalKthreads = false
 
 // uniprocessorKernel runs the gooos kthread scheduler on BSP only.
 // APs are kernel-mode idle (sti; hlt) and reserved for Ring-3 user

@@ -51,13 +51,12 @@ func netInit() {
 	// so the M0 smoke test isn't perturbed by long-running kthreads
 	// already on CPU 0's queue.
 	//
-	// runMinimalKthreads (preempt_config.go) — when true, skip
-	// tcpInit so tcpRTOScanner + tcpEchoServer kthreads are not
-	// spawned. Used to bisect the post-Route-C `make run-smp`
-	// keyboard race.
-	if !runMinimalKthreads {
-		tcpInit()
-	}
+	// §14 §3.8 / Step 4: the previous `if !runMinimalKthreads`
+	// gate (M6 bisection facility from `6a5d0cb`) is dropped —
+	// the kthread BSP-pin already provides the keyboard
+	// correctness isolation. tcpInit's spawns run on BSP per
+	// §14 U4.
+	tcpInit()
 }
 
 // netSpawnServices spawns the long-running net kthreads

@@ -445,14 +445,18 @@ func main() {
 	// Route C M4.2.{b,e}: spawn net-service kthreads (netRxLoop,
 	// udpEchoServer) here so they're after the smoke test and
 	// before bspBootDone.
-	if !runMinimalKthreads {
-		netSpawnServices()
-		if e1000Found {
-			// M4.2.g: periodic netDiag, was inline `go func()`.
-			// §14 U4: BSP-pinned (covered by kschedSpawnAt clamp,
-			// but the explicit form documents intent).
-			kschedSpawnAt("netDiagLoop", netDiagLoop, 0)
-		}
+	//
+	// §14 §3.8 / Step 4: the previous `if !runMinimalKthreads`
+	// gate (added in `6a5d0cb` as an M6 bisection facility) is
+	// dropped because the kthread BSP-pin already provides the
+	// keyboard-correctness isolation. Net services run on BSP
+	// alongside the boot shell and the timer dispatcher.
+	netSpawnServices()
+	if e1000Found {
+		// M4.2.g: periodic netDiag, was inline `go func()`.
+		// §14 U4: BSP-pinned (covered by kschedSpawnAt clamp,
+		// but the explicit form documents intent).
+		kschedSpawnAt("netDiagLoop", netDiagLoop, 0)
 	}
 	runtime.Gosched()
 
