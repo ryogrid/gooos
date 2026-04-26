@@ -22,6 +22,21 @@ type kschedReadyQueue struct {
 // kschedQueues is the per-CPU scheduler state. Indexed 0..maxCPUs-1.
 var kschedQueues [maxCPUs]kschedReadyQueue
 
+// kschedQueuesRing3 is the per-CPU Ring-3 host ready queue.
+// §15_userspace_smp_on_aps.md §3 (M7): Ring-3 hosts
+// (KernelThreads with kthreadHostedProc[t.Slot] != nil) are
+// enqueued on this sibling tier instead of kschedQueues.
+// Service kthreads (timerDispatcher, fsTask, net/tcp services,
+// boot probes) keep using kschedQueues per R1+R2.
+//
+// Indexed identically (cpu 0..maxCPUs-1). Under M6
+// (userspaceSMP=false) this tier holds the boot shell at index 0
+// and remains empty elsewhere; the BSP combined pump
+// (src/elf.go) drives kschedLoopRing3OnlyOnce(0) so the boot
+// shell still runs. Under M7 (userspaceSMP=true) APs run
+// kschedLoopRing3Only(cpu) and consume from queue[cpu].
+var kschedQueuesRing3 [maxCPUs]kschedReadyQueue
+
 // kschedBootstrap is the anchor KernelThread representing "the
 // scheduler loop itself" on each CPU. It is never enqueued; it is
 // the sink kschedSwitch writes SavedRSP into when a thread parks,
@@ -294,6 +309,150 @@ func kschedLoopOnce() {
 	kschedSwitch(t, &kschedBootstrap[cpu])
 	// Returned: thread parked / yielded / exited. Symmetric cli
 	// while we tear down the dispatch record.
+	cli()
+	if t.State == uint32(KStateExiting) {
+		kthreadPoolFree(t)
+	}
+	kschedRunning[cpu] = nil
+	restoreFlags(flags)
+}
+
+// ---- Ring-3 tier (§15_userspace_smp_on_aps.md §3, M7) ----
+
+// kschedPushRing3 enqueues a Ring-3 host onto the Ring-3 tier
+// of cpu. Mirrors kschedPush but writes kschedQueuesRing3[cpu]
+// instead of kschedQueues[cpu]. The cross-CPU wake IPI (vector
+// 0xFC) is sent unconditionally on remote push so the target AP
+// leaves its hlt-idle in kschedLoopRing3Only.
+//
+// §15 §2 R5: this is the M7 wake protocol.
+//
+//go:nosplit
+func kschedPushRing3(t *KernelThread, cpu uint32) {
+	if cpu >= maxCPUs {
+		cpu = 0
+	}
+	q := &kschedQueuesRing3[cpu]
+	flags := q.lock.Acquire()
+	t.State = uint32(KStateRunnable)
+	t.OwnerCPU = cpu
+	kschedPushLocked(q, t)
+	q.lock.Release(flags)
+	if cpu != cpuID() {
+		gooosWakeupCPU(cpu)
+	}
+}
+
+// kschedPopRing3 dequeues one Ring-3 host from cpu's local
+// Ring-3 queue. nil on empty.
+//
+//go:nosplit
+func kschedPopRing3(cpu uint32) *KernelThread {
+	if cpu >= maxCPUs {
+		return nil
+	}
+	q := &kschedQueuesRing3[cpu]
+	flags := q.lock.Acquire()
+	t := kschedPopLocked(q)
+	q.lock.Release(flags)
+	return t
+}
+
+// kschedStealRing3 dequeues one Ring-3 host from `from`'s
+// Ring-3 queue for `to`. nil on empty.
+//
+// §15 §2 R6: AP↔AP stealing only. BSP (cpu 0) is never a steal
+// source — the boot shell lives there and must keep its
+// foreground-keyboard owner role on BSP. A would-be steal that
+// names cpu 0 returns nil.
+//
+//go:nosplit
+func kschedStealRing3(from, to uint32) *KernelThread {
+	if from >= maxCPUs || from == to {
+		return nil
+	}
+	if from == 0 {
+		return nil // R6: BSP shell never steal-victim
+	}
+	q := &kschedQueuesRing3[from]
+	flags := q.lock.Acquire()
+	t := kschedPopLocked(q)
+	q.lock.Release(flags)
+	return t
+}
+
+// kschedLoopRing3Only drives the Ring-3 tier on cpu. Mirrors
+// kschedLoop but pops from kschedQueuesRing3 and steals via
+// kschedStealRing3. Used by AP entry under userspaceSMP=true.
+// Non-returning.
+//
+//go:nosplit
+func kschedLoopRing3Only(cpu uint32) {
+	for {
+		t := kschedPopRing3(cpu)
+		if t == nil {
+			// AP↔AP steal (R6: never steal from BSP).
+			for i := uint32(1); i < numCoresOnline; i++ {
+				src := (cpu + i) % numCoresOnline
+				if src == 0 {
+					continue
+				}
+				t = kschedStealRing3(src, cpu)
+				if t != nil {
+					break
+				}
+			}
+		}
+		if t == nil {
+			sti()
+			hlt()
+			cli()
+			continue
+		}
+		if KState(t.State) == KStateExiting {
+			kthreadPoolFree(t)
+			continue
+		}
+		kschedRunning[cpu] = t
+		t.State = uint32(KStateRunning)
+		t.OwnerCPU = cpu
+		t.Quantum = kschedDefaultQuantum
+		kschedSwitch(t, &kschedBootstrap[cpu])
+		kschedRunning[cpu] = nil
+	}
+}
+
+// kschedLoopRing3OnlyOnce drives one iteration of the Ring-3
+// tier on cpu. Returns immediately if no runnable Ring-3 host
+// is available (no steal). Used by the BSP combined pump in
+// src/elf.go to interleave service-tier (kschedLoopOnce) and
+// Ring-3-tier dispatch on BSP without entering a non-returning
+// loop.
+//
+//export kschedLoopRing3OnlyOnce
+//go:nosplit
+func kschedLoopRing3OnlyOnce(cpu uint32) {
+	if kschedInitialized == 0 {
+		return
+	}
+	if cpu >= maxCPUs {
+		return
+	}
+	t := kschedPopRing3(cpu)
+	if t == nil {
+		return
+	}
+	if KState(t.State) == KStateExiting {
+		kthreadPoolFree(t)
+		return
+	}
+	flags := readFlags()
+	cli()
+	kschedRunning[cpu] = t
+	t.State = uint32(KStateRunning)
+	t.OwnerCPU = cpu
+	t.Quantum = kschedDefaultQuantum
+	kschedSwitch(t, &kschedBootstrap[cpu])
 	cli()
 	if t.State == uint32(KStateExiting) {
 		kthreadPoolFree(t)

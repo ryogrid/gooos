@@ -16,7 +16,7 @@ Branch: `uni-proc-kernel-but-usrprog-smp`. Starting HEAD:
 - [x] Baseline — run smoke + keyboard + post-exec harnesses, record pre-M7 numbers
 - [x] Step 0 — add `scripts/test_ring3_distribution.sh` per `17_*.md` §1
 - [x] Step 1 — add `const userspaceSMP = false` to `src/preempt_config.go`
-- [ ] Step 2 — Ring-3 tier scaffolding (`kschedQueuesRing3` + helpers)
+- [x] Step 2 — Ring-3 tier scaffolding (`kschedQueuesRing3` + helpers)
 - [ ] Step 3 — APs dispatch Ring-3 tier under flag + BSP combined pump
 - [ ] Step 4 — exec'd children land on AP queues (`kschedSpawnRing3Wrapper`)
 - [ ] Step 5 — re-purpose 5 SMP-distribution harnesses (SKIP gate flip)
