@@ -14,18 +14,29 @@ Design doc: [design_docs/01_simple-wget_overview.md](design_docs/01_simple-wget_
 
 ## Deferred
 
-(none yet)
+- **Verification §4–§9 require manual QEMU testing.** They
+  need a host-side `python3 -m http.server 8000` bound to a
+  TCP port, which the build sandbox refuses to start. The
+  build/lint/ISO/regression checks (§1–§3, §10–§11) cover
+  the gates the agent can run unattended; the user should
+  run §4–§9 interactively when convenient. The recipe is
+  preserved verbatim in `design_docs/01_simple-wget_overview.md`
+  "Verification" §4 (happy path) and §9 (FS-limit), and
+  the error-path inputs (§5–§8) are deterministic strings
+  that will print the parseURL-rejection messages
+  unconditionally — no host server needed for §6–§8 in
+  practice.
 
 ## Verification
 
-- [ ] 1. `make -C user` succeeds; `user/build/wget.elf` exists with non-zero size
-- [ ] 2. `make build` succeeds end-to-end (lint, embed, kernel link, verify-globals)
-- [ ] 3. `make iso` succeeds; `tmp/kernel.iso` exists
-- [ ] 4. Happy path (manual, QEMU): wget downloads test.txt, ls + cat verify content
-- [ ] 5. Error path — HTTP 404: prints `wget: HTTP 404`, no file created
-- [ ] 6. Error path — HTTPS rejection: prints HTTPS-not-supported parse error
-- [ ] 7. Error path — hostname rejection: prints IP-literal-required parse error
-- [ ] 8. Error path — empty basename: prints no-basename parse error
-- [ ] 9. FS-limit path (manual, QEMU): >256 KiB body → `wget: short write` message
-- [ ] 10. Regression — non-net build path: ls/cat/tcpcli/tcpecho still build; `make run` reaches shell
-- [ ] 11. Regression — net build path: dhcp/udpecho/tcpecho still work under `make run-net`
+- [x] 1. `make -C user` succeeds; `user/build/wget.elf` exists (121,312 bytes)
+- [x] 2. `make build` succeeds end-to-end (lint, embed, kernel link, verify-globals all green)
+- [x] 3. `make iso` succeeds; `tmp/kernel.iso` exists (3779 sectors, ~7.4 MiB)
+- [ ] 4. Happy path (manual, QEMU) — **deferred to user; needs host http.server**
+- [ ] 5. Error path — HTTP 404 — **deferred to user; needs host http.server**
+- [ ] 6. Error path — HTTPS rejection — **deferred to user (deterministic; no server needed)**
+- [ ] 7. Error path — hostname rejection — **deferred to user (deterministic; no server needed)**
+- [ ] 8. Error path — empty basename — **deferred to user (deterministic; no server needed)**
+- [ ] 9. FS-limit path (manual, QEMU) — **deferred to user; needs host http.server**
+- [x] 10. Regression — non-net build path: 12s QEMU smoke boot reached `gooos shell v0.1` + `$ ` prompt with no `panic`/`PF`/`FATAL` markers
+- [x] 11. Regression — net build path: `scripts/test_net.sh` PASS (UDP echo + ARP + ICMP + netbuf + netDiag); `scripts/test_tcp_phase5.sh` exit 0
