@@ -19,7 +19,7 @@ Branch: `uni-proc-kernel-but-usrprog-smp`. Starting HEAD:
 - [x] Step 2 — Ring-3 tier scaffolding (`kschedQueuesRing3` + helpers)
 - [x] Step 3 — APs dispatch Ring-3 tier under flag + BSP combined pump
 - [x] Step 4 — exec'd children land on AP queues (`kschedSpawnRing3Wrapper`)
-- [ ] Step 5 — re-purpose 5 SMP-distribution harnesses (SKIP gate flip)
+- [x] Step 5 — re-purpose 5 SMP-distribution harnesses (SKIP gate flip)
 - [ ] Step 6 — flip `userspaceSMP=true` default + lock-rank doc + RR cleanup
 - [ ] Step 7 — README + `docs/` refresh
 - [ ] Reviewer sub-agent pass (`hoge.md` §5, 9-item checklist)

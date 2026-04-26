@@ -22,9 +22,9 @@ set -u
 # harnesses SKIP, which the 50-iter sampler interprets as 0 % PASS
 # rate. Whole release gate is meaningful only after M7 (Ring-3
 # distribution on APs) lands; SKIP at the wrapper level until then.
-if grep -q '^const uniprocessorKernel = true' src/preempt_config.go 2>/dev/null; then
-    echo "test_smp_release_gate: SKIP under uniprocessorKernel"
-    echo "result: SKIP — pending M7 Ring-3-on-AP dispatch (see no_goroutine_kernel_design/14_uniprocessor_kernel.md §6.2)"
+if grep -q '^const userspaceSMP = false' src/preempt_config.go 2>/dev/null; then
+    echo "test_smp_release_gate: SKIP (M7 disabled — userspaceSMP=false)"
+    echo "result: SKIP — userspaceSMP off; flip src/preempt_config.go userspaceSMP=true to enable M7 (see no_goroutine_kernel_design/15_userspace_smp_on_aps.md §10)"
     exit 0
 fi
 

@@ -13,9 +13,9 @@ set -u
 # BSP and worker cpu lines all show cpu=0; the AP-distribution
 # assertion is structurally false. M7 will land Ring-3 dispatch
 # on APs and re-purpose this; until then it SKIPs.
-if grep -q '^const uniprocessorKernel = true' src/preempt_config.go 2>/dev/null; then
-    echo "test_smp_shell_smpprobe: SKIP under uniprocessorKernel"
-    echo "result: SKIP — pending M7 Ring-3-on-AP dispatch (see no_goroutine_kernel_design/14_uniprocessor_kernel.md §6.2)"
+if grep -q '^const userspaceSMP = false' src/preempt_config.go 2>/dev/null; then
+    echo "test_smp_shell_smpprobe: SKIP (M7 disabled — userspaceSMP=false)"
+    echo "result: SKIP — userspaceSMP off; flip src/preempt_config.go userspaceSMP=true to enable M7 (see no_goroutine_kernel_design/15_userspace_smp_on_aps.md §10)"
     exit 0
 fi
 
