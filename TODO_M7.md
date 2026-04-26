@@ -13,7 +13,7 @@ Branch: `uni-proc-kernel-but-usrprog-smp`. Starting HEAD:
 ## Steps
 
 - [x] Bootstrap — create this tracker, commit M7 design docs, add `00_index.md` TOC entry
-- [ ] Baseline — run smoke + keyboard + post-exec harnesses, record pre-M7 numbers
+- [x] Baseline — run smoke + keyboard + post-exec harnesses, record pre-M7 numbers
 - [ ] Step 0 — add `scripts/test_ring3_distribution.sh` per `17_*.md` §1
 - [ ] Step 1 — add `const userspaceSMP = false` to `src/preempt_config.go`
 - [ ] Step 2 — Ring-3 tier scaffolding (`kschedQueuesRing3` + helpers)
@@ -25,9 +25,17 @@ Branch: `uni-proc-kernel-but-usrprog-smp`. Starting HEAD:
 - [ ] Reviewer sub-agent pass (`hoge.md` §5, 9-item checklist)
 - [ ] Final sweep — grep TODO/FIXME/XXX/HACK + TODO ↔ codebase ↔ R1..R13 cross-check + report
 
-## Baseline
+## Baseline (HEAD `80a9fae`, pre-M7 code)
 
-(populated by Baseline step)
+- `scripts/test_kthread_smoke.sh`: PASS (A=5 B=5 ok=1)
+- `scripts/test_ps.sh`: PASS (header=1 row=1)
+- `scripts/test_run_smp_keyboard.sh`: 10/10 helpRan,
+  10/10 M8, 10/10 M9, 0/10 PF — **PASS** (M6 invariant intact)
+- `scripts/test_shell_post_exec_prompt.sh`: 10/10 helloPrinted,
+  0/10 panics — **PASS** (M6.fix-1 invariant intact)
+- `scripts/test_ring3_distribution.sh` (new harness, not yet
+  added; pre-M7 baseline expectation: 1 distinct cpu only,
+  cpuhog runs on BSP under M6).
 
 ## Per-step measurements
 
