@@ -7,8 +7,14 @@
 # uniprocessor-kernel invariants stay unaffected because
 # this test does NOT touch the keyboard path.
 #
-# PASS: ≥ 2 distinct cpuIDs in markerprint output.
-# FAIL: only cpuID=0 observed (all Ring-3 work on BSP).
+# PASS: markerprint runs on at least one AP (cpu != 0).
+#   Under M7 a Ring-3 process is dispatched to one AP queue
+#   and stays there for its lifetime (process migration is
+#   M8+). So a single markerprint instance only emits cpu=N
+#   for one N. The success signal is N != 0 — Ring-3 was
+#   dispatched off BSP.
+# FAIL: all markerprint output observed on cpu=0 (uniprocessor
+#   M6 fallback, AP dispatch broken, or M7 disabled).
 
 set -u
 
@@ -45,6 +51,11 @@ cleanup() {
 trap cleanup EXIT
 
 sed -i 's/const runSMPShellPreemptProbe = false/const runSMPShellPreemptProbe = true/' "$CONF"
+# smpBasicProbe is the launcher for cpuhog+markerprint
+# (src/main.go:742-752). Without runSMPBasicProbe=true the
+# launcher never fires and no `marker <iter> cpu=<N>` lines
+# appear in serial.
+sed -i 's/const runSMPBasicProbe = false/const runSMPBasicProbe = true/' "$CONF"
 
 make iso >/dev/null 2>&1 || { echo "FAIL: make iso"; exit 1; }
 
@@ -56,17 +67,22 @@ kill "$PID" 2>/dev/null
 wait "$PID" 2>/dev/null
 PID=""
 
-DISTINCT=$(grep -oE 'marker [0-9]+ cpu=[0-9]+' "$OUT" 2>/dev/null \
-    | grep -oE 'cpu=[0-9]+' | sort -u | wc -l)
+CPUS=$(grep -oE 'marker [0-9]+ cpu=[0-9]+' "$OUT" 2>/dev/null \
+    | grep -oE 'cpu=[0-9]+' | sort -u | tr '\n' ' ')
+COUNT=$(grep -cE '^marker [0-9]+ cpu=' "$OUT" 2>/dev/null)
+COUNT=${COUNT:-0}
 
-echo "test_ring3_distribution: distinct_cpus=$DISTINCT"
+echo "test_ring3_distribution: marker_count=$COUNT cpus_observed=[$CPUS]"
 
-if [ "$DISTINCT" -ge 2 ]; then
+# §15 §10: PASS iff markerprint emitted markers AND at least
+# one of those was on cpu != 0 (Ring-3 dispatched off BSP onto
+# an AP).
+if [ "$COUNT" -ge 1 ] && echo "$CPUS" | grep -qE 'cpu=[1-9]'; then
     echo "result: PASS"
     exit 0
 fi
 
-echo "result: FAIL — Ring-3 work observed on only $DISTINCT cpu(s)"
+echo "result: FAIL — markerprint did not run on any AP (cpus=[$CPUS], count=$COUNT)"
 echo "--- log tail ---"
 tail -40 "$OUT"
 exit 1

@@ -42,13 +42,21 @@ func kschedSpawnRing3Wrapper(proc *Process) *KernelThread {
 	// Record the proc BEFORE the push so a wake on the target CPU
 	// can resolve the proc as soon as the kthread is dispatched.
 	kthreadHostedProc[t.Slot] = proc
-	// §14 U4 / U6: under uniprocessorKernel, exec'd children also
-	// land on BSP and run sequentially with the boot shell. The
-	// round-robin block is preserved (gated) for M7 revert; M7
-	// will wire AP Ring-3 dispatch and re-enable the round-robin
-	// placement so child processes spread across APs.
+	// §15 §3.1 / §16 Step 4: spawn placement.
+	// - userspaceSMP=true: round-robin onto AP queues
+	//   (1..numCoresOnline-1) via the Ring-3 tier. BSP queue 0
+	//   is reserved for the boot shell (R4); exec'd children
+	//   skip it.
+	// - userspaceSMP=false (M6 fallback): land on BSP via the
+	//   Ring-3 tier, processed by the BSP combined pump (Step 3).
+	// - uniprocessorKernel=false (legacy SMP M5; never combined
+	//   with M7 here): pre-§14 round-robin onto kschedQueues
+	//   service tier — kept as dead code under flag.
 	target := uint32(0)
-	if !uniprocessorKernel {
+	if userspaceSMP && numCoresOnline > 1 {
+		target = 1 + (kschedSpawnRRCounter % (numCoresOnline - 1))
+		kschedSpawnRRCounter++
+	} else if !uniprocessorKernel {
 		target = kschedSpawnRRCounter
 		kschedSpawnRRCounter++
 		if numCoresOnline == 0 {
@@ -56,18 +64,28 @@ func kschedSpawnRing3Wrapper(proc *Process) *KernelThread {
 		} else {
 			target = target % numCoresOnline
 		}
+		kschedPush(t, target) // legacy service-tier path
+		return t
 	}
-	kschedPush(t, target)
+	kschedPushRing3(t, target)
 	return t
 }
 
 // kschedSpawnRing3WrapperOnBSP pins the kthread to CPU 0. Used for
-// the boot shell so the BSP elf.go pump's kschedLoopOnce(0) can
-// dispatch it via local pop without depending on AP idle hooks.
+// the boot shell so the BSP elf.go combined pump dispatches it via
+// kschedLoopRing3OnlyOnce(0).
+//
+// §15 §3.1 R4 / §16 Step 4: switch from kschedPush(t, 0) (service
+// tier) to kschedPushRing3(t, 0) (Ring-3 tier). The BSP combined
+// pump (src/elf.go) drives both tiers, so the boot shell is still
+// dispatched on BSP either way — but routing it through the
+// Ring-3 tier keeps R3 ("only ring3WrapperKT instances on Ring-3
+// queues") a meaningful invariant and aligns the boot shell with
+// the rest of M7.
 func kschedSpawnRing3WrapperOnBSP(proc *Process) *KernelThread {
 	t := kschedSpawnInternal("ring3", ring3WrapperKT)
 	kthreadHostedProc[t.Slot] = proc
-	kschedPush(t, 0)
+	kschedPushRing3(t, 0)
 	return t
 }
 

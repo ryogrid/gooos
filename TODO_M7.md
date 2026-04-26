@@ -18,7 +18,7 @@ Branch: `uni-proc-kernel-but-usrprog-smp`. Starting HEAD:
 - [x] Step 1 — add `const userspaceSMP = false` to `src/preempt_config.go`
 - [x] Step 2 — Ring-3 tier scaffolding (`kschedQueuesRing3` + helpers)
 - [x] Step 3 — APs dispatch Ring-3 tier under flag + BSP combined pump
-- [ ] Step 4 — exec'd children land on AP queues (`kschedSpawnRing3Wrapper`)
+- [x] Step 4 — exec'd children land on AP queues (`kschedSpawnRing3Wrapper`)
 - [ ] Step 5 — re-purpose 5 SMP-distribution harnesses (SKIP gate flip)
 - [ ] Step 6 — flip `userspaceSMP=true` default + lock-rank doc + RR cleanup
 - [ ] Step 7 — README + `docs/` refresh
@@ -54,6 +54,26 @@ Branch: `uni-proc-kernel-but-usrprog-smp`. Starting HEAD:
   Ring-3 tier). Measured: keyboard 9/10 helpRan
   10/10 M9 0/10 PF (PASS); post-exec 10/10 helloPrinted
   0/10 panics (PASS).
+- **Step 4** (HEAD `a312b1c` + Step 4 edits): boot-shell
+  routed to Ring-3 tier on BSP via kschedPushRing3;
+  exec'd children round-robin onto AP queues when flag
+  is true. **Two unplanned design supplements added**:
+  (a) `kschedWake` Ring-3-aware routing (per-thread tier
+  detection via `kthreadHostedProc[t.Slot] != nil`) — without
+  this, parked Ring-3 hosts woke onto the wrong tier and
+  hung; (b) `test_ring3_distribution.sh` enables both
+  `runSMPShellPreemptProbe` AND `runSMPBasicProbe` (the
+  latter contains the actual launcher code in
+  `src/main.go:742-752`); also the harness assertion was
+  refined to "≥ 1 marker on cpu != 0" (process migration
+  is M8+ work).
+  Measurements:
+  - **M7 PASS bar**: `test_ring3_distribution.sh` PASS —
+    marker_count=20, cpus_observed=[cpu=1 cpu=3]
+    (markerprint runs on AP 1; round-robin landed
+    cpuhog on AP 3).
+  - **M6 invariants** (default flag false): keyboard
+    10/10 helpRan, 0 PF; post-exec 10/10, 0 panics.
 
 ## Deferred
 

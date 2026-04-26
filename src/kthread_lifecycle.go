@@ -174,7 +174,13 @@ func kschedPark(lock *Spinlock) {
 }
 
 // kschedWake transitions a Parked thread back to Runnable and pushes
-// it onto its OwnerCPU queue. Stubbed in M0.
+// it onto its OwnerCPU queue.
+//
+// §15 §3.3 / §16 Step 4: Ring-3 hosts (kthreads with
+// kthreadHostedProc[t.Slot] != nil) are routed to the Ring-3
+// tier (kschedQueuesRing3) so AP dispatchers (kschedLoopRing3Only)
+// can pick them up. Service kthreads stay on the service tier
+// (kschedQueues) per R1+R2.
 //
 //go:nosplit
 func kschedWake(t *KernelThread) {
@@ -182,6 +188,11 @@ func kschedWake(t *KernelThread) {
 		return
 	}
 	if t.State != uint32(KStateParked) {
+		return
+	}
+	if t.Slot >= 0 && int(t.Slot) < kthreadPoolCap &&
+		kthreadHostedProc[t.Slot] != nil {
+		kschedPushRing3(t, t.OwnerCPU)
 		return
 	}
 	kschedPush(t, t.OwnerCPU)
