@@ -68,9 +68,14 @@ var afterTicksCalls uint64
 // comment.
 const maxPendingTimers = 256
 
+// timerEntry carries a single pending timer. A timerEntry is
+// channel-based (ch non-nil, Route A legacy) OR event-based
+// (ev non-nil, Route C) — exactly one of ch/ev is set. The
+// dispatcher fires whichever is active.
 type timerEntry struct {
 	deadline uint64
-	ch       chan<- struct{}
+	ch       chan<- struct{} // legacy TinyGo-goroutine callers
+	ev       *KEvent         // Route C kernel-thread callers (§03)
 	used     bool
 }
 
@@ -79,42 +84,72 @@ var (
 	timerListLock Spinlock
 )
 
-// afterTicksInit spawns the timer-wheel dispatcher. Must be
-// called once at boot, before any goroutine that might call
-// afterTicks.
+// afterTicksInit spawns the timer-wheel dispatcher.
+// M4.2.f: now a kthread (was `go timerDispatcher()`).
+// Idempotent kschedInit ensures we work whether called before
+// or after main()'s explicit kschedInit.
+//
+// BISECTION: pinned to CPU 0 (BSP) instead of round-robin
+// kschedSpawn. The boot shell ring3WrapperKT is also pinned to
+// CPU 0; with both on the same CPU, the timerDispatcher →
+// kschedWake(shell) hand-off becomes a same-CPU push (no IPI,
+// no cross-CPU SavedRSP visibility window). If the
+// `make run-smp` keyboard race goes away with this pin, the
+// race surface narrows to the cross-CPU kschedPush/kschedSwitch
+// hand-off when waker and target live on different CPUs.
 func afterTicksInit() {
-	go timerDispatcher()
+	kschedInit()
+	kschedSpawnAt("timerDispatcher", timerDispatcher, 0)
 }
 
 // timerDispatcher is the single long-lived goroutine that owns
 // all deadline tracking. Runs forever; never parks, never calls
-// afterTicks itself (it reads pitTicks directly).
+// afterTicks itself (it reads pitTicks directly). Fires both
+// channel-based and KEvent-based entries.
 func timerDispatcher() {
-	var ready [maxPendingTimers]chan<- struct{}
+	var readyCh [maxPendingTimers]chan<- struct{}
+	var readyEv [maxPendingTimers]*KEvent
 	for {
 		now := pitTicks
 		flags := timerListLock.Acquire()
-		n := 0
+		nCh := 0
+		nEv := 0
 		for i := 0; i < maxPendingTimers; i++ {
-			if timerList[i].used && timerList[i].deadline <= now {
-				ready[n] = timerList[i].ch
-				n++
-				timerList[i].used = false
-				timerList[i].ch = nil
+			if !timerList[i].used || timerList[i].deadline > now {
+				continue
 			}
+			if timerList[i].ev != nil {
+				readyEv[nEv] = timerList[i].ev
+				nEv++
+			} else if timerList[i].ch != nil {
+				readyCh[nCh] = timerList[i].ch
+				nCh++
+			}
+			timerList[i].used = false
+			timerList[i].ch = nil
+			timerList[i].ev = nil
 		}
 		timerListLock.Release(flags)
-		for j := 0; j < n; j++ {
+		for j := 0; j < nCh; j++ {
 			// Non-blocking send — the channel is buffered cap=1
 			// and owned by the caller; the dispatcher is the
 			// only sender. If somehow already full, drop the
 			// redundant notification rather than block.
 			select {
-			case ready[j] <- struct{}{}:
+			case readyCh[j] <- struct{}{}:
 			default:
 			}
 		}
-		runtime.Gosched()
+		for j := 0; j < nEv; j++ {
+			readyEv[j].Signal()
+		}
+		// M4.2.f: kthread context — kschedYield instead of
+		// runtime.Gosched. Goroutine fallback retained.
+		if kschedRunning[cpuID()] != nil {
+			kschedYield()
+		} else {
+			runtime.Gosched()
+		}
 	}
 }
 
@@ -130,6 +165,7 @@ func afterTicks(d uint64) <-chan struct{} {
 		if !timerList[i].used {
 			timerList[i].deadline = deadline
 			timerList[i].ch = ch
+			timerList[i].ev = nil
 			timerList[i].used = true
 			timerListLock.Release(flags)
 			return ch
@@ -145,4 +181,63 @@ func afterTicks(d uint64) <-chan struct{} {
 	default:
 	}
 	return ch
+}
+
+// KEventAfter registers a timer that fires `d` PIT ticks from now
+// and returns the owning KEvent. Callers wait via ev.Wait(). The
+// KEvent is allocated on the heap; the caller is free to drop the
+// reference once Wait returns. Replacement for `<-afterTicks(d)`
+// in kernel-thread contexts (§03); goroutine-hosted callers keep
+// using afterTicks until M4's shim removal.
+//
+// Overflow semantics match afterTicks: if timerList is full, the
+// returned event is pre-signalled so Wait returns immediately.
+func KEventAfter(d uint64) *KEvent {
+	afterTicksCalls++
+	ev := &KEvent{}
+	deadline := pitTicks + d
+	flags := timerListLock.Acquire()
+	for i := 0; i < maxPendingTimers; i++ {
+		if !timerList[i].used {
+			timerList[i].deadline = deadline
+			timerList[i].ch = nil
+			timerList[i].ev = ev
+			timerList[i].used = true
+			timerListLock.Release(flags)
+			return ev
+		}
+	}
+	timerListLock.Release(flags)
+	// Overflow: pre-signal.
+	ev.flag = 1
+	return ev
+}
+
+// kschedTimedPark parks the calling kernel thread for `d` PIT
+// ticks. Shorthand for `KEventAfter(d).Wait()` with a minor
+// optimization: no heap allocation (the KEvent lives on the
+// caller's stack frame until Wait returns).
+//
+// Must only be called from a kernel-thread context (kschedRunning[cpu]
+// != nil). Behaviour from a TinyGo-goroutine context degrades to
+// a spin-pump via KEvent.Wait's non-kthread branch.
+func kschedTimedPark(d uint64) {
+	afterTicksCalls++
+	ev := KEvent{}
+	deadline := pitTicks + d
+	flags := timerListLock.Acquire()
+	for i := 0; i < maxPendingTimers; i++ {
+		if !timerList[i].used {
+			timerList[i].deadline = deadline
+			timerList[i].ch = nil
+			timerList[i].ev = &ev
+			timerList[i].used = true
+			timerListLock.Release(flags)
+			ev.Wait()
+			return
+		}
+	}
+	timerListLock.Release(flags)
+	// Overflow: immediate return matches the afterTicks overflow
+	// policy.
 }

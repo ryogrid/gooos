@@ -29,6 +29,9 @@ const (
 	colorAttr = uint16(0x0F00) // bright white on black
 )
 
+// smpShellProbeLaunched prevents duplicate 2.3 probe launches.
+var smpShellProbeLaunched uint32
+
 // vgaWriteLine writes a string to the given row of the VGA text buffer.
 //
 //go:nosplit
@@ -156,7 +159,7 @@ func main() {
 	vgaWriteLine(3, "PIT: 100 Hz timer started")
 	serialPrintln("PIT: 100 Hz timer started")
 
-	// Initialize keyboard channel and register IRQ1 handler (vector 33).
+	// Initialize keyboard translation tables and register IRQ1 handler (vector 33).
 	keyboardInit()
 	registerHandler(33, handleKeyboard)
 	vgaWriteLine(4, "Keyboard: ready")
@@ -169,7 +172,8 @@ func main() {
 
 	// Start the afterTicks timer-wheel dispatcher. Must be after
 	// pitInit (dispatcher reads pitTicks) and before any caller of
-	// afterTicks (testAfterTicks, netInit spawns, Ring-3 wrappers).
+	// afterTicks. M4.2.f: dispatcher is now a kthread; afterTicksInit
+	// calls kschedInit defensively (idempotent).
 	afterTicksInit()
 	serialPrintln("Timer wheel: afterTicksInit")
 
@@ -337,27 +341,21 @@ func main() {
 	vgaWriteLine(11, "Timer: "+tickStr+" ticks")
 	serialPrintln("Timer: " + tickStr + " ticks")
 
-	// Spike 2 probe — trivial TinyGo goroutine + channel round-trip.
-	// Proves scheduler=tasks + gooos runtime patch links and runs.
-	// Removed once the full migration lands.
-	{
-		ch := make(chan int, 1)
-		go func() { ch <- 42 }()
-		v := <-ch
-		if v == 42 {
-			serialPrintln("Spike2: goroutine+chan OK")
-		} else {
-			serialPrintln("Spike2: FAIL")
-		}
-	}
+	// (Route C M4.2.a: removed the Spike2 chan probe and the
+	// afterTicks self-test that used to live here. Both were
+	// boot-time TinyGo goroutine probes — the first existed only
+	// to prove scheduler=tasks + the runtime patch link, which
+	// is now established by the entire kernel; the second was
+	// observable-only ("afterTicks: OK") and not consumed by any
+	// harness. Deleting them removes 2 of the 12 `go` sites that
+	// blocked the M5 scheduler=none flip; deletion also resolves
+	// the M4.1 smoke-test boot panic that surfaced in the
+	// internal/task.PauseLocked path the chan probe walks.)
 
-	// afterTicks self-test (item 12 fallback). Spawned in the
-	// background so a slow timer cannot stall boot. Logs to serial
-	// when the channel fires (~20 ms).
-	go func() {
-		<-afterTicks(2)
-		serialPrintln("afterTicks: OK")
-	}()
+	// (Route C M0: the Phase 4.3 kernelThreadInit / ktPool machinery
+	// has been superseded by the gooos-owned kthread scheduler in
+	// src/kthread_*.go; it was dormant after commit 6a45e74 removed
+	// the netRxLoop spawn, so nothing to initialise here.)
 
 	// Boot Application Processors via INIT-SIPI-SIPI.
 	// smpInit maps the LAPIC MMIO page, so per-CPU init must follow.
@@ -372,6 +370,15 @@ func main() {
 	gdtReady = 1 // Signal APs that gdtTable template is populated
 	vgaWriteLine(12, "GDT: Ring 3 + TSS loaded")
 	serialPrintln("GDT: Ring 3 + TSS loaded")
+
+	// Register IPI handlers before enabling any preempt broadcast
+	// source. If vector 0xFB fires before registration, the generic
+	// dispatcher does not send LAPIC EOI and interrupt delivery can
+	// stall after the first tick.
+	registerHandler(ipiWakeupVector, handleWakeupIPI)
+	serialPrintln("IPI: wakeup handler registered at vector 0xFC")
+	registerHandler(ipiPreemptVector, handlePreemptIPI)
+	serialPrintln("IPI: preempt handler registered at vector 0xFB")
 
 	// Calibrate the LAPIC timer using PIT as reference, then start
 	// the BSP's LAPIC timer at 100 Hz and register the handler.
@@ -392,26 +399,10 @@ func main() {
 		netInit()
 		testNetBuf()
 		testICMPEchoReply()
-		// Periodic netDiag: first dump ~5 s after boot for
-		// test-script grep targets, then every ~10 s forever.
-		// The loop is safe post-Ring-3 because afterTicks is
-		// backed by the single-dispatcher timer wheel
-		// (src/afterticks.go) instead of the per-call spawn
-		// that previously leaked Task structs.
-		go func() {
-			<-afterTicks(500)
-			netDiag()
-			for {
-				<-afterTicks(1000)
-				netDiag()
-			}
-		}()
+		// M4.2.g: was an inline `go func()`; now a netDiagLoop
+		// kthread spawned later from main() (after kschedInit
+		// + fsTask pin).
 	}
-
-	// Register IPI handlers before IOAPIC (which enables interrupt
-	// delivery to APs).
-	registerHandler(ipiWakeupVector, handleWakeupIPI)
-	serialPrintln("IPI: wakeup handler registered at vector 0xFC")
 
 	// IOAPIC initialization disabled: QEMU's IOAPIC IRQ0
 	// redirection does not deliver PIT timer interrupts correctly
@@ -423,16 +414,54 @@ func main() {
 	// ioapicInit()
 	serialPrintln("IOAPIC: disabled (PIC pass-through active)")
 
-	// Phase B self-test: verify the TinyGo Task struct layout
-	// assumed by src/goroutine_tss.go before anything depends on it.
-	checkTaskOffset()
+	// M4.2.g cleanup: checkTaskOffset (TinyGo Task layout self-test)
+	// removed — required `go func(){}()` and was the last `go `
+	// site in src/*.go. The Task layout is no longer load-bearing
+	// post-Route-C since gInfoByTask is dead-on-the-kthread-side.
+	// M5 cleanup will delete the goroutine_tss.go support code.
 
-	go fsTask()
-	go keyboardPump()
+	// Route C M0 self-test: verify the KernelThread struct layout
+	// assumed by src/kthread_switch.S.
+	checkKernelThreadOffset()
+
+	// Route C M0 smoke test. Briefly enters the gooos kernel-thread
+	// scheduler to prove kschedSwitch works, then returns to the
+	// normal TinyGo boot path. Gated off by default; enabled by
+	// scripts/test_kthread_smoke.sh via sed + rebuild.
+	if runKthreadSmoke {
+		kschedSmokeRun()
+	}
+
+	// Route C M2: fsTask runs as a gooos kernel thread. Callers
+	// (fsSend*) now push onto a bounded fsReqQ and park on a
+	// per-request KEvent instead of a chan *fsResponse.
+	kschedInit()
+	// Pin fsTask to CPU 0 so the BSP elf.go pump can dispatch it
+	// directly via local kschedPop. Without this, after M4.2.{c,d}
+	// added tcpRTOScanner + tcpEcho kthreads ahead of fsTask in the
+	// round-robin counter, fsTask would land on an AP and the BSP
+	// pump would hang at fsSendRead until the AP's idle hook fired.
+	kschedSpawnAt("fsTask", fsTask, 0)
+	// Route C M4.2.{b,e}: spawn net-service kthreads (netRxLoop,
+	// udpEchoServer) here so they're after the smoke test and
+	// before bspBootDone.
+	//
+	// §14 §3.8 / Step 4: the previous `if !runMinimalKthreads`
+	// gate (added in `6a5d0cb` as an M6 bisection facility) is
+	// dropped because the kthread BSP-pin already provides the
+	// keyboard-correctness isolation. Net services run on BSP
+	// alongside the boot shell and the timer dispatcher.
+	netSpawnServices()
+	if e1000Found {
+		// M4.2.g: periodic netDiag, was inline `go func()`.
+		// §14 U4: BSP-pinned (covered by kschedSpawnAt clamp,
+		// but the explicit form documents intent).
+		kschedSpawnAt("netDiagLoop", netDiagLoop, 0)
+	}
 	runtime.Gosched()
 
-	vgaWriteLine(13, "Services: fsTask + keyboardPump running")
-	serialPrintln("Services: fsTask + keyboardPump running")
+	vgaWriteLine(13, "Services: fsTask running")
+	serialPrintln("Services: fsTask running")
 
 	// Run boot-time stack-size audit if enabled (compile-time
 	// const). Service goroutines have parked at least once after
@@ -502,6 +531,30 @@ func main() {
 	fsWrite("tcpcli.elf", userElf_tcpcli[:])
 	serialPrintln("  tcpcli.elf: " + utoa(uint64(len(userElf_tcpcli))) + " bytes")
 
+	fsCreate("ps.elf")
+	fsWrite("ps.elf", userElf_ps[:])
+	serialPrintln("  ps.elf: " + utoa(uint64(len(userElf_ps))) + " bytes")
+
+	fsCreate("cpuhog.elf")
+	fsWrite("cpuhog.elf", userElf_cpuhog[:])
+	serialPrintln("  cpuhog.elf: " + utoa(uint64(len(userElf_cpuhog))) + " bytes")
+
+	fsCreate("markerprint.elf")
+	fsWrite("markerprint.elf", userElf_markerprint[:])
+	serialPrintln("  markerprint.elf: " + utoa(uint64(len(userElf_markerprint))) + " bytes")
+
+	fsCreate("userpreempt.elf")
+	fsWrite("userpreempt.elf", userElf_userpreempt[:])
+	serialPrintln("  userpreempt.elf: " + utoa(uint64(len(userElf_userpreempt))) + " bytes")
+
+	fsCreate("sleeptest.elf")
+	fsWrite("sleeptest.elf", userElf_sleeptest[:])
+	serialPrintln("  sleeptest.elf: " + utoa(uint64(len(userElf_sleeptest))) + " bytes")
+
+	fsCreate("yieldtest.elf")
+	fsWrite("yieldtest.elf", userElf_yieldtest[:])
+	serialPrintln("  yieldtest.elf: " + utoa(uint64(len(userElf_yieldtest))) + " bytes")
+
 	// Store a test file for cat/wc demos.
 	fsCreate("hello.txt")
 	fsWrite("hello.txt", []byte("Hello from the gooos filesystem!\nThis is a test file.\n"))
@@ -519,14 +572,192 @@ func main() {
 	fsCreate("for.tc")
 	fsWrite("for.tc", []byte("main()\n{\n    var i, sum;\n    sum = 0;\n    for (i = 1; i <= 10; i = i + 1) {\n        sum = sum + i;\n    }\n    println(\"sum = %d\", sum);\n}\n"))
 
+	if runSMPProbeShellTest {
+		// One-shot shell autorun path for deterministic SMP shell probes.
+		// Executed by user/cmd/sh/main.go before the interactive prompt.
+		fsCreate(".autorun.sh")
+		fsWrite(".autorun.sh", []byte("smpprobe\necho POST_SMPPROBE_OK\n"))
+		bootShellArgs = "--autorun"
+		serialPrintln("preempt_probe: prepared .autorun.sh for smpprobe shell test")
+	} else if runGoprobeTest {
+		// One-shot shell autorun path for deterministic goprobe userspace tests.
+		// Executed by user/cmd/sh/main.go before the interactive prompt.
+		fsCreate(".autorun.sh")
+		fsWrite(".autorun.sh", []byte("goprobe\necho POST_GOPROBE_OK\n"))
+		bootShellArgs = "--autorun"
+		serialPrintln("preempt_probe: prepared .autorun.sh for goprobe shell test")
+	} else if runSleeputestTest {
+		// One-shot shell autorun path for deterministic sleeptest validation.
+		// Executed by user/cmd/sh/main.go before the interactive prompt.
+		fsCreate(".autorun.sh")
+		fsWrite(".autorun.sh", []byte("sleeptest\necho POST_SLEEPTEST_OK\n"))
+		bootShellArgs = "--autorun"
+		serialPrintln("preempt_probe: prepared .autorun.sh for sleeptest shell test")
+	} else if runYieldtestTest {
+		// One-shot shell autorun path for deterministic yieldtest validation.
+		// Executed by user/cmd/sh/main.go before the interactive prompt.
+		fsCreate(".autorun.sh")
+		fsWrite(".autorun.sh", []byte("yieldtest\necho POST_YIELDTEST_OK\n"))
+		bootShellArgs = "--autorun"
+		serialPrintln("preempt_probe: prepared .autorun.sh for yieldtest shell test")
+	} else if preemptEnabled && runUserPreemptProbe {
+		// Feature 2.2 harness auto-launch via shell autorun path to keep
+		// user process startup deterministic without HMP sendkey.
+		fsCreate(".autorun.sh")
+		fsWrite(".autorun.sh", []byte("userpreempt\n"))
+		bootShellArgs = "--autorun"
+		serialPrintln("preempt_probe: prepared .autorun.sh for userpreempt test")
+	} else {
+		bootShellArgs = ""
+	}
+
 	vgaWriteLine(14, "Scheduler: TinyGo goroutines active")
 	serialPrintln("Scheduler: TinyGo goroutines active")
 
-	// Signal APs that BSP boot is complete. All services are
-	// running, filesystem populated. APs will now enter the
-	// scheduler and begin work-stealing.
-	bspBootDone = 1
-
 	// Load shell and jump to Ring 3. Does not return.
 	setupUserspace()
+}
+
+var bootPostShellReadyDone uint32
+
+func bootActivatePostShellReady() {
+	if bootPostShellReadyDone != 0 {
+		return
+	}
+	bootPostShellReadyDone = 1
+
+	if !ioapicActive {
+		restoreBSPVirtualWire()
+	}
+
+	bspBootDone = 1
+
+	if runSMPBasicProbe {
+		// M4.2.g: was `go smpBasicProbe()`. Pin to AP 1 (not BSP)
+		// so the test_smp_basic harness can observe non-zero cpuIDs
+		// (proves a kthread runs on an AP, not just BSP).
+		//
+		// §14 U4: under uniprocessorKernel, no kthread runs on AP.
+		// kschedSpawnAt's flag clamp routes the spawn to BSP. The
+		// test_smp_basic harness is updated to SKIP under M6 per
+		// §14 §6.2 (re-purposed for Ring-3 distribution under M7).
+		var apTarget uint32 = 1
+		if numCoresOnline <= 1 {
+			apTarget = 0
+		}
+		kschedSpawnAt("smpBasicProbe", smpBasicProbe, apTarget)
+	}
+
+	if preemptEnabled && runSMPShellPreemptProbe {
+		serialPrintln("preempt_probe: waiting for AP launcher for cpuhog+markerprint")
+		n := uint32(numCoresOnline)
+		if n == 0 {
+			n = 1
+		}
+		for i := uint32(0); i < n; i++ {
+			serialPrintln("preempt_probe: apicid cpu=" + utoa(uint64(i)) +
+				" id=" + utoa(uint64(perCPUBlocks[i].APICID)))
+		}
+	}
+
+	if preemptEnabled && runPreemptProbe {
+		serialPrintln("preempt_probe: spawning kpMarker + kpHog")
+		// M4.2.g: kpMarker + kpHog migrated to gooos kernel
+		// threads. The M1 attempt's "no banner" mystery is
+		// expected to be resolved by the M4.0 + M4.1 stack
+		// (kthread ring3Wrapper, gcLock spinlock, sysYield
+		// kthread fork). Each runs to preempt-IPI rescheduling.
+		// §14 U4: BSP-pinned (covered by kschedSpawn flag clamp,
+		// but the explicit form documents intent).
+		kschedSpawnAt("kpMarker", kpMarker, 0)
+		kschedSpawnAt("kpHog", kpHog, 0)
+	}
+
+	preemptPhaseAdvance(preemptPhaseSchedReady)
+}
+
+// netDiagLoop is the periodic netDiag dumper kthread. M4.2.g:
+// was an inline `go func()` in the e1000 init block. First dump
+// at ~5 s after spawn (for test scripts that grep "=== Network
+// Diagnostics ==="), then every ~10 s thereafter.
+func netDiagLoop() {
+	if kschedRunning[cpuID()] != nil {
+		kschedTimedPark(500)
+	} else {
+		<-afterTicks(500)
+	}
+	netDiag()
+	for {
+		if kschedRunning[cpuID()] != nil {
+			kschedTimedPark(1000)
+		} else {
+			<-afterTicks(1000)
+		}
+		netDiag()
+	}
+}
+
+// kpHog is a tight compute loop with zero cooperative-yield points.
+// Under preemptEnabled, AP preempt IPIs must force it off the CPU
+// periodically so kpMarker can run on the same core.
+//
+//go:noinline
+func kpHog() {
+	serialPrintln("kpHog: started on cpu=" + utoa(uint64(cpuID())))
+	var x uint64
+	for {
+		x++
+		if x == 0 {
+			serialPrintln("kpHog: wrapped (should never print)")
+		}
+	}
+}
+
+// kpMarker prints a marker line every ~50 ms. Under preemption, it
+// makes forward progress even while kpHog is hogging a core. Without
+// preemption, and if kpMarker and kpHog happen to land on the same
+// runqueue, kpMarker starves.
+func kpMarker() {
+	serialPrintln("kpMarker: started on cpu=" + utoa(uint64(cpuID())))
+	for iter := 0; iter < 20; iter++ {
+		serialPrintln("preempt_probe_marker=" + utoa(uint64(iter)) +
+			" cpu=" + utoa(uint64(cpuID())))
+		// M4.2.g: kthread context — kschedTimedPark.
+		if kschedRunning[cpuID()] != nil {
+			kschedTimedPark(5)
+		} else {
+			<-afterTicks(5)
+		}
+	}
+	serialPrintln("kpMarker: done")
+}
+
+// smpBasicProbe yields between iterations; each yield re-queues
+// the goroutine and lets an AP have a chance to steal it. The
+// goroutine reports its current CPU once per tick; printing the
+// same marker with N != 0 is the success signal.
+func smpBasicProbe() {
+	for iter := 0; iter < 50; iter++ {
+		c := cpuID()
+		if preemptEnabled && runSMPShellPreemptProbe && smpShellProbeLaunched == 0 {
+			if c != 0 || iter >= 5 {
+				smpShellProbeLaunched = 1
+				if c == 0 {
+					serialPrintln("preempt_probe: AP launcher timeout in smpBasicProbe, fallback cpu=0")
+				}
+				serialPrintln("preempt_probe: launching cpuhog+markerprint from cpu=" +
+					utoa(uint64(c)))
+				_, _ = elfSpawn("markerprint.elf", "", nil)
+				_, _ = elfSpawn("cpuhog.elf", "", nil)
+			}
+		}
+		out := "smp_basic_cpu=" + utoa(uint64(c)) + " iter=" + utoa(uint64(iter))
+		serialPrintln(out)
+		// M4.2.g: kthread context — kschedTimedPark.
+		if kschedRunning[cpuID()] != nil {
+			kschedTimedPark(1)
+		} else {
+			<-afterTicks(1)
+		}
+	}
 }

@@ -344,7 +344,13 @@ jumpToRing3:
     /* Build iretq frame (pushed in reverse order). */
     pushq   $0x23               /* SS  = user data selector */
     pushq   %rsi                /* RSP = user stack pointer */
-    pushfq                      /* RFLAGS (IF=1 from current state) */
+    pushfq                      /* RFLAGS snapshot */
+    /* Force RFLAGS.IF=1 (bit 9) so Ring 3 is interruptible. Kernel
+     * callers may arrive here with IF=0 (e.g. mid-scheduler-swap), and
+     * a Ring 3 context with IF=0 blocks the LAPIC timer — feature 2.2
+     * preemption requires periodic timer interrupts in user mode.
+     * Unused-bit 2 is always 1 per Intel SDM. */
+    orq     $0x202, 0(%rsp)
     pushq   $0x1B               /* CS  = user code selector (0x18 | RPL=3) */
     pushq   %rdi                /* RIP = user entry point */
     iretq
@@ -434,8 +440,14 @@ cpuID:
     /* ---- spinlockAcquire: xchg-based spinlock acquire ----------------- */
     /* spinlockAcquire(lock *uint32)                                     */
     /* SysV ABI: rdi = pointer to lock word. Spins until acquired.       */
+    /* Preempt integration (feature 2.1 Option A): bump %gs:48           */
+    /* PreemptDisable on entry. The preempt ISR early-returns when this  */
+    /* counter is > 0, so every spinlock holder (kernel and TinyGo       */
+    /* runtime alike) is automatically preempt-safe without per-callsite */
+    /* Go-level bumps. Must pair with the decrement in spinlockRelease.  */
     .global spinlockAcquire
 spinlockAcquire:
+    incl    %gs:48              /* PreemptDisable++ */
     movl    $1, %eax
 .Lspin_retry:
     xchgl   %eax, (%rdi)
@@ -456,6 +468,7 @@ spinlockAcquire:
 spinlockRelease:
     movl    $0, (%rdi)
     mfence
+    decl    %gs:48              /* PreemptDisable-- (feature 2.1) */
     ret
 
     /* ---- readInterruptDepth: per-CPU interrupt depth counter --------- */
@@ -464,6 +477,28 @@ spinlockRelease:
     .global readInterruptDepth
 readInterruptDepth:
     movl    %gs:4, %eax
+    ret
+
+    /* ---- readSyscallDepth: per-CPU syscall-dispatch depth counter ---- */
+    /* readSyscallDepth() uint32                                         */
+    /* Reads %gs:44 (pcpuOffSyscallDepth). Set by the ISR prologue when   */
+    /* the incoming interrupt vector is 0x80 (syscall); cleared by the    */
+    /* matching epilogue. interrupt.In() uses this to distinguish a real  */
+    /* ISR from a syscall handler so task.Pause() is allowed during       */
+    /* blocking syscalls. */
+    .global readSyscallDepth
+readSyscallDepth:
+    movl    %gs:44, %eax
+    ret
+
+    /* ---- readPreemptDisable: per-CPU preempt-nesting counter ---------- */
+    /* readPreemptDisable() uint32                                        */
+    /* Reads %gs:48 (pcpuOffPreemptDisable). Incremented by               */
+    /* spinlockAcquire, decremented by spinlockRelease. The preempt ISR   */
+    /* (feature 2.1) early-returns when this counter is > 0.              */
+    .global readPreemptDisable
+readPreemptDisable:
+    movl    %gs:48, %eax
     ret
 
     /* ---- pause: x86 spin-wait hint ----------------------------------- */

@@ -18,7 +18,7 @@ TARGET   := target.json
 LDSCRIPT := linker_user.ld
 BUILD    := build
 
-CMDS := sh hello ls cat wc fdprobe goprobe gochan tinyc edit smpprobe udpecho dhcp tcpecho tcpcli
+CMDS := sh hello ls cat wc fdprobe goprobe gochan tinyc edit smpprobe udpecho dhcp tcpecho tcpcli ps cpuhog markerprint userpreempt sleeptest yieldtest
 ELFS := $(patsubst %,$(BUILD)/%.elf,$(CMDS))
 
 .PHONY: all clean

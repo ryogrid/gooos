@@ -82,6 +82,14 @@ const (
 	sysTcpSend  = 31
 	sysTcpRecv  = 32
 	sysShutdown = 33
+
+	// Preempt + Shell enhancement batch (feature 2.4 / 2.2 / 2.5)
+	// — see impldoc/preempt_shell_overview.md §4 for the allocation.
+	sysWaitpid   = 34 // 2.4: POSIX-style non-blocking waitpid (WNOHANG-only)
+	sysSigaction = 35 // 2.2: install SIGALRM handler for user preempt
+	sysSigreturn = 36 // 2.2: restore user context after SIGALRM handler
+	sysListprocs = 37 // 2.5: enumerate process table (backs ps)
+	sysShellReady = 38 // deterministic startup gate for preempt fanout
 )
 
 // jumpToRing3 transitions the CPU to Ring 3 user mode via iretq.
@@ -162,6 +170,16 @@ func syscallDispatch(frame *SyscallFrame) {
 		sysTcpRecvHandler(frame)
 	case sysShutdown:
 		sysShutdownHandler(frame)
+	case sysListprocs:
+		sysListprocsHandler(frame)
+	case sysWaitpid:
+		sysWaitpidHandler(frame)
+	case sysSigaction:
+		sysSigactionHandler(frame)
+	case sysSigreturn:
+		sysSigreturnHandler(frame)
+	case sysShellReady:
+		sysShellReadyHandler(frame)
 	default:
 		frame.RAX = 0xFFFFFFFFFFFFFFFF // -1 for invalid syscall
 	}
@@ -170,6 +188,7 @@ func syscallDispatch(frame *SyscallFrame) {
 // --- Syscall 0: sys_exit ---
 
 func sysExitHandler(frame *SyscallFrame) {
+	serialPrintln("MARKER: M1 sysExitHandler entry")
 	processExit(frame.RDI)
 	// Does not return if parent exists; if no parent, halts in processExit.
 }
@@ -310,7 +329,6 @@ func sysExecHandler(frame *SyscallFrame) {
 		argBuf[i] = *(*byte)(unsafe.Pointer(frame.RDX + i))
 	}
 	args := string(argBuf[:argLen])
-
 	exitCode, ok := elfExec(filename, args, parent)
 	if !ok {
 		frame.RAX = 0xFFFFFFFFFFFFFFFF
@@ -414,7 +432,16 @@ func sysFsListHandler(frame *SyscallFrame) {
 // --- Syscall 7: sys_yield ---
 
 func sysYieldHandler(frame *SyscallFrame) {
-	runtime.Gosched()
+	// M4.1: from a kthread-hosted Ring-3 process the syscall ISR
+	// runs on the kthread's kernel stack, not a TinyGo goroutine
+	// stack. runtime.Gosched would push taskCurrent() (garbage from
+	// kthread context) onto the TinyGo runqueue and page-fault in
+	// internal/task.Queue.Push. Use kschedYield instead.
+	if kschedRunning[cpuID()] != nil {
+		kschedYield()
+	} else {
+		runtime.Gosched()
+	}
 	frame.RAX = 0
 }
 
@@ -427,13 +454,24 @@ func sysYieldHandler(frame *SyscallFrame) {
 // it from a goroutine body via time.Sleep blocks the CPU without
 // yielding to cooperative consumers. Same rationale as in
 // src/afterticks.go. A user program sleeping here leaves every
-// other kernel goroutine (fsTask, keyboardPump, sibling
+// other kernel goroutine (fsTask, sibling
 // ring3Wrappers) free to run.
 
 func sysSleepHandler(frame *SyscallFrame) {
 	ticks := uint64(frame.RDI)
 	if ticks > 0 {
-		<-afterTicks(ticks)
+		// M4.3: from a kthread-hosted Ring-3 process, the syscall
+		// ISR runs on the kthread's own stack. `<-afterTicks(d)`
+		// is a Go chan recv that parks via TinyGo task primitives —
+		// the H-01 hazard. kschedTimedPark uses a stack-allocated
+		// KEvent and parks the kthread directly, waking on timer.
+		// Goroutine-context fallback retained for any pre-M4.1
+		// remnant caller (none currently).
+		if kschedRunning[cpuID()] != nil {
+			kschedTimedPark(ticks)
+		} else {
+			<-afterTicks(ticks)
+		}
 	}
 	frame.RAX = 0
 }
@@ -516,7 +554,7 @@ func sysReadKeyHandler(frame *SyscallFrame) {
 		frame.RAX = 0xFFFFFFFFFFFFFFFF
 		return
 	}
-	event := <-keyboardCh
+	event := keyboardReadEventBlocking()
 	buf := frame.RDI
 	*(*uint8)(unsafe.Pointer(buf + 0)) = uint8(event & 0xFF)         // scancode
 	*(*uint8)(unsafe.Pointer(buf + 1)) = uint8((event >> 8) & 0xFF)  // ascii
@@ -591,6 +629,25 @@ func sysVgaSetCursorHandler(frame *SyscallFrame) {
 
 func sysGetcpuidHandler(frame *SyscallFrame) {
 	frame.RAX = uintptr(cpuID())
+}
+
+// --- Syscall 38: sys_shell_ready ---
+// Signals that shell userspace reached interactive-ready state.
+// Preempt fanout is enabled from this explicit control point.
+//
+// Caller gate (D2 per TODO_FIX.md): only the current foreground
+// process may call this. At boot that is always the shell — no
+// other Ring-3 program has run yet. This narrows the attack
+// surface against a hypothetical rogue program that later tries
+// to perturb the preempt-phase state machine.
+func sysShellReadyHandler(frame *SyscallFrame) {
+	proc := currentProc()
+	if proc == nil || proc != getForegroundProc() {
+		frame.RAX = sysFail(fdErrBad)
+		return
+	}
+	bootActivatePostShellReady()
+	frame.RAX = 0
 }
 
 // --- Syscall 12: sys_open ---
@@ -750,13 +807,99 @@ func sysWaitHandler(frame *SyscallFrame) {
 	frame.RAX = processWait(child)
 }
 
+// --- Syscall 34: sys_waitpid (WNOHANG-only) ---
+// RDI = pid, RSI = options (must include WNOHANG), RDX = status vaddr (may be 0).
+// Returns pid on reap, 0 on still-running, negative on error.
+// BLOCKING waits are NOT supported; callers who want blocking use sys_wait #16.
+//
+// Critically: this handler does NOT call setForegroundProc. That
+// preserves the foreground-transfer invariant for background jobs
+// spawned via `sh &`; the parent shell retains the keyboard even
+// while polling this syscall between prompts.
+//
+// See impldoc/shell_background_jobs.md §3.3.
+
+const WNOHANG = 1
+
+func sysWaitpidHandler(frame *SyscallFrame) {
+	parent := currentProc()
+	if parent == nil {
+		frame.RAX = sysFail(fdErrBad)
+		return
+	}
+	pid := int32(frame.RDI)
+	options := uint32(frame.RSI)
+	statusVaddr := uintptr(frame.RDX)
+	if pid < 1 || options&^WNOHANG != 0 || options&WNOHANG == 0 {
+		frame.RAX = sysFail(fdErrBad)
+		return
+	}
+	fl := procLock.Acquire()
+	child := procByPID[uint32(pid)]
+	procLock.Release(fl)
+	// child.parent is immutable post-spawn; safe to read without re-locking.
+	if child == nil || child.parent != parent {
+		frame.RAX = sysFail(fdErrBad)
+		return
+	}
+	if child.Exited == 0 {
+		frame.RAX = 0 // still running
+		return
+	}
+	if statusVaddr != 0 {
+		writeU32Through(activePML4ForProc(parent), statusVaddr, uint32(child.ExitCode))
+	}
+	fl = procLock.Acquire()
+	if procByPID[child.pid] == child {
+		delete(procByPID, child.pid)
+		clearProcName(child.pid)
+		delete(processStartTick, child.pid)
+	}
+	procLock.Release(fl)
+	frame.RAX = uintptr(pid)
+}
+
+// activePML4ForProc returns a valid PML4 address for walking user
+// vaddrs owned by proc. Child processes from elfSpawn have their
+// own per-process PML4 (proc.pml4 != 0). The boot shell, launched
+// via elfLoad, has pml4 == 0 but runs in the boot PML4; readCR3
+// during its syscall context returns the boot PML4 (with low bits).
+//
+//go:nosplit
+func activePML4ForProc(proc *Process) uintptr {
+	if proc.pml4 != 0 {
+		return proc.pml4
+	}
+	return readCR3() &^ 0xFFF
+}
+
+// writeU32Through writes a u32 through the process's PML4. Used by
+// sys_waitpid to deliver the exit status to the caller's buffer.
+// Silent no-op if the vaddr is not mapped (caller ignores).
+//
+//go:nosplit
+func writeU32Through(pml4, vaddr uintptr, val uint32) {
+	for i := uintptr(0); i < 4; i++ {
+		paddr := walkAndGetPaddrIn(pml4, vaddr+i)
+		if paddr == 0 {
+			return
+		}
+		off := paddr + ((vaddr + i) & (pageSize - 1))
+		*(*byte)(unsafe.Pointer(off)) = byte(val >> (8 * i))
+	}
+}
+
 // --- Shell bootstrap ---
+
+// bootShellArgs is copied into Process.ArgString for the initial shell
+// launched by setupUserspace.
+var bootShellArgs string
 
 // setupUserspace loads the shell ELF and enters Ring 3 via a
 // ring3Wrapper goroutine. Blocks main's goroutine forever because
 // TinyGo's scheduler stops if main returns (`schedulerDone = true`).
 func setupUserspace() {
-	if !elfLoad("sh.elf") {
+	if !elfLoad("sh.elf", bootShellArgs) {
 		serialPrintln("Userspace: shell ELF load failed, halting")
 		for {
 			hlt()

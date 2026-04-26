@@ -97,3 +97,40 @@ func Wait(pid int) int {
 	r := syscall1(sysWait, uintptr(pid))
 	return int(int64(r))
 }
+
+// WNOHANG makes Waitpid return immediately when the child is still
+// running rather than block (matches POSIX waitpid semantics).
+const WNOHANG = 1
+
+// sysWaitpid is syscall 34. Mirrors src/userspace.go:sysWaitpid.
+const sysWaitpid = 34
+const sysShellReady = 38
+
+// Waitpid is the non-blocking sibling of Wait. If WNOHANG is set in
+// options and the child is still running, returns (0, false). On reap,
+// returns (exitcode, true). On error (bad pid, bad options, etc.),
+// returns (negative errno, false).
+//
+// Blocking waits are not supported through this wrapper — use Wait
+// (#16) instead. WNOHANG is currently the only supported options bit.
+//
+// See impldoc/shell_background_jobs.md §3.4.
+func Waitpid(pid int, options uint32) (int, bool) {
+	var status int32
+	r := syscall3(sysWaitpid, uintptr(pid), uintptr(options),
+		uintptr(unsafe.Pointer(&status)))
+	rs := int64(r)
+	if rs < 0 {
+		return int(rs), false
+	}
+	if rs == 0 {
+		return 0, false
+	}
+	return int(status), true
+}
+
+// ShellReady tells the kernel that the shell reached interactive-ready
+// state and preempt fanout may now transition to operational.
+func ShellReady() {
+	syscall0(sysShellReady)
+}

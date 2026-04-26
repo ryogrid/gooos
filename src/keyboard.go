@@ -2,9 +2,8 @@
 //
 // The IRQ1 handler reads scancodes from port 0x60, packs them, and
 // publishes to the .bss ring buffer in src/keyboard_irq.go via
-// keyboardIRQSend. keyboardPump (a goroutine) drains the ring and
-// forwards into the native channel keyboardCh, consumed by
-// sysReadHandler in src/userspace.go.
+// keyboardIRQSend. Blocking stdin readers drain that ring directly so
+// the keyboard path does not depend on a cross-CPU Go-channel wakeup.
 //
 // Event encoding (32-bit):
 //   bits  0– 7: scancode (make code, 0x80 stripped)
@@ -14,50 +13,20 @@
 
 package main
 
-// PS/2 keyboard I/O port.
-const kbdDataPort = 0x60
+// PS/2 keyboard I/O ports.
+const (
+	kbdDataPort   = 0x60
+	kbdStatusPort = 0x64
+)
 
 // scancodeToASCII maps scancode set 1 make codes to ASCII characters.
 // Index = scancode, value = ASCII (0 means unmapped).
-var scancodeToASCII = [128]byte{
-	// 0x00: no key
-	0x02: '1', 0x03: '2', 0x04: '3', 0x05: '4', 0x06: '5',
-	0x07: '6', 0x08: '7', 0x09: '8', 0x0A: '9', 0x0B: '0',
-	0x0C: '-', 0x0D: '=',
-	// 0x0E: backspace (handled separately)
-	0x10: 'q', 0x11: 'w', 0x12: 'e', 0x13: 'r', 0x14: 't',
-	0x15: 'y', 0x16: 'u', 0x17: 'i', 0x18: 'o', 0x19: 'p',
-	0x1A: '[', 0x1B: ']',
-	// 0x1C: enter (handled separately)
-	0x1E: 'a', 0x1F: 's', 0x20: 'd', 0x21: 'f', 0x22: 'g',
-	0x23: 'h', 0x24: 'j', 0x25: 'k', 0x26: 'l',
-	0x27: ';', 0x28: '\'', 0x29: '`',
-	0x2B: '\\',
-	0x2C: 'z', 0x2D: 'x', 0x2E: 'c', 0x2F: 'v', 0x30: 'b',
-	0x31: 'n', 0x32: 'm',
-	0x33: ',', 0x34: '.', 0x35: '/',
-	0x39: ' ', // space
-}
+var scancodeToASCII [128]byte
 
 // scancodeToASCIIShifted is the shift-held variant of the table
 // above. Required so the shell can read `<`, `>`, `|`, `_`
 // (and uppercase letters) for redirection / pipes / arguments.
-var scancodeToASCIIShifted = [128]byte{
-	0x02: '!', 0x03: '@', 0x04: '#', 0x05: '$', 0x06: '%',
-	0x07: '^', 0x08: '&', 0x09: '*', 0x0A: '(', 0x0B: ')',
-	0x0C: '_', 0x0D: '+',
-	0x10: 'Q', 0x11: 'W', 0x12: 'E', 0x13: 'R', 0x14: 'T',
-	0x15: 'Y', 0x16: 'U', 0x17: 'I', 0x18: 'O', 0x19: 'P',
-	0x1A: '{', 0x1B: '}',
-	0x1E: 'A', 0x1F: 'S', 0x20: 'D', 0x21: 'F', 0x22: 'G',
-	0x23: 'H', 0x24: 'J', 0x25: 'K', 0x26: 'L',
-	0x27: ':', 0x28: '"', 0x29: '~',
-	0x2B: '|',
-	0x2C: 'Z', 0x2D: 'X', 0x2E: 'C', 0x2F: 'V', 0x30: 'B',
-	0x31: 'N', 0x32: 'M',
-	0x33: '<', 0x34: '>', 0x35: '?',
-	0x39: ' ',
-}
+var scancodeToASCIIShifted [128]byte
 
 const (
 	scBackspace = 0x0E
@@ -78,27 +47,59 @@ var altHeld uint8
 // scancode is an extended key (arrow, Home, End, Delete, etc.).
 var extendedPrefix bool
 
-// keyboardInit is a no-op under Phase B — the ring buffer lives in
-// .bss and is zero-initialized; keyboardCh is constructed at
-// var-init time. Retained for symmetry with the existing init
-// call site in main.go, so the call remains valid. The function can
-// be deleted along with the corresponding call once we are sure no
-// other code references it.
-func keyboardInit() {}
+// keyboardInit is retained so the boot path can initialize the
+// scancode tables lazily instead of at package-init time.
+func keyboardInit() {
+	if scancodeToASCII[0x02] == 0 {
+		scancodeToASCII = [128]byte{
+			0x02: '1', 0x03: '2', 0x04: '3', 0x05: '4', 0x06: '5',
+			0x07: '6', 0x08: '7', 0x09: '8', 0x0A: '9', 0x0B: '0',
+			0x0C: '-', 0x0D: '=',
+			0x10: 'q', 0x11: 'w', 0x12: 'e', 0x13: 'r', 0x14: 't',
+			0x15: 'y', 0x16: 'u', 0x17: 'i', 0x18: 'o', 0x19: 'p',
+			0x1A: '[', 0x1B: ']',
+			0x1E: 'a', 0x1F: 's', 0x20: 'd', 0x21: 'f', 0x22: 'g',
+			0x23: 'h', 0x24: 'j', 0x25: 'k', 0x26: 'l',
+			0x27: ';', 0x28: '\'', 0x29: '`',
+			0x2B: '\\',
+			0x2C: 'z', 0x2D: 'x', 0x2E: 'c', 0x2F: 'v', 0x30: 'b',
+			0x31: 'n', 0x32: 'm',
+			0x33: ',', 0x34: '.', 0x35: '/',
+			0x39: ' ',
+		}
+		scancodeToASCIIShifted = [128]byte{
+			0x02: '!', 0x03: '@', 0x04: '#', 0x05: '$', 0x06: '%',
+			0x07: '^', 0x08: '&', 0x09: '*', 0x0A: '(', 0x0B: ')',
+			0x0C: '_', 0x0D: '+',
+			0x10: 'Q', 0x11: 'W', 0x12: 'E', 0x13: 'R', 0x14: 'T',
+			0x15: 'Y', 0x16: 'U', 0x17: 'I', 0x18: 'O', 0x19: 'P',
+			0x1A: '{', 0x1B: '}',
+			0x1E: 'A', 0x1F: 'S', 0x20: 'D', 0x21: 'F', 0x22: 'G',
+			0x23: 'H', 0x24: 'J', 0x25: 'K', 0x26: 'L',
+			0x27: ':', 0x28: '"', 0x29: '~',
+			0x2B: '|',
+			0x2C: 'Z', 0x2D: 'X', 0x2E: 'C', 0x2F: 'V', 0x30: 'B',
+			0x31: 'N', 0x32: 'M',
+			0x33: '<', 0x34: '>', 0x35: '?',
+			0x39: ' ',
+		}
+	}
+}
 
 // handleKeyboard is the IRQ1 handler (vector 33). Reads the scancode
 // from port 0x60, packs event bytes, and publishes into the
 // gooosKbdRing via keyboardIRQSend. Never blocks, never allocates.
 //
-//go:nosplit
-func handleKeyboard(vector uint64) {
-	scancode := inb(kbdDataPort)
-	if ioapicActive {
-		lapicSendEOI()
-	} else {
-		picSendEOI(1)
-	}
+// kbdIRQSeen is flipped to 1 on the FIRST IRQ1 entry (M8). Flag,
+// not counter, so the 082051f u64-increment hang can't recur. The
+// netDiag dump prints it alongside wake:NNNN so the user can see
+// whether the keyboard IRQ is reaching the kernel at all after $
+// reappears.
+var kbdIRQSeen uint32
+var kbdPollSeen uint32
 
+//go:nosplit
+func processKeyboardScancode(scancode uint8) {
 	// Extended key prefix (0xE0): consume and set flag for the
 	// next scancode. Arrow keys, Home, End, Delete, right-Ctrl
 	// and right-Alt all send 0xE0 before the actual scancode.
@@ -173,4 +174,38 @@ func handleKeyboard(vector uint64) {
 	// Pack: scancode[0:7] | ascii[8:15] | mods[16:23] | flags[24:31]
 	event := uint32(scancode) | uint32(ascii)<<8 | uint32(mods)<<16 | uint32(flags)<<24
 	keyboardIRQSend(event)
+}
+
+//go:nosplit
+func handleKeyboard(vector uint64) {
+	scancode := inb(kbdDataPort)
+	if kbdIRQSeen == 0 {
+		kbdIRQSeen = 1
+		serialPrintln("MARKER: M8 handleKeyboard first entry")
+	}
+	if ioapicActive {
+		lapicSendEOI()
+	} else {
+		picSendEOI(1)
+	}
+	processKeyboardScancode(scancode)
+}
+
+// pollKeyboardFallback drains one pending PS/2 byte without relying on
+// IRQ1 delivery. Used only on boots where no keyboard IRQ has been seen.
+//
+//go:nosplit
+func pollKeyboardFallback() bool {
+	if kbdIRQSeen != 0 {
+		return false
+	}
+	if inb(kbdStatusPort)&0x01 == 0 {
+		return false
+	}
+	if kbdPollSeen == 0 {
+		kbdPollSeen = 1
+		serialPrintln("MARKER: M8P keyboard poll fallback first entry")
+	}
+	processKeyboardScancode(inb(kbdDataPort))
+	return true
 }

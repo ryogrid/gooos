@@ -46,25 +46,50 @@ func netInit() {
 
 	arpSendGratuitous()
 
-	go netRxLoop()
-	serialPrintln("NET: RX dispatch goroutine started")
-
-	go udpEchoServer()
-
+	// M4.2.{b,e}: net-service kthread spawns moved out of netInit
+	// to netSpawnServices (called from main() after kschedSmokeRun)
+	// so the M0 smoke test isn't perturbed by long-running kthreads
+	// already on CPU 0's queue.
+	//
+	// §14 §3.8 / Step 4: the previous `if !runMinimalKthreads`
+	// gate (M6 bisection facility from `6a5d0cb`) is dropped —
+	// the kthread BSP-pin already provides the keyboard
+	// correctness isolation. tcpInit's spawns run on BSP per
+	// §14 U4.
 	tcpInit()
+}
+
+// netSpawnServices spawns the long-running net kthreads
+// (netRxLoop, udpEchoServer). Called from main() after the M0
+// smoke test (if any) but before bspBootDone.
+func netSpawnServices() {
+	if !e1000Found {
+		return
+	}
+	kschedInit() // idempotent
+	// §14 U4: BSP-pinned net services (covered by kschedSpawn flag
+	// clamp, but the explicit form documents intent).
+	kschedSpawnAt("netRxLoop", netRxLoop, 0)
+	serialPrintln("NET: RX dispatch kthread started")
+	kschedSpawnAt("udpEcho", udpEchoServer, 0)
 }
 
 // netRxLoop drives the receive side. Simplest possible poller:
 // drainRxRing, yield, repeat. No channel, no flag, no sti/hlt.
-// The previous channel-based design (rxSignalCh + ISR send) hit
-// an unsolvable race where ISR-context channel sends couldn't
-// wake a parked receiver under gooos's cooperative scheduler.
-// Polling is slightly more CPU-hungry but trivially correct.
+// Stays as a TinyGo goroutine pending M5 STW integration (§05).
 func netRxLoop() {
 	for {
 		drainRxRing()
 		statsInc(&netStats.NetRxLoopWakes) // counts iterations
-		runtime.Gosched()
+		// M4.2.e: kthread context — kschedYield instead of
+		// runtime.Gosched (H-01 hazard at task.Queue.Push).
+		// Goroutine fallback retained for any pre-Route-C caller
+		// (none currently — netInit spawns this as a kthread).
+		if kschedRunning[cpuID()] != nil {
+			kschedYield()
+		} else {
+			runtime.Gosched()
+		}
 	}
 }
 
@@ -183,6 +208,74 @@ func netDiag() {
 		" netRxFrames=" + utoa(s.NetRxFrames) +
 		" pitTicks=" + utoa(pitTicks))
 	serialPrintln("Sched: afterTicksCalls=" + utoa(afterTicksCalls))
+	// MARKER M7/M8/M9 summaries. N='1' if flag set, '0' otherwise.
+	// All flag arrays, never counters (see kbdIRQSeen comment for why).
+	wb := [4]byte{'0', '0', '0', '0'}
+	pb := [4]byte{'0', '0', '0', '0'}
+	for i := uint32(0); i < maxCPUs && i < 4; i++ {
+		if wakeFirstSeen[i] != 0 {
+			wb[i] = '1'
+		}
+		if kbdPumpCpuSeen[i] != 0 {
+			pb[i] = '1'
+		}
+	}
+	serialPrintln("wake:" + string(wb[:]) + " pump:" + string(pb[:]))
+	if kbdIRQSeen != 0 {
+		serialPrintln("kbdIRQ:seen")
+	} else if kbdPollSeen != 0 {
+		serialPrintln("kbdIRQ:poll")
+	} else {
+		serialPrintln("kbdIRQ:never")
+	}
+	if kbdRingDrops != 0 {
+		serialPrintln("kbdRing:drops=" + utoa(uint64(kbdRingDrops)))
+	}
+	if runSleepAudit {
+		sleepAuditDump()
+	}
 	tcpDiag()
 	serialPrintln("=== end ===")
+}
+
+// sleepAuditDump prints the Sleep-3 audit counters (gated by
+// runSleepAudit in src/preempt_config.go). Called from netDiag.
+// See
+// current_impl_2026_04_24/fix_plan_deferred_1_5/03_sleep_cross_cpu_channel_wakeup_audit.md
+// for hypothesis-to-counter mapping.
+func sleepAuditDump() {
+	serialPrintln("=== Sleep Audit Dump ===")
+	for i := uint32(0); i < 4 && i < maxCPUs; i++ {
+		serialPrintln("cpu=" + utoa(uint64(i)) +
+			" pushed=" + utoa(SchedTasksPushed[i]) +
+			" pop_ok=" + utoa(SchedPopOk[i]) +
+			" pop_nil=" + utoa(SchedPopNil[i]))
+	}
+	serialPrintln("lapicICRTimeouts=" + utoa(lapicICRTimeouts))
+	serialPrintln("pitTicks=" + utoa(pitTicks))
+	serialPrintln("afterTicksCalls=" + utoa(afterTicksCalls))
+	// P03a Option D: dump the migrateAndPause trace ring.
+	serialPrintln("migrateTrace head=" + utoa(uint64(migrateTraceHead)))
+	var shown uint32
+	for i := uint32(0); i < migrateTraceSize; i++ {
+		e := &migrateTrace[i]
+		if e.used == 0 {
+			continue
+		}
+		resume := "pending"
+		if e.used == 2 {
+			resume = "resumeCPU=" + utoa(uint64(e.resumeCPU)) +
+				" resumeTick=" + utoa(e.resumeTick)
+		}
+		serialPrintln("migrate[" + utoa(uint64(i)) + "]: src=" +
+			utoa(uint64(e.srcCPU)) +
+			" target=" + utoa(uint64(e.targetCPU)) +
+			" pushTick=" + utoa(e.pushTick) +
+			" " + resume)
+		shown++
+		if shown >= 16 {
+			break
+		}
+	}
+	serialPrintln("=== end Sleep Audit ===")
 }

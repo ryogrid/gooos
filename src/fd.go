@@ -59,7 +59,7 @@ type consoleStdin struct{}
 func readKeyboardLine(buf []byte) int {
 	sysReadLineLen = 0
 	for {
-		event := <-keyboardCh
+		event := keyboardReadEventBlocking()
 		scancode := uint8(event & 0xFF)
 		ascii := byte((event >> 8) & 0xFF)
 
@@ -120,12 +120,20 @@ type consoleStdout struct{ toVGA bool }
 func (c consoleStdout) Read([]byte) (int, fdErr) { return 0, fdErrBad }
 
 func (c consoleStdout) Write(buf []byte) (int, fdErr) {
-	for i := 0; i < len(buf); i++ {
-		if c.toVGA {
+	// M5-fix: hold the serial lock for the whole buffer so a
+	// concurrent print on another CPU doesn't interleave bytes
+	// mid-line. VGA writes stay outside the serial lock (they
+	// have their own mechanism).
+	if c.toVGA {
+		for i := 0; i < len(buf); i++ {
 			vgaConsolePutChar(buf[i])
 		}
+	}
+	flags := serialLock.Acquire()
+	for i := 0; i < len(buf); i++ {
 		serialPutChar(buf[i])
 	}
+	serialLock.Release(flags)
 	return len(buf), fdErrOK
 }
 
@@ -218,10 +226,22 @@ func (f *fileFd) Close() fdErr { return fdErrOK }
 // Package-scope singletons. Inherited by fork/exec via shallow
 // Process.fds copy.
 var (
-	stdinFD  FileDesc = consoleStdin{}
-	stdoutFD FileDesc = consoleStdout{toVGA: true}
-	stderrFD FileDesc = consoleStdout{toVGA: false}
+	stdinFD  FileDesc
+	stdoutFD FileDesc
+	stderrFD FileDesc
 )
+
+func ensureStdioFDs() {
+	if stdinFD == nil {
+		stdinFD = consoleStdin{}
+	}
+	if stdoutFD == nil {
+		stdoutFD = consoleStdout{toVGA: true}
+	}
+	if stderrFD == nil {
+		stderrFD = consoleStdout{toVGA: false}
+	}
+}
 
 // --- Process.fds helpers --------------------------------------------------
 
@@ -307,6 +327,7 @@ func procDup2(p *Process, oldfd, newfd int) (int, fdErr) {
 // elfExec / elfSpawn (phase 4) inherit from the parent
 // instead.
 func procInitStdio(p *Process) {
+	ensureStdioFDs()
 	p.fds[0] = stdinFD
 	p.fds[1] = stdoutFD
 	p.fds[2] = stderrFD

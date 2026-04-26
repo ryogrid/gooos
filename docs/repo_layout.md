@@ -164,7 +164,7 @@ gooos/
     ├── fd.go                              # FileDesc abstractions (stdin/stdout/file/pipe/socket)
     ├── pipe.go                            # anonymous pipes (chan byte backed)
     ├── keyboard.go                        # PS/2 keyboard IRQ handler (ISR-safe)
-    ├── keyboard_irq.go                    # SPSC ring buffer + keyboardPump goroutine
+    ├── keyboard_irq.go                    # SPSC ring buffer + blocking keyboard-read wait path
     ├── vga.go                             # VGA console with cursor and scrolling
     │
     │   # Timers

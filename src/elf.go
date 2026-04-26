@@ -12,7 +12,10 @@
 
 package main
 
-import "unsafe"
+import (
+	"runtime"
+	"unsafe"
+)
 
 // ELF identification constants.
 const (
@@ -167,7 +170,7 @@ func elfParse(data []byte) (entry uintptr, phdrs []Elf64Phdr, ok bool) {
 // validates it, maps PT_LOAD segments into userspace memory, allocates a user
 // stack, and jumps to Ring 3 at the entry point. Does not return on success.
 // Returns false if the file is not found or the ELF is invalid.
-func elfLoad(name string) bool {
+func elfLoad(name string, args string) bool {
 	// Read the ELF binary from the filesystem via the FS task.
 	data := fsSendRead(name)
 	if data == nil {
@@ -188,8 +191,15 @@ func elfLoad(name string) bool {
 	// Phase B: allocate a fresh Process for the boot shell. No
 	// parent — processExit on this goroutine prints and halts.
 	proc := &Process{parent: nil, exitCh: make(chan uintptr, 1), poolIdx: -1}
-	procInitStdio(proc)       // boot shell gets console fds 0,1,2
-	setForegroundProc(proc)   // boot shell starts as foreground
+	procInitStdio(proc)     // boot shell gets console fds 0,1,2
+	setForegroundProc(proc) // boot shell starts as foreground
+	proc.ArgLen = len(args)
+	if proc.ArgLen > 256 {
+		proc.ArgLen = 256
+	}
+	for i := 0; i < proc.ArgLen; i++ {
+		proc.ArgString[i] = args[i]
+	}
 	userFlags := uintptr(pagePresent | pageWrite | pageUser)
 
 	// Map and load each PT_LOAD segment.
@@ -214,13 +224,15 @@ func elfLoad(name string) bool {
 		}
 	}
 
-	// Allocate user stack: 2 pages (8 KiB) at userStackBase.
-	for i := uintptr(0); i < 2; i++ {
+	// Allocate user stack: 4 pages (16 KiB) at userStackBase.
+	// Keep initial RSP one page below the mapped top so boundary
+	// accesses above RSP don't fault at process start.
+	for i := uintptr(0); i < 4; i++ {
 		paddr := allocPage()
 		mapPage(userStackBase+i*pageSize, paddr, userFlags)
 		processRecordPage(proc, userStackBase+i*pageSize, paddr)
 	}
-	stackTop := userStackBase + 2*pageSize
+	stackTop := userStackBase + 3*pageSize - 8
 
 	// Set heap break to end of last PT_LOAD (page-aligned up) and
 	// install the per-process heap ceiling. See userHeapLimit in
@@ -234,12 +246,33 @@ func elfLoad(name string) bool {
 	proc.EntryPoint = entry
 	proc.StackTop = stackTop
 
-	serialPrintln("ELF: spawning boot shell goroutine at 0x" + hextoa(uint64(entry)))
+	serialPrintln("ELF: spawning boot shell kthread at 0x" + hextoa(uint64(entry)))
 
-	// Spawn the shell on its own goroutine. main() then blocks on
-	// proc.exitCh — if the shell ever exits, the kernel halts.
-	go ring3Wrapper(proc)
-	<-proc.exitCh
+	// Spawn the shell on its own kernel thread (M4.1). The waiter
+	// is the BSP main goroutine; without driving the scheduler from
+	// here, dispatch of the kthread depends on AP idle hooks firing
+	// at the right time. Pump kschedLoopOnce while polling proc.Exited
+	// (set by processExit before proc.exitCh send) so the BSP itself
+	// can dispatch the shell kthread when no AP is available.
+	kschedSpawnRing3WrapperOnBSP(proc)
+	for proc.Exited == 0 {
+		kschedLoopOnce()
+		// §15 §3.2 / §16 Step 3: M7 combined BSP pump. Drive
+		// both tiers — service (kschedQueues[0]) and Ring-3
+		// (kschedQueuesRing3[0], where the boot shell lives
+		// once Step 4 lands) — so the boot shell still runs on
+		// BSP regardless of the userspaceSMP flag value.
+		// kschedLoopRing3OnlyOnce is a no-op when the queue is
+		// empty (pre-Step-4: empty since shell still on service
+		// tier; post-Step-4: holds the shell).
+		kschedLoopRing3OnlyOnce(0)
+		// Under scheduler=cores: yield to TinyGo scheduler so
+		// remaining goroutines (e.g. periodic netDiag) get
+		// scheduling time. Under scheduler=none: this is a no-op
+		// (no other goroutines); the loop becomes a tight
+		// kthread-dispatch pump for CPU 0.
+		runtime.Gosched()
+	}
 	serialPrintln("ELF: boot shell exited, halting")
 	for {
 		hlt()

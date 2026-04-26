@@ -61,3 +61,18 @@
 ## Git
 - ** Don't merge to master/main without order from the user. **
 
+## Background Task Monitoring Reliability
+
+You often fail to detect when background tasks have terminated, even when you believe you are actively monitoring them. Implement explicit countermeasures:
+
+- **Verify status definitively.** Confirm task state via an explicit check (e.g., `BashOutput` with exit code confirmation) rather than relying on assumed state.
+- **Re-poll at regular intervals.** Set checkpoints to re-check task status periodically instead of assuming a single observation is sufficient.
+- **Confirm termination before proceeding.** Do not advance to dependent steps until you have positively verified that the prerequisite task has exited.
+
+## Periodic Cleanup of Stale Background Processes
+
+At natural breakpoints during your work (e.g., after completing a subtask, before starting a new phase), audit all background tasks and monitors currently managed by Claude Code:
+
+- Identify any that are no longer needed.
+- Terminate them explicitly.
+- Do not let orphaned processes accumulate across the session.

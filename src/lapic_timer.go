@@ -8,6 +8,8 @@
 
 package main
 
+import "unsafe"
+
 // lapicTimerVector is the interrupt vector for the per-CPU LAPIC timer.
 const lapicTimerVector = 0xFE
 
@@ -15,6 +17,15 @@ const lapicTimerVector = 0xFE
 // 100 Hz (10 ms period). Set by lapicTimerCalibrate on the BSP,
 // read by all APs.
 var lapicCalibratedInitCnt uint32
+
+// preemptBroadcastFirst is flipped when BSP first executes the
+// preempt-broadcast path. Diagnostic marker for 2.3 investigation.
+var preemptBroadcastFirst uint32
+var preemptBroadcastCount uint32
+var preemptSnap200Done uint32
+var preemptSnap800Done uint32
+var preemptProbeWarmupTicks uint32
+var preemptStartupWarmupTicks uint32
 
 // lapicTimerCalibrate measures the LAPIC timer decrement rate
 // using the PIT (already running at 100 Hz) as a reference.
@@ -47,9 +58,7 @@ func lapicTimerCalibrate() {
 
 	lapicCalibratedInitCnt = elapsed
 
-	serialPrint("LAPIC timer: ")
-	serialPrint(utoa(uint64(elapsed)))
-	serialPrintln(" ticks/10ms")
+	serialPrintln("LAPIC timer: " + utoa(uint64(elapsed)) + " ticks/10ms")
 }
 
 // lapicTimerInit programs this CPU's LAPIC timer in periodic
@@ -68,13 +77,55 @@ func lapicTimerInit() {
 
 // handleLAPICTimer is the per-CPU LAPIC timer handler (vector 0xFE).
 // Sets the wantReschedule flag so the scheduler yields on the next
-// opportunity, and sends LAPIC EOI. The actual preemption happens
-// when the CPU returns from hlt — the scheduler loop checks the
-// local runqueue and steals from peers.
+// opportunity, and sends LAPIC EOI. When preemptEnabled, additionally
+// drives feature 2.1 (preempt IPI broadcast to APs for kernel-
+// goroutine preemption) and feature 2.2 (user-process SIGALRM
+// delivery — BSP self-delivery via iretq-frame rewrite when a Ring-3
+// user goroutine is on BSP, plus quantum-counter accounting for
+// every online CPU).
 //
 //go:nosplit
 func handleLAPICTimer(vector uint64) {
 	idx := cpuID()
 	perCPUBlocks[idx].WantReschedule = 1
+	if preemptEnabled && !runSMPProbeShellTest && idx == 0 && preemptPhaseIsOperational() {
+		// Keep startup deterministic: defer preempt fanout briefly after
+		// userspace handoff so shell bootstrap can reach prompt/input state.
+		if preemptStartupWarmupTicks < 150 {
+			preemptStartupWarmupTicks++
+			lapicSendEOI()
+			return
+		}
+		if runSMPShellPreemptProbe && preemptProbeWarmupTicks < 100 {
+			preemptProbeWarmupTicks++
+			lapicSendEOI()
+			return
+		}
+		for i := uint32(0); i < uint32(numCoresOnline); i++ {
+			maybeSignalUserPreempt(i)
+		}
+		if preemptBroadcastFirst == 0 {
+			preemptBroadcastFirst = 1
+		}
+		preemptBroadcastCount++
+		if runSMPShellPreemptProbe {
+			if preemptBroadcastCount >= 200 && preemptSnap200Done == 0 {
+				preemptSnap200Done = 1
+			}
+			if preemptBroadcastCount >= 800 && preemptSnap800Done == 0 {
+				preemptSnap800Done = 1
+			}
+		}
+		broadcastPreemptIPI()
+		// BSP fast-path: if a Ring-3 user goroutine is running on BSP
+		// now, attempt signal delivery via in-place iretq-frame rewrite.
+		framePtr := lastFramePtrs[idx]
+		if framePtr != 0 {
+			frame := (*SyscallFrame)(unsafe.Pointer(framePtr))
+			if frame.CS&3 == 3 {
+				_ = maybeDeliverSignal(frame)
+			}
+		}
+	}
 	lapicSendEOI()
 }

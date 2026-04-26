@@ -62,6 +62,13 @@ var gdtReady uint32
 // APs spin on this before entering the scheduler.
 var bspBootDone uint32
 
+// numCoresOnline is the count of CPUs that successfully booted.
+// Set by smpInit after the AP wait loop completes. Referenced by
+// the patched TinyGo runtime (runtime_gooos.go) via
+// `//go:extern main.numCoresOnline` so schedulerWake's IPI
+// broadcast knows how many APs exist.
+var numCoresOnline uint32 = 1
+
 // apStacks holds per-AP stack top pointers. The trampoline indexes
 // into this array using the atomically claimed AP index.
 var apStacks [smpMaxAPs]uintptr
@@ -99,9 +106,44 @@ func lapicSendEOI() {
 	lapicWrite(lapicRegEOI, 0)
 }
 
-// lapicWaitICR spins until the ICR delivery status bit (12) is idle.
+// restoreBSPVirtualWire reasserts BSP-side PIC pass-through after late
+// boot transitions. On affected SMP boots, keyboard IRQ1 can stop
+// arriving once the shell reaches ShellReady and AP release begins even
+// though the original boot-time LAPIC/PIC setup succeeded. Rewriting the
+// BSP's virtual-wire state here is deterministic and low-risk: BSP keeps
+// ExtINT on LINT0, NMI on LINT1, and both PICs fully unmasked in the
+// non-IOAPIC path.
+func restoreBSPVirtualWire() {
+	lapicWrite(lapicRegLVT0, 0x00000700) // ExtINT, unmasked
+	lapicWrite(lapicRegLVT1, 0x00000400) // NMI, unmasked
+	outb(pic1Data, 0x00)
+	outb(pic2Data, 0x00)
+}
+
+// lapicWaitICR spins until the ICR delivery status bit (12) is idle,
+// with a bounded iteration cap. Nosplit because callers run from ISR
+// context (pitWakeAPs → handleTimer, broadcastPreemptIPI → handleLAPICTimer).
+//
+// The previous unbounded spin could freeze the ISR if the LAPIC
+// delivery stalled for any reason (emulation corner, hardware quirk);
+// a hung PIT ISR would in turn freeze afterTicks, the shell, and every
+// other kernel goroutine. A dropped IPI is recoverable because the
+// next PIT tick will retry; a hung ISR is not. 65_536 MMIO reads take
+// a few hundred microseconds at QEMU rates — far below the 10 ms PIT
+// period — so the bound is safe.
+//
+//go:nosplit
 func lapicWaitICR() {
-	for lapicRead(lapicRegICRL)&(1<<12) != 0 {
+	for i := 0; i < 65536; i++ {
+		if lapicRead(lapicRegICRL)&(1<<12) == 0 {
+			return
+		}
+	}
+	// Timeout: give up, let the next caller retry.
+	// P03 audit (gated counter in src/percpu.go): bump so
+	// sleepAuditDump can report IPI delivery stalls.
+	if runSleepAudit {
+		lapicICRTimeouts++
 	}
 }
 
@@ -132,15 +174,12 @@ func smpInit() {
 	lapicWrite(lapicRegSVR, svr|(1<<8)|0xFF)
 
 	bspID := lapicRead(lapicRegID) >> 24
-	serialPrint("SMP: BSP APIC ID=")
-	serialPrintln(utoa(uint64(bspID)))
+	serialPrintln("SMP: BSP APIC ID=" + utoa(uint64(bspID)))
 
 	// Try ACPI MADT to learn expected AP count.
 	expectedAPs := detectAPsFromACPI(bspID)
 	if expectedAPs > 0 {
-		serialPrint("SMP: MADT reports ")
-		serialPrint(utoa(uint64(expectedAPs)))
-		serialPrintln(" APs")
+		serialPrintln("SMP: MADT reports " + utoa(uint64(expectedAPs)) + " APs")
 	} else {
 		serialPrintln("SMP: MADT not found, using broadcast")
 	}
@@ -206,6 +245,7 @@ func smpInit() {
 
 	apCount := *(*uint32)(unsafe.Pointer(trampPhys + trampOffCounter))
 	totalCores := uint64(apCount) + 1 // +1 for BSP
+	numCoresOnline = uint32(totalCores)
 
 	msg := "SMP: " + utoa(totalCores) + " cores online"
 	vgaWriteLine(19, msg)
@@ -232,43 +272,63 @@ func apEntry(apIndex uint64) {
 	// Load per-CPU GDT + TSS for this AP.
 	gdtInitPerCPU(int(apIndex) + 1)
 
+	// Load the IDT on this AP. Each CPU has its own IDTR, and an
+	// AP starts with IDTR = {base=0, limit=0xFFFF} (x86 reset
+	// default). Without this, any exception on the AP triple-faults
+	// because the CPU reads a zero-filled descriptor from address 0
+	// — the root cause of the Ring-3 iretq triple-fault investigated
+	// in M4 (impldoc/smp_m4_ring3_fault.md, evidence in
+	// tmp/m4_qemu.log: "IDT=     0000000000000000 0000ffff").
+	idtLoadAP()
+
 	// Enable this AP's LAPIC (software-enable bit + spurious vector).
 	// The BSP does this in smpInit; APs must do it themselves.
 	svr := lapicRead(lapicRegSVR)
 	lapicWrite(lapicRegSVR, svr|(1<<8)|0xFF)
+	// Latch APICID only after LAPIC software-enable. Capturing earlier
+	// (inside percpuInitAP) can read as 0 on some boots, which then
+	// makes wakeup/preempt IPI send paths skip this AP forever.
+	percpuLatchAPICIDCurrent()
 
 	// Wait for BSP to finish LAPIC timer calibration.
 	for lapicCalibratedInitCnt == 0 {
 		gooosPause()
 	}
-	// AP LAPIC timer deferred — enabling it causes boot hang.
-	// APs will be woken by IPI or PIC passthrough timer tick.
-	// lapicTimerInit()
+	// Enable the AP's LAPIC timer. Prior concern (M2-4 Deferred in
+	// TODO_SMP4.md) was that handleLAPICTimer's AP path could hit
+	// a non-nosplit call or lock contention during BSP's late
+	// boot. As of the preempt-phase-gating work in
+	// current_impl_2026_04_24/03_smp_preempt_phase_gating.md, the
+	// AP branch of handleLAPICTimer only sets
+	// `perCPUBlocks[idx].WantReschedule = 1` and sends EOI — both
+	// are //go:nosplit and lock-free. AP preempt fanout (vector
+	// 0xFB) remains BSP-broadcast-only under the phase gate, so
+	// enabling the AP timer here gives each AP an independent
+	// 100 Hz tick that drives local reschedule flags without
+	// adding new cross-CPU lock pressure. B2 per TODO_FIX.md.
+	lapicTimerInit()
 
-	serialPutChar('A')
-	serialPutChar('P')
-	serialPutChar(' ')
-	if apIndex >= 10 {
-		serialPutChar(byte('0' + apIndex/10))
-	}
-	serialPutChar(byte('0' + apIndex%10))
-	serialPutChar(' ')
-	serialPutChar('o')
-	serialPutChar('n')
-	serialPutChar('l')
-	serialPutChar('i')
-	serialPutChar('n')
-	serialPutChar('e')
-	serialPutChar('\r')
-	serialPutChar('\n')
+	// Per-AP "online" chatter races heavily under SMP and tends to
+	// obscure the later shell/autorun diagnostics. The BSP summary
+	// line ("SMP: N cores online") remains the authoritative signal.
 
 	// Wait for BSP to complete its full boot sequence.
 	for bspBootDone == 0 {
 		gooosPause()
 	}
+	// Re-latch APICID once more after BSP boot completion. Early bring-up
+	// reads can transiently return 0 on some boots.
+	percpuLatchAPICIDCurrent()
+
+	// Mask AP-side LINT0/LINT1. BSP keeps PIC pass-through on LINT0;
+	// APs must not accept ExtINT/NMI through local LINT lines or
+	// legacy PIC IRQ routing becomes flaky.
+	*(*uint32)(unsafe.Pointer(uintptr(0xFEE00350))) = 0x10000 // LVT LINT0
+	*(*uint32)(unsafe.Pointer(uintptr(0xFEE00360))) = 0x10000 // LVT LINT1
 
 	// Enter the TinyGo scheduler loop on this AP.
 	sti()
+	markAPSchedulerEntered()
 	apSchedulerEntry()
 
 	// Safety net.
@@ -277,12 +337,40 @@ func apEntry(apIndex uint64) {
 	}
 }
 
-// apSchedulerEntry bridges into TinyGo's apScheduler() function
-// which enters the scheduler loop without reinitializing the heap
-// or calling main.
+// apSchedulerEntry was the AP entry into TinyGo's apScheduler.
+// M5.2 (scheduler=none): runtime.apScheduler doesn't exist
+// without a goroutine scheduler. Replace with the gooos kthread
+// scheduler loop directly.
 //
-//go:linkname apSchedulerEntry runtime.apScheduler
-func apSchedulerEntry()
+// §14 invariant U2: under uniprocessorKernel the gooos kernel
+// runs as a uniprocessor on BSP. APs idle in `sti; hlt;` until
+// they receive a Ring-3 dispatch IPI (mechanism is M7 future
+// work). The previous `kschedLoop()` call is preserved as a
+// comment so a future `git revert` of the §14 commit restores
+// the SMP kernel scheduler in one diff.
+func apSchedulerEntry() {
+	// §15 §3.2 / §16 Step 3: M7 dispatch path. When userspaceSMP
+	// is true, APs run the Ring-3-only dispatcher and consume
+	// from kschedQueuesRing3[cpuID()]. Service kthreads stay
+	// BSP-only per R1+R2; this loop never pops from the
+	// service tier.
+	if userspaceSMP {
+		kschedLoopRing3Only(cpuID())
+		return
+	}
+	if uniprocessorKernel {
+		// M6: AP kernel-mode idle. Per-CPU LAPIC timer continues
+		// to fire (initialised in apEntry); handlePreemptIPI
+		// short-circuits because kschedRunning[c]==nil. Any IPI
+		// (wakeup, freeze) wakes the CPU; without work to do,
+		// it loops back into hlt.
+		for {
+			sti()
+			hlt()
+		}
+	}
+	kschedLoop()
+}
 
 // ---------- ACPI MADT Parsing ----------
 

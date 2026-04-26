@@ -97,14 +97,15 @@ const (
 
 // socketFd is the FileDesc implementation behind every Ring-3 socket.
 //
-// For UDP (kind == sockKindUDP), recvCh is the bound receive queue
-// owned by the socket; udpBindWithChannel is given the same channel
+// For UDP (kind == sockKindUDP), recvQ is the bound receive queue
+// owned by the socket; udpBindWithQueue is given the same queue
 // at bind time so when the socket closes, unbind removes the kernel
-// reference and the channel becomes garbage.
+// reference and the queue becomes garbage. M4.2.b: was recvCh
+// chan UDPDatagram pre-Route-C.
 //
 // For TCP sockets (kind == sockKindTCP*), tcpTCB points at the TCB
 // in the kernel-wide pool; tcpListener points at the listener
-// entry for sockKindTCPListener sockets. The recvCh/localPort UDP
+// entry for sockKindTCPListener sockets. The recvQ/localPort UDP
 // fields are unused.
 type socketFd struct {
 	kind uint8 // discriminant; see sockKind* constants
@@ -112,7 +113,7 @@ type socketFd struct {
 	// UDP fields (valid when kind == sockKindUDP).
 	localPort uint16
 	bound     bool
-	recvCh    chan UDPDatagram
+	recvQ     *udpDgramQueue
 
 	// TCP fields (valid when kind ∈ {sockKindTCPIdle,
 	// sockKindTCPListener, sockKindTCPConn}).
@@ -127,7 +128,7 @@ func (s *socketFd) Read(buf []byte) (int, fdErr) {
 	if !s.bound {
 		return 0, fdErrBad
 	}
-	dg := <-s.recvCh
+	dg := s.recvQ.Pop() // M4.2.b: was <-s.recvCh
 	n := len(dg.Data)
 	if n > len(buf) {
 		n = len(buf)
@@ -151,13 +152,16 @@ func (s *socketFd) Close() fdErr {
 			udpUnbind(s.localPort)
 			s.bound = false
 		}
-		for {
-			select {
-			case <-s.recvCh:
-			default:
-				return fdErrOK
+		// Drain the receive queue. M4.2.b: was a `select { case <-
+		// s.recvCh: default: }` loop. TryPop returns false on empty.
+		if s.recvQ != nil {
+			for {
+				if _, ok := s.recvQ.TryPop(); !ok {
+					break
+				}
 			}
 		}
+		return fdErrOK
 	case sockKindTCPIdle:
 		// Nothing in the kernel yet — just drop the fd.
 		return fdErrOK
@@ -235,8 +239,8 @@ func sysSocketHandler(frame *SyscallFrame) {
 	switch frame.RSI {
 	case sockSockDgram:
 		sock = &socketFd{
-			kind:   sockKindUDP,
-			recvCh: make(chan UDPDatagram, 16),
+			kind:  sockKindUDP,
+			recvQ: newUdpDgramQueue(),
 		}
 	case sockSockStream:
 		sock = &socketFd{kind: sockKindTCPIdle}
@@ -276,7 +280,7 @@ func sysBindHandler(frame *SyscallFrame) {
 	}
 	switch sock.kind {
 	case sockKindUDP:
-		if !udpBindWithChannel(port, sock.recvCh) {
+		if !udpBindWithQueue(port, sock.recvQ) {
 			frame.RAX = sysFail(fdErrBad)
 			return
 		}
@@ -376,18 +380,32 @@ func sysRecvfromHandler(frame *SyscallFrame) {
 		return
 	}
 
+	// M4.2.b: was `<-sock.recvCh` blocking + `select { ch /
+	// timeoutCh }` for timeout. Both are H-01 hazards from kthread
+	// context. Replace with direct queue Pop / TryPop bounded-poll.
 	var dg UDPDatagram
 	received := false
 	if timeoutTicks == 0 {
-		dg = <-sock.recvCh
+		dg = sock.recvQ.Pop()
 		received = true
 	} else {
-		timeoutCh := afterTicks(timeoutTicks)
-		select {
-		case d := <-sock.recvCh:
-			dg = d
-			received = true
-		case <-timeoutCh:
+		deadline := pitTicks + timeoutTicks
+		for {
+			if v, ok := sock.recvQ.TryPop(); ok {
+				dg = v
+				received = true
+				break
+			}
+			if pitTicks >= deadline {
+				break
+			}
+			// 50 ms sleep between polls; matches M4.3 TCP-poll
+			// pattern.
+			if kschedRunning[cpuID()] != nil {
+				kschedTimedPark(5)
+			} else {
+				<-afterTicks(5)
+			}
 		}
 	}
 	if !received {
@@ -590,7 +608,13 @@ func sysAcceptHandler(frame *SyscallFrame) {
 			frame.RAX = sysFail(fdErrBad)
 			return
 		}
-		<-afterTicks(5) // 50 ms poll
+		// M4.3: kthread-hosted callers must use kschedTimedPark
+		// to avoid the H-01 chan-recv hazard.
+		if kschedRunning[cpuID()] != nil {
+			kschedTimedPark(5)
+		} else {
+			<-afterTicks(5) // 50 ms poll
+		}
 	}
 
 	// Wrap the TCB in a fresh socketFd and allocate a new fd.
@@ -645,7 +669,12 @@ func sysConnectHandler(frame *SyscallFrame) {
 			frame.RAX = sysFail(fdErrBad)
 			return
 		}
-		<-afterTicks(5)
+		// M4.3: kthread-hosted callers must use kschedTimedPark.
+		if kschedRunning[cpuID()] != nil {
+			kschedTimedPark(5)
+		} else {
+			<-afterTicks(5)
+		}
 	}
 	sock.kind = sockKindTCPConn
 	sock.tcpTCB = tcb
@@ -781,7 +810,12 @@ func sysTcpRecvHandler(frame *SyscallFrame) {
 			frame.RAX = sysFail(fdErrBad)
 			return
 		}
-		<-afterTicks(5)
+		// M4.3: kthread-hosted callers must use kschedTimedPark.
+		if kschedRunning[cpuID()] != nil {
+			kschedTimedPark(5)
+		} else {
+			<-afterTicks(5)
+		}
 	}
 }
 

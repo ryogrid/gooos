@@ -31,6 +31,7 @@ const userHeapLimit = 2 * 1024 * 1024
 // task.Task pointer to its *Process.
 type Process struct {
 	ExitCode    uintptr
+	Exited      uint32
 	ArgString   [256]byte
 	ArgLen      int
 	UserPages   [maxUserPages]uintptr
@@ -61,6 +62,51 @@ type Process struct {
 	// sys_spawn. Zero for the boot shell (which is launched
 	// via elfLoad rather than elfSpawn).
 	pid uint32
+
+	// LastCpuID is the CPU index this process was most recently
+	// resumed on. Updated from gooosOnResume (nosplit, unlocked
+	// aligned u32 store). Consumed by sys_listprocs (feature 2.5,
+	// impldoc/shell_ps_command.md §2.3).
+	LastCpuID uint32
+
+	// --- Signal-delivery state (feature 2.2 user preemption) -----------
+	// Populated by sys_sigaction #35; consumed by maybeDeliverSignal
+	// called from handlePreemptIPI when the interrupted context is
+	// Ring 3 (CS.RPL == 3). See impldoc/preempt_user_goroutines.md.
+
+	// SigAlrmHandler is the user-space address of the SIGALRM handler
+	// registered by sys_sigaction(SIGALRM, handler). Zero = no handler
+	// installed (no signal delivered even when UserPreemptPending is
+	// set).
+	SigAlrmHandler uintptr
+
+	// UserPreemptPending is set to 1 by maybeSignalUserPreempt on the
+	// BSP LAPIC timer tick when this process has accumulated
+	// UserQuantumTicks ticks as the currently-running process. Cleared
+	// when the kernel delivers the signal via maybeDeliverSignal.
+	UserPreemptPending uint32
+
+	// UserQuantumTicks is the number of BSP ticks between preempt
+	// deliveries for this process. Default 10 (100ms at 100Hz).
+	UserQuantumTicks uint32
+
+	// UserQuantumCounter accumulates BSP ticks while this process is
+	// the currently-running ring3 process on any CPU. Reset on
+	// delivery.
+	UserQuantumCounter uint32
+
+	// SigInProgress is 1 while the user's SIGALRM handler is running.
+	// Cleared by sys_sigreturn. maybeDeliverSignal early-returns when
+	// this is set (no nested signal delivery).
+	SigInProgress uint32
+
+	// SigSavedRSP is the user RSP at the moment the kernel pushed the
+	// sigFrame and redirected RIP to the SIGALRM handler. sys_sigreturn
+	// uses THIS — not the user's current RSP — to locate the sigFrame,
+	// because the Go-coded handler pushes its own locals/call-frames on
+	// top during execution and cannot reliably restore RSP to the
+	// sigFrame position before issuing the Sigreturn syscall.
+	SigSavedRSP uintptr
 }
 
 // procLock protects procByTask, procByPID, nextPID, and
@@ -71,18 +117,27 @@ var (
 	// procByTask maps a goroutine's *task.Task (as uintptr) to its
 	// *Process. Populated by ring3Wrapper; consulted by any syscall
 	// handler or kernel helper that needs the current process.
-	procByTask = make(map[uintptr]*Process)
+	procByTask map[uintptr]*Process
 
 	// procByPID maps a PID to its *Process. Populated by elfSpawn,
 	// removed by processWait (after the parent has reaped). Lets
 	// sys_wait(pid) find the right child.
-	procByPID = make(map[uint32]*Process)
+	procByPID map[uint32]*Process
 
 	// nextPID is the monotonic PID allocator. Wraps at 2^32 which
 	// is irrelevant for shell workloads. PID 0 is reserved as
 	// "invalid".
 	nextPID uint32 = 1
 )
+
+func ensureProcMaps() {
+	if procByTask == nil {
+		procByTask = make(map[uintptr]*Process)
+	}
+	if procByPID == nil {
+		procByPID = make(map[uint32]*Process)
+	}
+}
 
 // allocPID returns a fresh PID and bumps the counter.
 // Caller must hold procLock.
@@ -94,7 +149,8 @@ func allocPID() uint32 {
 
 // foregroundProc is the process that owns the keyboard right
 // now. consoleStdin.Read returns EOF to any other process,
-// preventing two Ring-3 processes from racing on keyboardCh.
+// preventing two Ring-3 processes from racing on the shared
+// keyboard IRQ ring.
 //
 // Set initially by elfLoad (boot shell). Switched in
 // processWait — the about-to-block parent transfers ownership
@@ -126,10 +182,35 @@ const argPageVaddr = uintptr(0x40300000)
 const userStackBase = uintptr(0x7FFF0000)
 
 // currentProc returns the Process for the currently running
-// goroutine, or nil if this is not a Ring-3-hosting goroutine.
-// Protected by procLock.
+// goroutine OR kthread, or nil if neither is hosting a Ring-3
+// process.
+//
+// Primary path (M5-fix): procByPoolSlot[perCPUBlocks[cpu].CurrentPoolIdx]
+// — the per-CPU pool-slot index that ring3WrapperKT and
+// kthreadResumeRing3Ctx keep current on every dispatch. This is
+// always correct under scheduler=none where internal/task.Current()
+// returns a single global &mainTask shared by all kthreads (so
+// procByTask[mainTask] is overwritten by every setCurrentProc and
+// no longer disambiguates which process is running on THIS CPU).
+//
+// Fallback (legacy goroutine context): procByTask[taskCurrent()]
+// for any caller that's still a TinyGo goroutine and was registered
+// via setCurrentProc with a unique task. With M4.2.b-g + M5.2,
+// this fallback path has no live caller in the kernel; retained
+// in case a future addition reintroduces a goroutine-hosted
+// Ring-3 process.
 func currentProc() *Process {
+	cpu := cpuID()
+	if cpu < maxCPUs {
+		idx := perCPUBlocks[cpu].CurrentPoolIdx
+		if idx >= 0 && int(idx) < maxRing3Procs {
+			if p := procByPoolSlot[idx]; p != nil {
+				return p
+			}
+		}
+	}
 	flags := procLock.Acquire()
+	ensureProcMaps()
 	p := procByTask[taskCurrent()]
 	procLock.Release(flags)
 	return p
@@ -140,6 +221,7 @@ func currentProc() *Process {
 // Protected by procLock.
 func setCurrentProc(proc *Process) {
 	flags := procLock.Acquire()
+	ensureProcMaps()
 	procByTask[taskCurrent()] = proc
 	procLock.Release(flags)
 }
@@ -149,6 +231,7 @@ func setCurrentProc(proc *Process) {
 // Protected by procLock.
 func clearCurrentProc() {
 	flags := procLock.Acquire()
+	ensureProcMaps()
 	delete(procByTask, taskCurrent())
 	procLock.Release(flags)
 }
@@ -192,12 +275,13 @@ func elfExecTrampoline() {
 // The pool slot is acquired here and released by processExit. See
 // impldoc/deferred_stack_reclaim.md.
 func ring3Wrapper(proc *Process) {
-	serialPrint("ring3Wrapper: cpuID=")
-	serialPrintln(utoa(uint64(cpuID())))
+	serialPrintln("ring3Wrapper: cpuID=" + utoa(uint64(cpuID())))
 	ring3WrapperHandle = taskCurrent()
 	idx, kernelStackTop := ring3StackAcquire()
 	serialPrintln("ring3Wrapper: stackAcquired")
 	proc.poolIdx = idx
+	setProcByPoolSlot(idx, proc)                      // feature 2.2 ISR-safe lookup
+	perCPUBlocks[cpuID()].CurrentPoolIdx = int32(idx) // feature 2.2 tick accounting
 	setCurrentProc(proc)
 	registerRing3GWithStack(kernelStackTop, proc)
 	tssSetRSP0ForCurrentG()
@@ -253,8 +337,12 @@ func elfSpawn(filename, args string, parent *Process) (*Process, bool) {
 	child.pml4 = newProcPML4()
 	{
 		fl := procLock.Acquire()
+		ensureProcMaps()
+		ensurePSMaps()
 		child.pid = allocPID()
 		procByPID[child.pid] = child
+		setProcName(child.pid, filename) // feature 2.5: ps-command name column
+		processStartTick[child.pid] = pitTicks
 		procLock.Release(fl)
 	}
 
@@ -268,13 +356,21 @@ func elfSpawn(filename, args string, parent *Process) (*Process, bool) {
 	// udpUnbind and pull the binding out from under the other.
 	// See impldoc/net_socket_api.md §12.4 and the Phase-5
 	// reviewer pass. The child gets an empty slot instead.
-	for i := 0; i < procMaxFDs; i++ {
-		if _, isSock := parent.fds[i].(*socketFd); isSock {
-			child.fds[i] = nil
-			continue
+	// Parent may be nil when an auto-launch hook (e.g. feature 2.2's
+	// runUserPreemptProbe) spawns a child before any Ring-3 process
+	// exists. In that case the child gets a fresh console-stdio set
+	// instead of inheriting.
+	if parent != nil {
+		for i := 0; i < procMaxFDs; i++ {
+			if _, isSock := parent.fds[i].(*socketFd); isSock {
+				child.fds[i] = nil
+				continue
+			}
+			child.fds[i] = parent.fds[i]
+			fdAddRef(parent.fds[i])
 		}
-		child.fds[i] = parent.fds[i]
-		fdAddRef(parent.fds[i])
+	} else {
+		procInitStdio(child)
 	}
 
 	// Copy arguments into the Process struct (not user vaddrs
@@ -322,15 +418,16 @@ func elfSpawn(filename, args string, parent *Process) (*Process, bool) {
 		*(*byte)(unsafe.Pointer(argPaddr + uintptr(i))) = child.ArgString[i]
 	}
 
-	// User stack (2 pages).
-	for i := uintptr(0); i < 2; i++ {
+	// User stack (4 pages). Keep initial RSP one page below mapped top
+	// to tolerate boundary accesses near process start.
+	for i := uintptr(0); i < 4; i++ {
 		paddr := allocPage()
 		mapPageInto(child.pml4, userStackBase+i*pageSize, paddr, userFlags)
 		processRecordPage(child, userStackBase+i*pageSize, paddr)
 	}
 
 	child.EntryPoint = entry
-	child.StackTop = userStackBase + 2*pageSize
+	child.StackTop = userStackBase + 3*pageSize - 8
 
 	if len(phdrs) > 0 {
 		lastPh := &phdrs[len(phdrs)-1]
@@ -339,7 +436,7 @@ func elfSpawn(filename, args string, parent *Process) (*Process, bool) {
 	}
 
 	serialPrintln("elfSpawn: loaded " + filename)
-	go ring3Wrapper(child)
+	kschedSpawnRing3Wrapper(child)
 	return child, true
 }
 
@@ -352,13 +449,62 @@ func elfSpawn(filename, args string, parent *Process) (*Process, bool) {
 // Background processes (those whose parent is not waiting on
 // them) see EOF on stdin reads.
 func processWait(proc *Process) uintptr {
-	prevForeground := foregroundProc
+	prevForeground := getForegroundProc()
+	if runSMPProbeShellTest {
+		prevPID := uint32(0)
+		if prevForeground != nil {
+			prevPID = prevForeground.pid
+		}
+		waitPID := uint32(0)
+		if proc != nil {
+			waitPID = proc.pid
+		}
+		serialPrintln("SHELLPROBE: fg_before_wait prev=" + utoa(uint64(prevPID)) +
+			" wait=" + utoa(uint64(waitPID)))
+	}
 	setForegroundProc(proc)
-	exitCode := <-proc.exitCh
+	// M4.1: when the caller is a kthread (post-ring3Wrapper migration),
+	// `<-proc.exitCh` is the H-01 hazard — Go chan recv from a kthread
+	// parks via TinyGo's task.PauseLocked which writes RSP into a
+	// stale task.Current() and corrupts the kthread context. Park on
+	// a 1-tick (10 ms) timer event instead of kschedYield: kschedYield
+	// re-enqueues self on the CURRENT CPU's local queue, which means
+	// kschedLoopOnce on this CPU just pops self again — a tight loop
+	// that monopolizes the CPU and starves peer-CPU dispatch of the
+	// child kthread. kschedTimedPark frees the CPU between checks so
+	// peer CPUs (where the child was round-robin-spawned) can drive
+	// their own waitForEvents -> kschedLoopOnce -> dispatch path.
+	// On wake (1 tick later), kthreadResumeRing3Ctx (M4.1.b) re-
+	// installs CR3+TSS for the re-dispatch CPU.
+	var exitCode uintptr
+	if kschedRunning[cpuID()] != nil {
+		for proc.Exited == 0 {
+			kschedTimedPark(1)
+		}
+		exitCode = proc.ExitCode
+	} else {
+		exitCode = <-proc.exitCh
+	}
 	setForegroundProc(prevForeground)
+	serialPrintln("MARKER: M6 processWait post-exitCh-recv")
+	if runSMPProbeShellTest {
+		after := getForegroundProc()
+		afterPID := uint32(0)
+		if after != nil {
+			afterPID = after.pid
+		}
+		restoredPID := uint32(0)
+		if prevForeground != nil {
+			restoredPID = prevForeground.pid
+		}
+		serialPrintln("SHELLPROBE: fg_after_wait restored=" + utoa(uint64(restoredPID)) +
+			" current=" + utoa(uint64(afterPID)))
+	}
 	{
 		fl := procLock.Acquire()
 		delete(procByPID, proc.pid)
+		clearProcName(proc.pid) // feature 2.5: ps-command name table cleanup
+		delete(processStartTick, proc.pid)
 		procLock.Release(fl)
 	}
 	if !firstExecAudited {
@@ -395,6 +541,24 @@ func processExit(exitCode uintptr) {
 		}
 	}
 
+	// Serialize processExit across CPUs to avoid concurrent freePage calls
+	// which can cause page allocator lock contention.
+	//
+	// Lock-order note (D1 per TODO_FIX.md): procLock is rank 2;
+	// freePage acquires pageAllocLock at rank 1. Higher-rank holder
+	// acquiring lower-rank lock is the normative direction; the
+	// reverse (pageAllocLock holder taking procLock) is prohibited.
+	// No current caller violates this.
+	flags := procLock.Acquire()
+
+	serialPrintln("MARKER: M2 processExit pre-freePage")
+	if runSMPShellPreemptProbe {
+		for i := uint32(0); i < uint32(numCoresOnline); i++ {
+			serialPrintln("APIDSTAT cpu=" + utoa(uint64(i)) +
+				" apicid=" + utoa(uint64(perCPUBlocks[i].APICID)))
+		}
+		dumpPreemptCounters()
+	}
 	// Free the user physical pages. With per-process PML4 the
 	// child's mappings live only in proc.pml4, so we don't have
 	// to unmap from the active PML4 (which is also proc.pml4 at
@@ -404,11 +568,26 @@ func processExit(exitCode uintptr) {
 	}
 	proc.UserPageCnt = 0
 	proc.ExitCode = exitCode
+	proc.Exited = 1
+	serialPrintln("MARKER: M3 processExit post-freePage")
+
+	procLock.Release(flags)
 
 	if proc.parent != nil {
 		serialPrintln("processExit: child exit code " + utoa(uint64(exitCode)) +
 			", resuming parent")
-		proc.exitCh <- exitCode
+		serialPrintln("MARKER: M4 processExit pre-exitCh-send")
+		// §M6.fix-1: under scheduler=none + kthread parent, the
+		// parent's processWait polls proc.Exited (process.go:481)
+		// rather than `<-proc.exitCh`. The chan send was M6's
+		// root-cause known-issue (cap=1 chan; second send from
+		// kthread context panics via task.Pause). Skip the send
+		// entirely when the parent is a kthread; the chan path is
+		// kept for legacy goroutine-parent compatibility.
+		if kschedRunning[cpuID()] == nil {
+			proc.exitCh <- exitCode
+		}
+		serialPrintln("MARKER: M5 processExit post-exitCh-send")
 	} else {
 		serialPrintln("processExit: no parent, halting")
 	}
@@ -435,19 +614,38 @@ func processExit(exitCode uintptr) {
 	clearCurrentProc()
 	procCloseAll(proc)
 	if proc.poolIdx >= 0 {
+		clearProcByPoolSlot(proc.poolIdx) // feature 2.2
 		ring3StackRelease(proc.poolIdx)
 		proc.poolIdx = -1
 	}
 	// This goroutine was entered from an int 0x80 ISR, so the ISR
-	// prologue bumped both the global and per-CPU interrupt depth.
+	// prologue bumped %gs:4 (InterruptDepth) and %gs:44 (SyscallDepth).
 	// The ISR epilogue on this goroutine's kernel stack will never
-	// run (taskPause below parks forever). Decrement both counters.
-	if gooosInInterruptDepth > 0 {
-		gooosInInterruptDepth--
-	}
-	if readInterruptDepth() > 0 {
-		idx := cpuID()
+	// run (taskPause below parks forever). Decrement both per-CPU
+	// counters now. The legacy global gooos_in_interrupt_depth was
+	// retired in M2 (impldoc/smp_m2_ap_lapic_timer.md).
+	idx := cpuID()
+	if perCPUBlocks[idx].InterruptDepth > 0 {
 		perCPUBlocks[idx].InterruptDepth--
+	}
+	if perCPUBlocks[idx].SyscallDepth > 0 {
+		perCPUBlocks[idx].SyscallDepth--
+	}
+	// M4.1: if the host is a kernel thread (post-M4.1 ring3Wrapper),
+	// clear the side-table entry and exit via kschedExit so the
+	// scheduler reclaims the slot. The legacy goroutine path (still
+	// reachable while ring3Wrapper(...) goroutine call survives in
+	// any pre-M4 untouched site) falls through to taskPause.
+	if kschedRunning[idx] != nil {
+		t := kschedRunning[idx]
+		if t.Slot >= 0 && int(t.Slot) < kthreadPoolCap {
+			kthreadHostedProc[t.Slot] = nil
+		}
+		kschedExit(exitCode)
+		// kschedExit never returns; defensive halt.
+		for {
+			hlt()
+		}
 	}
 	taskPause() // never returns for this goroutine
 	for {

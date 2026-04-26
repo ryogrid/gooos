@@ -1,6 +1,17 @@
 # gooos
 
-An experimental x86_64 operating system written in **Go (TinyGo) + GNU assembly**. The kernel runs on **TinyGo's native goroutine runtime** (`scheduler=tasks`, `gc=conservative`) — service loops are plain `go func()` goroutines, IPC is Go's built-in `chan`, and Ring 3 processes are goroutines that `iretq` into userspace. Assembly is used only where the CPU demands it.
+An experimental x86_64 operating system written in **Go (TinyGo) + GNU assembly**. The kernel runs on a **custom kernel-thread scheduler under TinyGo `scheduler=none`** (`gc=conservative`) — service loops, IPC consumers, and every Ring-3 process host are gooos kernel threads (`kschedSpawn`); IPC is via the gooos `udpDgramQueue` / `fsReqQueue` MPSC primitives + the single-shot `KEvent`; no Go `chan` / `select` / `go` keyword in `src/*.go` (M5.2 invariant). Cross-CPU dispatch via per-CPU FIFO queues + work-stealing + an LAPIC wake IPI on remote-`kschedPush`. Assembly is used only where the CPU demands it.
+
+> **Status note (2026-04-26):** the README progress table below
+> still describes the pre-Route C state in many rows (TinyGo
+> goroutines, `scheduler=cores`, `gooosOnResume`, etc.). The
+> as-built state of the kernel post-M5.2 + the post-M5 P1
+> reviewer pass is documented in
+> `no_goroutine_kernel_design/12_implementation_notes.md` and
+> `no_goroutine_kernel_design/13_post_m5_completion.md`. A row-
+> by-row README refresh is the P2 follow-up; until that lands,
+> any row that mentions "TinyGo goroutines" or
+> "`scheduler=cores`" should be read as legacy context.
 
 ![gooos mascot](gooos_mascot2.png)
 
@@ -13,16 +24,16 @@ An experimental x86_64 operating system written in **Go (TinyGo) + GNU assembly*
 | Serial output (COM1) | Done | `outb`/`inb` assembly stubs, COM1 at 115200 baud 8N1, `serialPrintln()` direct-UART writes |
 | IDT + interrupt handlers | Done | 256-entry IDT, ISR assembly stubs with Go dispatcher, PIC 8259A remap (IRQs → vectors 32-47) |
 | PIT / timer | Done | PIT channel 0 at 100 Hz, global tick counter, drives `sleepTicks` for `time.Sleep` |
-| PS/2 keyboard driver | Done | IRQ1 handler, scancode set 1 → ASCII, lock-free SPSC ring buffer drained by `keyboardPump` goroutine |
+| PS/2 keyboard driver | Done | IRQ1 handler, scancode set 1 → ASCII, lock-free SPSC ring buffer drained directly by blocking stdin readers |
 | Virtual memory management | Done | Page fault handler, `mapPage`/`unmapPage` with 4 KiB granularity, bump + LIFO free stack with `allocPagesContig` for kernel stacks |
-| Scheduler | Done | **TinyGo native goroutines** (`scheduler=tasks`). Cooperative; PIT IRQ drives `sleepTicks`. TSS.RSP0 updated per-Ring-3-goroutine via the `gooosOnResume` hook in the patched TinyGo runtime |
-| Userspace | Done | Ring 3 execution via `iretq`, TSS for privilege transitions, `int 0x80` syscall interface (34 syscalls — see the Syscall ABI row below and `current_impl_doc/syscalls.md`); each user process is a `ring3Wrapper` goroutine |
+| Scheduler | Done (preemptive) | **TinyGo native goroutines** (`scheduler=cores` — multi-core, per-CPU runqueues + work-stealing, **preemptive**). BSP's 100 Hz LAPIC timer broadcasts preempt IPI vector 0xFB to every AP (feature 2.1); each AP's `handlePreemptIPI` checks safe-points then calls `runtime.Gosched()`. Ring-3 user goroutines preempted via kernel-delivered SIGALRM (feature 2.2, iretq-frame rewrite). TSS.RSP0 updated per-Ring-3-goroutine via the `gooosOnResume` hook |
+| Userspace | Done | Ring 3 execution via `iretq`, TSS for privilege transitions, `int 0x80` syscall interface (39 syscalls — see the Syscall ABI row below and `current_impl_0421_night/05_process_elf_ring3_syscalls_signals.md`); each user process is a `ring3Wrapper` goroutine; user goroutines are preemptive via kernel-delivered SIGALRM (feature 2.2, `impldoc/preempt_user_goroutines.md`) |
 | Filesystem | Done | In-memory flat filesystem: `Create`/`Write`/`Read`/`List`/`Delete` (32 entries, 256 KiB each); served by `fsTask` goroutine over native `chan *fsRequest` |
-| SMP | Done (v2, BSP-only scheduling) | **Multi-processor infrastructure.** Per-CPU storage (`IA32_GS_BASE`), per-CPU GDT/TSS, per-CPU runqueues with work stealing, LAPIC timer (BSP), IPI wakeup, spinlocks (page allocator, process maps, heap, Queue, sleep/timer queues), per-CPU `currentTask`. APs boot via INIT-SIPI-SIPI, enter the TinyGo scheduler after boot-phase gating (`bspBootDone`), and idle via `waitForEvents` (`sti; hlt; cli`). **Remaining issue:** Ring-3 user code triple-faults when stolen by an AP (`iretq` on AP per-CPU TSS — needs QEMU+GDB hardware-level debugging). All goroutines currently run on BSP (CPU 0). See `impldoc/smp_deferred_and_known_issues.md` for details |
-| Channel IPC + select | Done | **Native Go `chan` and `select`** in Ring 0. `fsReqCh`, `keyboardCh`, per-process `exitCh` are all `make(chan ...)` constructed by the TinyGo runtime |
-| Syscall ABI | Done | 34-syscall register-based dispatch (all numbered; see `current_impl_doc/syscalls.md` for the canonical table). Base set: `sys_exit`, `sys_write`, `sys_read`, `sys_exec`, `sys_fs_read/write/list`, `sys_yield`, `sys_sleep`, `sys_getargs`, `sys_sbrk`, `sys_vga_clear`, `sys_open`, `sys_close`, `sys_dup2`, `sys_spawn`, `sys_wait`, `sys_pipe`, `sys_read_key`, `sys_vga_write_at`, `sys_vga_set_cursor`, `sys_getcpuid`. Net stack adds `sys_socket`/`sys_bind`/`sys_sendto`/`sys_recvfrom`/`sys_net_config`/`sys_sendto_bcast` (Phase 5) and `sys_listen`/`sys_accept`/`sys_connect`/`sys_tcp_send`/`sys_tcp_recv`/`sys_shutdown` (TCP phases). |
+| SMP | Done (v2 on TinyGo 0.40.1, multi-core `scheduler=cores`) | **Multi-processor scheduling.** Per-CPU storage (`IA32_GS_BASE`), per-CPU GDT/TSS/IDT, per-CPU runqueues (`runqueues[cpuID()]`), LAPIC timer (BSP), IPI wakeup vector 0xFC, spinlocks (page allocator, process maps, Queue, sleep/timer queues), per-CPU `cpuTasks`/`systemStack` via `runtime.systemStackPtr`. APs boot via INIT-SIPI-SIPI, load their own IDT/GDT/TSS, then enter TinyGo's scheduler (`runtime.apScheduler`) after `bspBootDone`. `stealWork` is **wired live**: when an AP's local queue is empty it steals from peers. `scheduleTask` broadcasts an IPI via `schedulerWake → gooosWakeupCPU` so idle APs wake and drain work. Observed: kernel goroutines and the Ring-3 shell goroutine routinely migrate to AP 1/3 (verified by `scripts/test_smp_basic.sh`). **Ring-3 process spawn distribution (2026-04-24 cycle, B1)**: `elfSpawn` now uses a round-robin counter + new `runtime.migrateAndPause` bridge (patched into `scheduler_cores.go`) to place each new `ring3Wrapper` on a different target CPU's runqueue at spawn time; previously all workers landed on BSP until `stealWork` happened to pick them up. See `current_impl_2026_04_24/fix_plan_deferred_1_5/02_ring3wrapper_round_robin_distribution.md`. **Preemption**: feature 2.1 — BSP broadcasts preempt IPI vector 0xFB at every 100 Hz LAPIC tick; each AP's `handlePreemptIPI` safe-point-checks and calls `runtime.Gosched()`. A tight compute-bound kernel goroutine on an AP gets ~10 ms quantum. Ring-3 user goroutines are preempted via kernel-delivered SIGALRM (feature 2.2). **Known gap**: the AP LAPIC timer's per-CPU tick remains deferred (second-order hang, see `impldoc/smp_deferred_and_known_issues.md §2.2`); 2.1 chose BSP-broadcast IPI which gives coarser IPI-latency quantum without the hang. See `impldoc/smp_unblock_overview.md` for the M2/M3/M4 unblock write-up and `impldoc/smp_migration_overview.md` for the 0.33.0 → 0.40.1 migration background |
+| Channel IPC + select | Done | **Native Go `chan` and `select`** in Ring 0. `fsReqCh` and per-process `exitCh` are native Go channels constructed by the TinyGo runtime |
+| Syscall ABI | Done | 39-syscall register-based dispatch (all numbered; see `current_impl_0421_night/05_process_elf_ring3_syscalls_signals.md` for the canonical table and dispatch notes). Base set: `sys_exit`, `sys_write`, `sys_read`, `sys_exec`, `sys_fs_read/write/list`, `sys_yield`, `sys_sleep`, `sys_getargs`, `sys_sbrk`, `sys_vga_clear`, `sys_open`, `sys_close`, `sys_dup2`, `sys_spawn`, `sys_wait`, `sys_pipe`, `sys_read_key`, `sys_vga_write_at`, `sys_vga_set_cursor`, `sys_getcpuid`. Net stack adds `sys_socket`/`sys_bind`/`sys_sendto`/`sys_recvfrom`/`sys_net_config`/`sys_sendto_bcast` (Phase 5) and `sys_listen`/`sys_accept`/`sys_connect`/`sys_tcp_send`/`sys_tcp_recv`/`sys_shutdown` (TCP phases). Preempt+shell batch adds `sys_waitpid` (#34, WNOHANG-only non-blocking wait; feature 2.4), `sys_sigaction` (#35, register SIGALRM handler; feature 2.2), `sys_sigreturn` (#36, restore context after SIGALRM; feature 2.2), `sys_listprocs` (#37, process-table snapshot; feature 2.5) and `sys_shell_ready` (#38, event-driven startup gate for preempt fanout). |
 | ELF64 loader | Done | Parse ELF64 headers, map PT_LOAD segments, per-process page tracking, parent page save/restore for exec |
-| BusyBox-style shell | Done | Interactive shell (`sh.elf`) with built-in commands (help, echo, clear, exit) and external ELF commands (ls, cat, wc, hello, fdprobe, goprobe, gochan, tinyc, edit, plus net-stack demos `udpecho`, `dhcp`, `tcpecho`, `tcpcli`, `smpprobe`) compiled with TinyGo; supports `<`/`>`/`>>` redirection and N-stage `\|` pipes |
+| BusyBox-style shell | Done | Interactive shell (`sh.elf`) with built-in commands (help, echo, clear, exit) and external ELF commands (ls, cat, wc, hello, fdprobe, goprobe, gochan, tinyc, edit, ps, cpuhog, markerprint, plus net-stack demos `udpecho`, `dhcp`, `tcpecho`, `tcpcli`, `smpprobe`) compiled with TinyGo; supports `<`/`>`/`>>` redirection, N-stage `\|` pipes, and `&` background execution with a 16-slot jobs table (feature 2.4, `impldoc/shell_background_jobs.md`). `ps` enumerates the process table via `sys_listprocs` (feature 2.5, `impldoc/shell_ps_command.md`). Deterministic SMP shell-command probing can be enabled with `runSMPProbeShellTest` and exercised by `scripts/test_smp_shell_smpprobe.sh`. |
 | File descriptor table | Done | Per-process `Process.fds [16]` of `FileDesc`; `consoleStdin` / `consoleStdout` / `fileFd` / `pipeReader` / `pipeWriter` / `socketFd` impls; inheritance on exec; refcounted close on pipe ends |
 | Shell redirection | Done | `cmd > file`, `cmd >> file`, `cmd < file` via shell-side `Open` + `Dup2` + `Close` dance; parser in `user/cmd/sh/parse.go` |
 | Concurrent pipes | Done | `cmd1 \| cmd2 \| ...` — N-stage pipelines; kernel `pipe` backed by a 4 KiB `chan byte`; writer-close → reader-EOF, reader-close → writer-EPIPE; stages run on their own per-process PML4s |
@@ -33,12 +44,12 @@ An experimental x86_64 operating system written in **Go (TinyGo) + GNU assembly*
 | Allocation-free fatal handlers | Done | `handlePageFault`/`handleDivisionError` format CR2/RIP/errcode into a `.bss` `panicHexBuf` via no-alloc `appendHex`/`appendStr` helpers (`src/panic.go`); `//go:nosplit` |
 | Stack-overflow diagnostic | Done | Patched `task.Pause()` calls `gooosStackOverflow(t)` on canary mismatch — prints task pointer + stack-top + canary address before halting, no allocation |
 | Boot stack-size audit | Done | `stackSizeAudit()` (gated by `const runStackAudit`) reports per-goroutine high-water-mark usage on serial; off in release builds |
-| `time.After` replacement | Done | `afterTicks(d uint64) <-chan struct{}` in `src/afterticks.go` — local stand-in because the TinyGo `time` package needs SSE we keep disabled. Backed by a **single-dispatcher timer wheel** (one long-lived goroutine draining a fixed-size `[256]timerEntry` list under lock-rank 12) so repeated callers no longer allocate per-call `Task` structs in the patched TinyGo runtime — see `current_impl_doc/known_issues.md` §"afterTicks single-dispatcher timer wheel" and `tcp_problem_review2/` for the bug this fixed. |
+| `time.After` replacement | Done | `afterTicks(d uint64) <-chan struct{}` in `src/afterticks.go` — local stand-in because the TinyGo `time` package needs SSE we keep disabled. Backed by a **single-dispatcher timer wheel** (one long-lived goroutine draining a fixed-size `[256]timerEntry` list under lock-rank 12) so repeated callers no longer allocate per-call `Task` structs in the patched TinyGo runtime — see `current_impl_0421_night/10_test_harnesses_and_instability_map.md` and `tcp_problem_review2/` for the late-timing RX-stall context this fixed. |
 | Raw keyboard input | Done | `sys_read_key` (syscall 18) delivers single keystrokes with modifier flags (Shift/Ctrl/Alt) and extended-key prefix (arrow keys, Home/End/Delete). Keyboard driver (`src/keyboard.go`) tracks Ctrl + Alt make/break and consumes 0xE0 prefix. Backward compatible with line-buffered `sys_read` |
 | VGA cell + cursor control | Done | `sys_vga_write_at` (19) writes a character with color attribute at (row, col); `sys_vga_set_cursor` (20) programs the hardware cursor via CRT controller. Enables full-screen editors and TUI programs |
 | Text editor (vi-like) | Done | `edit.elf` — modal text editor with Normal/Insert/Command modes. Navigate with h/j/k/l or arrow keys, insert text with `i`/`a`/`o`, save with `:w`, quit with `:q`. 5 Go source files under `user/cmd/edit/`. See `impldoc/editor_overview.md` |
 | Tiny C interpreter | Done | `tinyc.elf` — tree-walking interpreter for a C-subset language (int-only, 1D arrays, functions, if/else/while/for, println). Hand-written recursive-descent parser + AST evaluator, ~1000 lines of Go. Invoked from the shell as `$ tinyc program.tc`. See `impldoc/tinyc_interpreter.md` for the design |
-| Userspace goroutines & channels | Done | Ring-3 user binaries run on their own TinyGo `scheduler=tasks` runtime — native `go func()`, `chan`, `select`, and `time.Sleep` work inside a user process. Build-tag split (`kernelspace` on `src/target.json`) keeps the kernel and user runtime bodies disjoint; `user/gooos/runtime_hooks.go` supplies the Ring-3-safe `gooosOnResume` / `gooosStackOverflow`. `sys_sleep` routes through `afterTicks` on the kernel side so a sleeping user process no longer holds the CPU. Proven by `user/cmd/goprobe/main.go` (PASS/FAIL probe) + `tmp/test_goprobe.sh`, and demonstrated interactively by `user/cmd/gochan/main.go` — a shell-invokable 3-stage pipeline + `select` demo (`$ gochan`) with harness at `tmp/test_gochan.sh`. See `impldoc/userspace_goroutines_overview.md` for the design set |
+| Userspace goroutines & channels | Done | Ring-3 user binaries run on their own TinyGo `scheduler=tasks` runtime — native `go func()`, `chan`, `select`, and `time.Sleep` work inside a user process. Build-tag split (`kernelspace` on `src/target.json`) keeps the kernel and user runtime bodies disjoint; `user/gooos/runtime_hooks.go` supplies the Ring-3-safe `gooosOnResume` / `gooosStackOverflow`. `int 0x80` now runs through a Ring-3 trap gate so blocking syscalls (`sys_read`, `sys_sleep`, `sys_wait`) keep PIT/keyboard IRQ delivery live while parked. `sys_sleep` routes through `afterTicks` on the kernel side so a sleeping user process no longer holds the CPU. Proven by `user/cmd/goprobe/main.go` and demonstrated interactively by `user/cmd/gochan/main.go` — a stable pipeline + `select` demo (`$ gochan`) with shell-sequence harness at `tmp/test_smp_shell_sequence.sh`. See `impldoc/userspace_goroutines_overview.md` for the design set |
 | Userspace conservative GC | Done | `user/target.json` now runs `gc=conservative` (was `leaking`). User binaries gain `_globals_start`/`_globals_end` brackets + synthetic `__ehdr_start` Elf64 header in `user/rt0.S` so TinyGo's `findGlobals()` can locate root-scan ranges at runtime; `tinygo_scanCurrentStack` ported into `user/runtime_asm_amd64.S` for stack scanning. Per-process 1 MiB fixed heap (`.heap @nobits` section, `user/linker_user.ld`) with `Process.HeapLimit` + `sysSbrkHandler` ceiling (`userHeapLimit = 2 MiB`) prevents runaway `sys_sbrk`. `maxFileData` bumped to 256 KiB to absorb ~13–17 KiB of per-binary GC overhead. `fib(10)` in Tiny C now works (177 recursive frames reclaim cleanly); long-running user programs no longer leak. See `impldoc/userspace_conservative_gc_*.md` |
 | Networking stack (e1000 + UDP/IP/Ethernet) | Done (Phases 1-4) | **Bare-metal TCP/IP stack over the Intel 82540EM NIC.** PCI bus scan + BAR0 MMIO mapping (`src/pci.go`, `src/e1000.go`); 64 RX / 32 TX legacy descriptors on contiguous DMA pages; static IP config (10.0.2.15/24, gw 10.0.2.2) matching QEMU slirp defaults. ARP cache 16 entries (LRU) with `arpResolve` 2-sec timeout via `afterTicks` (`src/arp.go`); IPv4 parse/build with ones-complement checksum (`src/ipv4.go`); ICMP echo reply (`src/icmp.go`); UDP with 8-entry bind table + pseudo-header checksum + kernel echo server on port 7 (`src/udp.go`). RX path is a single long-lived `netRxLoop` goroutine (polling `drainRxRing` + `runtime.Gosched`); the `e1000` ISR sets `rxReadyFlag` and updates `lastICR` / `e1000IRQCount` counters. 128×2048-byte buffer pool (`src/netbuf.go`); 18-counter `NetStats` + `netDiag` dumps at boot+5 s and every ~10 s afterwards via the `afterTicks` timer wheel (`src/netstats.go`, `src/net.go`). Verified end-to-end under `make run-net`: ICMP echo-reply self-test passes; host `nc -u 127.0.0.1 9999` round-trips through kernel echo server via hostfwd. Socket syscall API + userspace DHCP client land in Phase 5 below (`impldoc/net_socket_api.md`, `impldoc/net_dhcp_client.md`). See `impldoc/net_overview.md` and `pasttodos/TODO_NET1.md` |
 | Socket API + DHCP client (Phase 5) | Done | **Ring-3 socket API over UDP + a from-scratch DHCP client.** Six new syscalls (22-27: `sys_socket`, `sys_bind`, `sys_sendto`, `sys_recvfrom`, `sys_net_config`, `sys_sendto_bcast`) in `src/netsock.go` — AF_INET + SOCK_DGRAM only; `socketFd` is a `FileDesc` backend owning a cap=16 receive channel that `udpBindWithChannel` hooks into the UDP dispatch. `sys_recvfrom` extends the design-doc ABI with `R8 = timeout_ticks` (0 = block forever) so clients can give up gracefully. User-space pointers are bounds-checked (`>= 0x40000000`) before every dereference. Ephemeral port ≡ 0 when the socket is unbound. `sys_sendto_bcast` routes through `udpSendRaw` with forced src 0.0.0.0 and broadcast MAC/IP — DHCP-specific path. Userspace SDK (`user/gooos/net.go`) exposes `Socket`/`Bind`/`UDPSendTo`/`UDPRecvFromTimeout`/`UDPSendBroadcast` + `GetIP`/`SetIP`/`GetNetmask`/`SetNetmask`/`GetGateway`/`SetGateway`/`GetDNS`/`SetDNS`/`GetMAC`/`ApplyNetConfig` + `IPv4`/`FormatIP`/`FormatMAC` helpers, with a 5-arg `syscall5` assembly stub in `user/rt0.S`. Two new userspace programs: `udpecho.elf` (20-line echo server on UDP 17 — smoke test) and `dhcp.elf` (RFC 2131 DORA client, ~330 LOC). Kernel `ipv4Handle` now accepts limited (255.255.255.255) and subnet-directed broadcast so DHCP can actually receive the OFFER. Verified under QEMU slirp: `dhcp` completes the full Discover→Offer→Request→Ack exchange against the built-in DHCP server, applies the lease (10.0.2.15 / 255.255.255.0 / gw 10.0.2.2 / DNS 10.0.2.3) via `sys_net_config`, and persists `/network.conf` readable via `cat network.conf`. See `impldoc/net_socket_api.md`, `impldoc/net_dhcp_client.md`, and `pasttodos/TODO_NET2.md` |
@@ -76,7 +87,7 @@ Go cannot express certain CPU-level operations. These remain in assembly:
 - **AP trampoline** (`trampoline.S`): 16-bit real-mode → 32-bit → 64-bit mode transition for SMP
 - **Port I/O & CPU control** (`stubs.S`): `outb`/`inb`, `cli`/`sti`/`hlt`, `lidt`/`lgdt`/`ltr`, `invlpg`, CR2 read / CR3 read+write (`readCR3`, `writeCR3`), `memcpy`/`memmove`/`memset`, `jumpToRing3`, `readFlags`/`restoreFlags`, `tinygo_scanCurrentStack`
 - **Synthetic ELF header** (`stubs.S`): Fake `__ehdr_start` in `.rodata` for GC's `findGlobals()`
-- **Keyboard IRQ ring** (`isr.S`, `keyboard_irq.go`): `.bss` head/tail/slot storage is assembled as 32-bit naturally-aligned mov's; x86-TSO makes the writes visible to `keyboardPump` without fences
+- **Keyboard IRQ ring** (`isr.S`, `keyboard_irq.go`): `.bss` head/tail/slot storage is assembled as 32-bit naturally-aligned mov's; x86-TSO makes the writes visible to blocking stdin readers without fences
 - **User startup** (`user/rt0.S`): `_start`, syscall wrappers (`syscall0`-`syscall5`), TinyGo runtime stubs (`mmap`, `write`, `abort`, `memcpy`, `memset`)
 - **User task context switch + longjmp** (`user/task_stack_amd64.S`, `user/runtime_asm_amd64.S`): `tinygo_startTask` / `tinygo_swapTask` / `tinygo_longjmp` — byte-equivalent imports of TinyGo runtime asm, needed once the user target flipped to `scheduler=tasks`. Same `tinygo build -o *.o` restriction as the kernel side
 
@@ -155,7 +166,8 @@ gooos/
 ├── README.md / CLAUDE.md / Makefile / go.mod / LICENSE
 ├── TODO_NET4.md                 # current-session fix checklist (prior ones in pasttodos/)
 ├── docs/                        # README-companion walkthroughs (networking, user programs, layout)
-├── current_impl_doc/            # 8 as-built reference docs (overview, syscalls, scheduler, memory, ipc, userland, glossary, known_issues)
+├── current_impl_0421_night/     # current implementation reference set (authoritative)
+├── current_impl_doc/            # legacy reference set (stale; kept for historical context)
 ├── impldoc/                     # ~55 design docs (English)
 ├── pasttodos/                   # completed TODO checklists (NET1, NET2, NET3)
 ├── tcp_problem/                 # handoff package for the late-timing RX stall (pre-fix)
@@ -170,7 +182,7 @@ gooos/
 
 Tested on **WSL2 Ubuntu 24.04** with:
 
-- **TinyGo 0.33.0** (LLVM 18.1.2) — install from the official `.deb` at <https://github.com/tinygo-org/tinygo/releases>
+- **TinyGo 0.40.1** (LLVM 20.1.1) — install from the official `.deb` or tarball at <https://github.com/tinygo-org/tinygo/releases>
 - **binutils** (`as`, `ld`, `objdump`, `readelf`, `nm`) — via `build-essential`
 - **lld** — provides `ld.lld`
 - **grub-pc-bin**, **grub-common** — provide `grub-file` and `grub-mkrescue`
@@ -190,14 +202,15 @@ sudo apt install -y build-essential grub-pc-bin grub-common xorriso mtools qemu-
 gooos needs a set of local changes to TinyGo's runtime for
 `scheduler=tasks` to work in Ring 0, plus SMP v2 per-CPU
 runqueue support. The system TinyGo at
-`/usr/local/lib/tinygo/` is root-owned, so the build uses a
-user-writable copy at `$HOME/.local/tinygo/` (overridable via
-the `TINYGOROOT` environment variable the Makefile exports).
+`/usr/local/lib/tinygo0.40.1/` (or wherever the `.deb` installs
+it) is root-owned, so the build uses a user-writable copy at
+`$HOME/.local/tinygo0.40.1/` (overridable via the `TINYGOROOT`
+environment variable the Makefile exports).
 
 The full edit is captured as a unified diff at
 `scripts/tinygo_runtime.patch` (reviewable with
 `git apply --stat scripts/tinygo_runtime.patch` against a
-pristine TinyGo 0.33.0 tree). The patch installs:
+pristine TinyGo 0.40.1 tree). The patch installs:
 
 - **`runtime/runtime_gooos.go`** (new, `gooos && baremetal && kernelspace`)
   — kernel bodies for `sleepTicks`, `ticks`, `putchar`, `exit`,
@@ -208,18 +221,31 @@ pristine TinyGo 0.33.0 tree). The patch installs:
 - **`runtime/interrupt/interrupt_gooos.go`** (new, kernel) and
   **`runtime/interrupt/interrupt_gooos_user.go`** (new, userspace)
   — `interrupt.Disable` / `Restore` / `In` implementations.
-- **`runtime/wait_gooos.go`** (new) — `waitForEvents` as an
-  `sti; hlt; cli` idle loop.
-- **`runtime/scheduler.go`** (patched in place) — per-CPU
+- **`runtime/wait_gooos.go`** (new, kernel) — `waitForEvents` as
+  an `sti; hlt; cli` idle loop.
+- **`runtime/wait_gooos_user.go`** (new, userspace) — `waitForEvents`
+  no-op for Ring-3 builds (kernel preempts on timer IRQ).
+- **`runtime/scheduler_cooperative.go`** (patched in place — this
+  file was named `scheduler.go` in TinyGo 0.33.0) — per-CPU
   `runqueues[17]`, `schedLock` spinlock over sleep/timer queues,
-  `runqueuePushTo`, work-stealing helpers, `apScheduler()` entry
-  for AP cores.
-- **`runtime/chan.go`**, **`runtime/gc_blocks.go`** (patched in
-  place) — per-CPU enqueue on channel wake, heap lock around
-  alloc/GC.
+  `runqueuePushTo`, `stealWork` round-robin peer scan,
+  `apScheduler()` entry for AP cores, push-site retargeting in
+  `scheduleTask` / `Gosched` / main scheduler loop.
+- **`runtime/gc_blocks.go`** (comment-only patch) — gooos annotation
+  near the globals documenting that upstream's `gcLock task.PMutex`
+  is a no-op under `tinygo.unicore` (`scheduler=tasks`), and that
+  cross-CPU correctness under gooos relies on the BSP-only-allocates
+  contract (APs park in `waitForEvents`) until the future M5
+  `gcPauseCore` IPI lands. No executable change.
+- **`runtime/wait_other.go`** (patched in place) — adds
+  `&& !gooos` to the build tag so gooos builds use the
+  gooos-specific `wait_gooos.go` / `wait_gooos_user.go`.
 - **`internal/task/queue.go`**, **`task_stack.go`**,
-  **`task_stack_amd64.go`** (patched in place) — SMP-safe task
-  queues, per-CPU `currentTasks[17]` and `systemStacks[17]`, the
+  **`task_stack_amd64.go`**, **`task_stack_unicore.go`** (patched
+  in place — `task_stack_unicore.go` is new in TinyGo 0.40.x for
+  `scheduler=tasks`; the 0.33.0 gooos patch targeted
+  `task_stack.go` for those hunks) — SMP-safe task queues,
+  per-CPU `currentTasks[17]` and `systemStacks[17]`, the
   `stackTop` field + `gooosStackOverflow` hook, and the
   `gooosOnResume()` call that lets the gooos kernel update
   `TSS.RSP0` on every Ring-3 goroutine resume.
@@ -227,36 +253,38 @@ pristine TinyGo 0.33.0 tree). The patch installs:
 #### One-time setup after installing TinyGo
 
 ```bash
-# 1. Mirror the system TinyGo into a user-writable location.
-mkdir -p ~/.local/tinygo
-cp -a /usr/local/lib/tinygo/. ~/.local/tinygo/
+# 1. Mirror the system TinyGo 0.40.1 into a user-writable location.
+#    (Adjust the source path if your .deb installs TinyGo elsewhere.)
+mkdir -p ~/.local/tinygo0.40.1
+cp -a /usr/local/lib/tinygo0.40.1/. ~/.local/tinygo0.40.1/
 
 # 2. Apply scripts/tinygo_runtime.patch via the wrapper script.
-#    (Equivalent: patch -p1 -d ~/.local/tinygo < scripts/tinygo_runtime.patch)
+#    (Equivalent: patch -p1 -d ~/.local/tinygo0.40.1 < scripts/tinygo_runtime.patch)
 bash scripts/patch_tinygo_runtime.sh
 ```
 
-The Makefile exports `TINYGOROOT=$HOME/.local/tinygo` and
-invokes `~/.local/tinygo/bin/tinygo`, so `make build` picks up
-the patched tree automatically.
+The Makefile defaults to `TINYGOROOT=$HOME/.local/tinygo0.40.1`
+and invokes `~/.local/tinygo0.40.1/bin/tinygo`, so `make build`
+picks up the patched tree automatically.
 
 The wrapper is **idempotent**: it verifies the expected files are
 in place and carry the right build tags, and skips with an
 `already-applied:` message if so. Re-run any time after a TinyGo
-upgrade or after refreshing `~/.local/tinygo/`.
+upgrade or after refreshing `~/.local/tinygo0.40.1/`.
 
 #### Reverting
 
 ```bash
-# 1. Delete the four new files (patch -R leaves them empty, not gone).
-rm ~/.local/tinygo/src/runtime/runtime_gooos.go
-rm ~/.local/tinygo/src/runtime/runtime_gooos_user.go
-rm ~/.local/tinygo/src/runtime/interrupt/interrupt_gooos.go
-rm ~/.local/tinygo/src/runtime/interrupt/interrupt_gooos_user.go
-rm ~/.local/tinygo/src/runtime/wait_gooos.go
+# 1. Delete the six new files (patch -R leaves them empty, not gone).
+rm ~/.local/tinygo0.40.1/src/runtime/runtime_gooos.go
+rm ~/.local/tinygo0.40.1/src/runtime/runtime_gooos_user.go
+rm ~/.local/tinygo0.40.1/src/runtime/interrupt/interrupt_gooos.go
+rm ~/.local/tinygo0.40.1/src/runtime/interrupt/interrupt_gooos_user.go
+rm ~/.local/tinygo0.40.1/src/runtime/wait_gooos.go
+rm ~/.local/tinygo0.40.1/src/runtime/wait_gooos_user.go
 
 # 2. Reverse the in-place edits.
-patch -R -p1 -d ~/.local/tinygo < scripts/tinygo_runtime.patch
+patch -R -p1 -d ~/.local/tinygo0.40.1 < scripts/tinygo_runtime.patch
 ```
 
 Rationale: `impldoc/goroutine_design_scheduler.md §5.1` explains
@@ -308,6 +336,22 @@ Multi-core (SMP):
 ```bash
 make run-smp        # -smp 4 for 4 cores
 ```
+
+> **Note (M7 — userspace SMP on APs, see
+> `no_goroutine_kernel_design/15_userspace_smp_on_aps.md`):**
+> the gooos kernel runs as a uniprocessor on BSP for all
+> kernel-side work (services, interrupts, I/O); user
+> processes (`hello`, `ls`, `cpuhog`, `markerprint`,
+> `smpprobe`, etc.) run in parallel on APs. Exec'd children
+> round-robin onto APs via the new Ring-3 ready-queue
+> tier; the boot shell stays on BSP (foreground keyboard
+> owner). M6's keyboard correctness invariant
+> (`scripts/test_run_smp_keyboard.sh` 10/10 helpRan, 0
+> PF) is preserved; new `scripts/test_ring3_distribution.sh`
+> verifies Ring-3 lands on AP. Toggle off via
+> `userspaceSMP = false` in `src/preempt_config.go` to
+> revert to M6 (uniprocessor kernel + AP idle in kernel
+> mode).
 
 With the e1000 NIC attached for networking demos:
 
@@ -384,39 +428,41 @@ Hello, World from gooos userspace!
   the PIT counter at 100 Hz, so any requested duration rounds
   up to the next 10 ms tick. No kernel goroutine currently
   needs sub-10-ms sleep; if a future caller does, retrofit
-  `~/.local/tinygo/src/runtime/runtime_gooos.go:sleepTicks`
+  `~/.local/tinygo0.40.1/src/runtime/runtime_gooos.go:sleepTicks`
   to use the LAPIC timer in one-shot mode (see
   `impldoc/deferred_hygiene.md §6` for the design sketch).
-- **Shell does not support job control.** No `&` background
-  jobs, no `jobs` / `fg` / `bg` built-ins, no signals
-  (SIGINT, SIGPIPE). Foreground process is always the most
-  recently-spawned non-pipe-driven stage (or the shell
-  itself at the prompt). See
-  `impldoc/shell_io_overview.md §7` for the scope fences.
+- **Shell job control is minimal.** `&` background execution is
+  supported via a 16-slot jobs table (feature 2.4, see
+  `impldoc/shell_background_jobs.md`) with a non-blocking
+  `sys_waitpid` (#34) for reaping. `jobs` / `fg` / `bg` built-ins,
+  Ctrl-C, and signal handling are still deferred. Foreground
+  process is always the most recently-spawned non-backgrounded
+  non-pipe-driven stage (or the shell itself at the prompt).
+  See `impldoc/shell_io_overview.md §7` for the scope fences.
 - **No shell-level stderr redirection.** `2>` / `&>` / `>&`
   are not parsed. Writing to fd 2 goes to serial only (no
   VGA mirror); programs have no way to redirect fd 2
   separately.
-- **SMP user-mode Ring-3 disabled.** APs boot and enter the
-  scheduler but only BSP (CPU 0) runs goroutines for now;
-  AP-side `iretq` into Ring 3 triple-faults under
-  investigation. See `impldoc/smp_deferred_and_known_issues.md`.
-
 ## Documentation
 
-Reference docs live under `current_impl_doc/` (as-built) and
-`impldoc/` (design). Companion walkthroughs under `docs/`.
+Reference docs live under `current_impl_0421_night/` (current,
+authoritative) and `impldoc/` (design notes). Companion walkthroughs
+under `docs/`.
 
-As-built reference (start here):
+Current implementation reference (start here):
 
-- [Architecture Overview](current_impl_doc/overview.md) — boot flow, memory map, task model
-- [Syscall ABI](current_impl_doc/syscalls.md) — 34-syscall reference
-- [Scheduler](current_impl_doc/scheduler.md) — task states, context switch, process lifecycle
-- [Memory](current_impl_doc/memory.md) — page allocator, page tables, linker layout
-- [IPC](current_impl_doc/ipc.md) — channels, service tasks, `afterTicks` timer wheel
-- [Userland](current_impl_doc/userland.md) — SDK, build system, user programs
-- [Glossary](current_impl_doc/glossary.md) — terminology and goroutine kinds
-- [Known Issues](current_impl_doc/known_issues.md) — workarounds, limitations, resolved bugs
+- [00 Index](current_impl_0421_night/00_index.md) — scope, reading order, invariants
+- [01 Boot and Init](current_impl_0421_night/01_boot_and_kernel_init.md)
+- [02 Descriptors/Traps](current_impl_0421_night/02_cpu_descriptors_traps_interrupts.md)
+- [03 SMP/LAPIC/IPI](current_impl_0421_night/03_smp_lapic_timer_ipi.md)
+- [04 Scheduler/Preemption](current_impl_0421_night/04_scheduler_runtime_preemption.md)
+- [05 Process/ELF/Syscalls](current_impl_0421_night/05_process_elf_ring3_syscalls_signals.md)
+- [06 Memory/VM/GC](current_impl_0421_night/06_memory_vm_allocator_gc.md)
+- [07 FS/FD/Shell I/O](current_impl_0421_night/07_filesystem_fd_shell_io.md)
+- [08 Network Driver-to-Socket](current_impl_0421_night/08_network_stack_driver_to_socket.md)
+- [09 Userland ABI + Embedded ELFs](current_impl_0421_night/09_userland_abi_and_embedded_elves.md)
+- [10 Harnesses + Instability Map](current_impl_0421_night/10_test_harnesses_and_instability_map.md)
+- [11 Traceability Matrix](current_impl_0421_night/11_traceability_matrix.md)
 
 Design docs (deeper dives — many superseded by as-builts; see
 `docs/repo_layout.md` for a staleness-aware map):

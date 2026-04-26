@@ -31,10 +31,13 @@ fi
 start_dec=$((16#$start))
 end_dec=$((16#$end))
 
-# Runtime symbols whose contents include *task.Task pointers.
-# Only globals that actually appear in nm output are checked
-# (TinyGo dead-code-eliminates unused ones; that's not an error).
-pattern='^runtime[.](runqueue|runqueues|sleepQueue|timerQueue)$'
+# Runtime symbols whose contents include *task.Task pointers
+# (pre-Route-C, scheduler=cores) OR Route-C kthread globals
+# (post-M5.2, scheduler=none). At least one of the two families
+# must be present:
+#   - scheduler=cores: runtime.{runqueue,runqueues,sleepQueue,timerQueue}
+#   - scheduler=none:  main.{kschedQueues,kthreadPool,kschedRunning,kthreadHostedProc}
+pattern='^runtime[.](runqueue|runqueues|sleepQueue|timerQueue)$|^main[.](kschedQueues|kthreadPool|kschedRunning|kthreadHostedProc)$'
 
 bad=0
 checked=0

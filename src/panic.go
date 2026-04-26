@@ -27,6 +27,29 @@ func appendStr(buf []byte, off int, s string) int {
 	return off
 }
 
+// appendDec formats v as a base-10 integer into buf starting at
+// off and returns the new offset. ISR-safe (no allocation).
+//
+//go:nosplit
+func appendDec(buf []byte, off int, v uint64) int {
+	if v == 0 {
+		buf[off] = '0'
+		return off + 1
+	}
+	var tmp [20]byte
+	i := len(tmp)
+	for v > 0 {
+		i--
+		tmp[i] = byte('0' + v%10)
+		v /= 10
+	}
+	for ; i < len(tmp); i++ {
+		buf[off] = tmp[i]
+		off++
+	}
+	return off
+}
+
 // appendHex formats v as "0xHHHHHHHHHHHHHHHH" into buf starting at
 // off and returns the new offset.
 //

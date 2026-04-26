@@ -37,7 +37,7 @@ const (
 	idtEntries        = 256
 	kernelCS          = 0x08 // GDT64_CODE selector (second GDT entry)
 	gateInterrupt     = 0x8E // Present=1 | DPL=0 | Type=0xE (64-bit interrupt gate)
-	gateInterruptUser = 0xEE // Present=1 | DPL=3 | Type=0xE (Ring 3 callable)
+	gateTrapUser      = 0xEF // Present=1 | DPL=3 | Type=0xF (Ring 3 trap gate)
 )
 
 var (
@@ -85,10 +85,27 @@ func idtInit() {
 	lidt(uintptr(unsafe.Pointer(&idtDesc[0])))
 }
 
-// setGateDPL3 changes the DPL of an IDT entry to Ring 3, allowing
-// user-mode software to trigger the interrupt via the int instruction.
+// setGateDPL3 changes an IDT entry to a Ring-3-callable trap gate.
+// syscalls must preserve IF while the handler runs: several handlers
+// legitimately block on channels/afterTicks, and using an interrupt
+// gate here would clear IF until iretq, deadlocking PIT/keyboard IRQ
+// delivery under shell ReadLine()/Sleep() paths.
 func setGateDPL3(vector int) {
-	idtTable[vector].TypeAttr = gateInterruptUser
+	idtTable[vector].TypeAttr = gateTrapUser
+}
+
+// idtLoadAP loads the (already-populated) IDT into this AP's IDTR.
+// Must be called on every AP before Ring-3 transitions or any
+// exception-triggering code path, since each CPU has its own IDTR
+// and an AP starts with IDTR = {base=0, limit=0xFFFF} (x86 reset
+// default). Any exception before this call triple-faults because
+// the CPU reads a zero-filled descriptor from physical address 0.
+// Root cause of the AP Ring-3 `iretq` triple-fault documented in
+// impldoc/smp_deferred_and_known_issues.md §2.1.
+//
+//go:nosplit
+func idtLoadAP() {
+	lidt(uintptr(unsafe.Pointer(&idtDesc[0])))
 }
 
 // isrTableAddr returns the base address of the 256-entry ISR stub

@@ -4,6 +4,7 @@
 # Scratch / build output
 tmp/
 user/build/
+hoge.md
 
 TODO.md
 

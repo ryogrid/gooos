@@ -28,7 +28,6 @@ const warnThreshold = 75
 // run at least once.
 var (
 	fsTaskHandle         uintptr
-	keyboardPumpHandle   uintptr
 	ring3WrapperHandle   uintptr
 )
 
@@ -58,7 +57,6 @@ func stackSizeAudit() {
 	serialPrintln("stack-audit: begin")
 	auditOne("main", taskCurrent())
 	auditOne("fsTask", fsTaskHandle)
-	auditOne("keyboardPump", keyboardPumpHandle)
 	auditOne("ring3Wrapper", ring3WrapperHandle)
 	serialPrintln("stack-audit: end")
 }

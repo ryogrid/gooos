@@ -152,8 +152,12 @@ UDPRECV="$(cat "$UDP_OUT" 2>/dev/null || true)"
 ERECV="$(cat "$ECHO_E_OUT" 2>/dev/null || true)"
 
 PCI=$(grep -c '^PCI: found e1000' "$OUT")
-TCPLISTEN=$(grep -c '^TCP: listener port=8080' "$OUT")
-UDPLISTEN=$(grep -c '^UDP echo: listening' "$OUT")
+# §M7: under userspaceSMP=true the boot shell prints "$ " before
+# the TCP/UDP service kthreads emit their "listening" lines,
+# producing "$ TCP: listener port=8080" / "$ UDP echo: listening".
+# Allow the optional shell-prompt prefix.
+TCPLISTEN=$(grep -cE '(^|^\$ )TCP: listener port=8080' "$OUT")
+UDPLISTEN=$(grep -cE '(^|^\$ )UDP echo: listening' "$OUT")
 DIAG=$(grep -c '=== Network Diagnostics ===' "$OUT")
 TCPECHO_FS=$(grep -c 'tcpecho.elf:' "$OUT")
 TCPCLI_FS=$(grep -c 'tcpcli.elf:' "$OUT")

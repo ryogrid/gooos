@@ -124,7 +124,12 @@ func tcpStartRTOScanner() {
 		return
 	}
 	tcpRTOScannerRunning = true
-	go tcpRTOScannerLoop()
+	// M4.2.c: was `go tcpRTOScannerLoop()`. Migrated to a gooos
+	// kernel thread; the loop body uses kschedTimedPark which
+	// avoids the H-01 chan-recv hazard.
+	kschedInit() // idempotent; this function may run before main()
+	// §14 U4: BSP-pinned (covered by kschedSpawn flag clamp).
+	kschedSpawnAt("tcpRTOScanner", tcpRTOScannerLoop, 0)
 }
 
 // tcpRTOScannerLoop is the kernel-wide RTO scanner. Runs forever
@@ -137,7 +142,13 @@ func tcpStartRTOScanner() {
 // the 1-second RTO floor.
 func tcpRTOScannerLoop() {
 	for {
-		<-afterTicks(tcpRetxScanTicks)
+		// M4.2.c: kthread context — kschedTimedPark instead of
+		// chan recv from afterTicks (H-01 hazard).
+		if kschedRunning[cpuID()] != nil {
+			kschedTimedPark(tcpRetxScanTicks)
+		} else {
+			<-afterTicks(tcpRetxScanTicks)
+		}
 		tcpRTOScanPass()
 	}
 }

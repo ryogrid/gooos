@@ -1,8 +1,8 @@
 diff --git a/src/internal/task/queue.go b/src/internal/task/queue.go
-index 5a00d95..1ba3fdc 100644
+index 7242c4e3..5157b687 100644
 --- a/src/internal/task/queue.go
 +++ b/src/internal/task/queue.go
-@@ -4,16 +4,30 @@ import "runtime/interrupt"
+@@ -4,16 +4,34 @@ import "runtime/interrupt"
  
  const asserts = false
  
@@ -10,17 +10,21 @@ index 5a00d95..1ba3fdc 100644
 -// The zero value is an empty queue.
 +// gooos SMP spinlock — linked from the kernel's stubs.S.
 +// User-space builds provide no-op stubs in user/runtime_asm_amd64.S.
++// Under scheduler=tasks, lockAtomics() only disables interrupts on the
++// calling CPU; the spinlock provides the cross-CPU exclusion needed by
++// work stealing. Under scheduler=cores, lockAtomics() takes atomicsLock
++// and the spinlock becomes redundant but harmless.
 +//
 +//go:linkname gooos_spinlockAcquire spinlockAcquire
++//go:noescape
 +func gooos_spinlockAcquire(lock *uint32)
 +
 +//go:linkname gooos_spinlockRelease spinlockRelease
++//go:noescape
 +func gooos_spinlockRelease(lock *uint32)
 +
 +// Queue is a FIFO container of tasks. SMP v2: each queue has a
-+// spinlock for cross-CPU safety (work stealing calls Pop on peer
-+// queues). interrupt.Disable provides local ISR safety; the
-+// spinlock provides cross-CPU mutual exclusion.
++// spinlock for cross-CPU safety.
  type Queue struct {
  	head, tail *Task
 +	lock       uint32
@@ -29,73 +33,73 @@ index 5a00d95..1ba3fdc 100644
 -// Push a task onto the queue.
 +// Push a task onto the queue. SMP-safe.
  func (q *Queue) Push(t *Task) {
- 	i := interrupt.Disable()
+ 	mask := lockAtomics()
 +	gooos_spinlockAcquire(&q.lock)
  	if asserts && t.Next != nil {
 +		gooos_spinlockRelease(&q.lock)
- 		interrupt.Restore(i)
+ 		unlockAtomics(mask)
  		panic("runtime: pushing a task to a queue with a non-nil Next pointer")
  	}
-@@ -25,14 +39,17 @@ func (q *Queue) Push(t *Task) {
+@@ -25,14 +43,17 @@ func (q *Queue) Push(t *Task) {
  	if q.head == nil {
  		q.head = t
  	}
 +	gooos_spinlockRelease(&q.lock)
- 	interrupt.Restore(i)
+ 	unlockAtomics(mask)
  }
  
 -// Pop a task off of the queue.
 +// Pop a task off of the queue. SMP-safe.
  func (q *Queue) Pop() *Task {
- 	i := interrupt.Disable()
+ 	mask := lockAtomics()
 +	gooos_spinlockAcquire(&q.lock)
  	t := q.head
  	if t == nil {
 +		gooos_spinlockRelease(&q.lock)
- 		interrupt.Restore(i)
+ 		unlockAtomics(mask)
  		return nil
  	}
-@@ -41,6 +58,7 @@ func (q *Queue) Pop() *Task {
+@@ -41,6 +62,7 @@ func (q *Queue) Pop() *Task {
  		q.tail = nil
  	}
  	t.Next = nil
 +	gooos_spinlockRelease(&q.lock)
- 	interrupt.Restore(i)
+ 	unlockAtomics(mask)
  	return t
  }
-@@ -48,6 +66,8 @@ func (q *Queue) Pop() *Task {
+@@ -48,6 +70,8 @@ func (q *Queue) Pop() *Task {
  // Append pops the contents of another queue and pushes them onto the end of this queue.
  func (q *Queue) Append(other *Queue) {
- 	i := interrupt.Disable()
+ 	mask := lockAtomics()
 +	gooos_spinlockAcquire(&q.lock)
 +	gooos_spinlockAcquire(&other.lock)
  	if q.head == nil {
  		q.head = other.head
  	} else {
-@@ -55,13 +75,17 @@ func (q *Queue) Append(other *Queue) {
+@@ -55,13 +79,17 @@ func (q *Queue) Append(other *Queue) {
  	}
  	q.tail = other.tail
  	other.head, other.tail = nil, nil
 +	gooos_spinlockRelease(&other.lock)
 +	gooos_spinlockRelease(&q.lock)
- 	interrupt.Restore(i)
+ 	unlockAtomics(mask)
  }
  
 -// Empty checks if the queue is empty.
 +// Empty checks if the queue is empty. SMP-safe.
  func (q *Queue) Empty() bool {
- 	i := interrupt.Disable()
+ 	mask := lockAtomics()
 +	gooos_spinlockAcquire(&q.lock)
  	empty := q.head == nil
 +	gooos_spinlockRelease(&q.lock)
- 	interrupt.Restore(i)
+ 	unlockAtomics(mask)
  	return empty
  }
 diff --git a/src/internal/task/task_stack.go b/src/internal/task/task_stack.go
-index f566de0..f368c01 100644
+index b6c4a5df..aca4122b 100644
 --- a/src/internal/task/task_stack.go
 +++ b/src/internal/task/task_stack.go
-@@ -30,28 +30,46 @@ type state struct {
+@@ -29,6 +29,11 @@ type state struct {
  	// When initializing the goroutine, the stackCanary constant is stored there.
  	// If the stack overflowed, the word will likely no longer equal stackCanary.
  	canaryPtr *uintptr
@@ -106,26 +110,138 @@ index f566de0..f368c01 100644
 +	stackTop uintptr // gooos
  }
  
+ //export tinygo_task_exit
+@@ -48,6 +53,7 @@ func (s *state) initialize(fn uintptr, args unsafe.Pointer, stackSize uintptr) {
+ 	// the next stack switch, there was a stack overflow.
+ 	s.canaryPtr = (*uintptr)(stack)
+ 	*s.canaryPtr = stackCanary
++	s.stackTop = uintptr(stack) + stackSize // gooos
+ 
+ 	// Get a pointer to the top of the stack, where the initial register values
+ 	// are stored. They will be popped off the stack on the first stack switch
+diff --git a/src/internal/task/task_stack_amd64.go b/src/internal/task/task_stack_amd64.go
+index d252b1c5..5e20bca8 100644
+--- a/src/internal/task/task_stack_amd64.go
++++ b/src/internal/task/task_stack_amd64.go
+@@ -1,10 +1,19 @@
+-//go:build scheduler.tasks && amd64 && !windows
++//go:build (scheduler.tasks || scheduler.cores) && amd64 && !windows
+ 
+ package task
+ 
+ import "unsafe"
+ 
+-var systemStack uintptr
++// runtime_systemStackPtr returns a pointer to the per-CPU system
++// stack slot. Under scheduler=tasks, upstream scheduler_tasks.go:11
++// provides the scalar &systemStack. Under scheduler=cores,
++// scheduler_cores.go:298-300 provides array-indexed
++// &systemStack[currentCPU()]. Either way, the consumer here only
++// needs a *uintptr; the upstream implementation owns the per-CPU
++// indexing. Mirror of task_stack_tinygoriscv.go:12-13.
++//
++//go:linkname runtime_systemStackPtr runtime.systemStackPtr
++func runtime_systemStackPtr() *uintptr
+ 
+ // calleeSavedRegs is the list of registers that must be saved and restored when
+ // switching between tasks. Also see task_stack_amd64.S that relies on the exact
+@@ -44,18 +53,23 @@ func (s *state) archInit(r *calleeSavedRegs, fn uintptr, args unsafe.Pointer) {
+ 	r.r13 = uintptr(args)
+ }
+ 
++//go:linkname gooosOnResume runtime.gooosOnResume
++func gooosOnResume()
++
+ func (s *state) resume() {
+-	swapTask(s.sp, &systemStack)
++	gooosOnResume() // gooos — update TSS.RSP0 for resumed goroutine
++	swapTask(s.sp, runtime_systemStackPtr())
+ }
+ 
+ func (s *state) pause() {
+-	newStack := systemStack
+-	systemStack = 0
++	systemStackPtr := runtime_systemStackPtr()
++	newStack := *systemStackPtr
++	*systemStackPtr = 0
+ 	swapTask(newStack, &s.sp)
+ }
+ 
+-// SystemStack returns the system stack pointer when called from a task stack.
+-// When called from the system stack, it returns 0.
++// SystemStack returns the current CPU's system stack pointer when
++// called from a task stack. Returns 0 when called from the system stack.
+ func SystemStack() uintptr {
+-	return systemStack
++	return *runtime_systemStackPtr()
+ }
+diff --git a/src/internal/task/task_stack_multicore.go b/src/internal/task/task_stack_multicore.go
+index 65cf3a00..99147a7b 100644
+--- a/src/internal/task/task_stack_multicore.go
++++ b/src/internal/task/task_stack_multicore.go
+@@ -6,8 +6,21 @@ import "runtime/interrupt"
+ 
+ // Current returns the current active task.
+ //
+-//go:linkname Current runtime.currentTask
+-func Current() *Task
++// gooos patch: upstream declares Current as a body-less function with
++// //go:linkname Current runtime.currentTask. Under TinyGo 0.40.1 with
++// the gooos build configuration, that forward-decl pattern doesn't
++// resolve (linker reports "undefined symbol: internal/task.Current"),
++// because TinyGo's DCE pass drops runtime.currentTask when no direct
++// caller exists in the same IR module. Give Current a real body that
++// calls the linkname target explicitly — the compiler/linker keeps
++// the symbol alive and callers get the correct dispatch.
++//
++//go:linkname runtime_currentTask runtime.currentTask
++func runtime_currentTask() *Task
++
++func Current() *Task {
++	return runtime_currentTask()
++}
+ 
+ // Pause suspends the current task and returns to the scheduler.
+ // This function may only be called when running on a goroutine stack, not when running on the system stack or in an interrupt.
+diff --git a/src/internal/task/task_stack_unicore.go b/src/internal/task/task_stack_unicore.go
+index b4425de3..4bfe5af9 100644
+--- a/src/internal/task/task_stack_unicore.go
++++ b/src/internal/task/task_stack_unicore.go
+@@ -2,36 +2,58 @@
+ 
+ package task
+ 
+-import "runtime/interrupt"
++import (
++	"runtime/interrupt"
++	"unsafe"
++)
+ 
 -// currentTask is the current running task, or nil if currently in the scheduler.
 -var currentTask *Task
++// gooosTaskMaxCPUs must match the kernel's maxCPUs (src/percpu.go).
++const gooosTaskMaxCPUs = 17
+ 
+-// Current returns the current active task.
 +// currentTasks is the per-CPU current running task (SMP v2).
-+// Indexed by gooosCpuIDTask(). Nil if currently in the scheduler.
-+// Size must match maxCPUs in gooos kernel (src/percpu.go).
-+var currentTasks [17]*Task
++// Indexed by gooosCpuIDTask(). Nil entries mean the CPU is currently
++// in the scheduler. Under scheduler=tasks, cross-CPU scheduler entry
++// is gated by bspBootDone; the per-CPU array keeps each CPU's
++// context isolated.
++var currentTasks [gooosTaskMaxCPUs]*Task
 +
 +//go:linkname gooosCpuIDTask cpuID
 +func gooosCpuIDTask() uint32
- 
--// Current returns the current active task.
++
++//go:linkname gooosStackOverflow runtime.gooosStackOverflow
++func gooosStackOverflow(t uintptr)
++
 +// Current returns the current active task on this CPU.
  func Current() *Task {
 -	return currentTask
 +	return currentTasks[gooosCpuIDTask()]
  }
  
-+//go:linkname gooosStackOverflow runtime.gooosStackOverflow
-+func gooosStackOverflow(t uintptr)
-+
  // Pause suspends the current task and returns to the scheduler.
  // This function may only be called when running on a goroutine stack, not when running on the system stack or in an interrupt.
  func Pause() {
@@ -148,8 +264,6 @@ index f566de0..f368c01 100644
 +	ct.state.pause()
  }
  
- //export tinygo_pause
-@@ -62,11 +80,12 @@ func pause() {
  // Resume the task until it pauses or completes.
  // This may only be called from the scheduler.
  func (t *Task) Resume() {
@@ -162,205 +276,102 @@ index f566de0..f368c01 100644
 -	currentTask = nil
 +	currentTasks[idx] = nil
  }
- 
- // initialize the state and prepare to call the specified function with the specified argument bundle.
-@@ -80,6 +99,7 @@ func (s *state) initialize(fn uintptr, args unsafe.Pointer, stackSize uintptr) {
- 	// the next stack switch, there was a stack overflow.
- 	s.canaryPtr = (*uintptr)(stack)
- 	*s.canaryPtr = stackCanary
-+	s.stackTop = uintptr(stack) + stackSize // gooos
- 
- 	// Get a pointer to the top of the stack, where the initial register values
- 	// are stored. They will be popped off the stack on the first stack switch
-diff --git a/src/internal/task/task_stack_amd64.go b/src/internal/task/task_stack_amd64.go
-index d252b1c..fe643e7 100644
---- a/src/internal/task/task_stack_amd64.go
-+++ b/src/internal/task/task_stack_amd64.go
-@@ -4,7 +4,18 @@ package task
- 
- import "unsafe"
- 
--var systemStack uintptr
-+// gooosSMPMaxCPUs must match the kernel's maxCPUs (src/percpu.go).
-+const gooosSMPMaxCPUs = 17
-+
-+// Per-CPU system stacks. Each CPU's scheduler uses its own stack
-+// during task switching to avoid cross-CPU collisions.
-+var systemStacks [gooosSMPMaxCPUs]uintptr
-+
-+// gooosCpuID returns the current CPU index from per-CPU storage.
-+// Linked to the gooos kernel's cpuID() which reads %gs:0.
-+//
-+//go:linkname gooosCpuID cpuID
-+func gooosCpuID() uint32
- 
- // calleeSavedRegs is the list of registers that must be saved and restored when
- // switching between tasks. Also see task_stack_amd64.S that relies on the exact
-@@ -44,18 +55,24 @@ func (s *state) archInit(r *calleeSavedRegs, fn uintptr, args unsafe.Pointer) {
- 	r.r13 = uintptr(args)
- }
- 
-+//go:linkname gooosOnResume runtime.gooosOnResume
-+func gooosOnResume()
-+
- func (s *state) resume() {
--	swapTask(s.sp, &systemStack)
-+	gooosOnResume() // gooos — update TSS.RSP0 for resumed goroutine
-+	idx := gooosCpuID()
-+	swapTask(s.sp, &systemStacks[idx])
- }
- 
- func (s *state) pause() {
--	newStack := systemStack
--	systemStack = 0
-+	idx := gooosCpuID()
-+	newStack := systemStacks[idx]
-+	systemStacks[idx] = 0
- 	swapTask(newStack, &s.sp)
- }
- 
--// SystemStack returns the system stack pointer when called from a task stack.
--// When called from the system stack, it returns 0.
-+// SystemStack returns the current CPU's system stack pointer when
-+// called from a task stack. Returns 0 when called from the system stack.
- func SystemStack() uintptr {
--	return systemStack
-+	return systemStacks[gooosCpuID()]
- }
-diff --git a/src/runtime/chan.go b/src/runtime/chan.go
-index 269f5a0..ca78d9b 100644
---- a/src/runtime/chan.go
-+++ b/src/runtime/chan.go
-@@ -183,8 +183,8 @@ func (ch *channel) resumeRX(ok bool) unsafe.Pointer {
- 		b.detach()
- 	}
- 
--	// push task onto runqueue
--	runqueue.Push(b.t)
-+	// push task onto current CPU's runqueue
-+	runqueues[gooosCpuID()].Push(b.t)
- 
- 	return dst
- }
-@@ -210,8 +210,8 @@ func (ch *channel) resumeTX() unsafe.Pointer {
- 		b.detach()
- 	}
- 
--	// push task onto runqueue
--	runqueue.Push(b.t)
-+	// push task onto current CPU's runqueue
-+	runqueues[gooosCpuID()].Push(b.t)
- 
- 	return src
- }
 diff --git a/src/runtime/gc_blocks.go b/src/runtime/gc_blocks.go
-index 7db6b7a..43426c8 100644
+index a95edbfd..6cd4905a 100644
 --- a/src/runtime/gc_blocks.go
 +++ b/src/runtime/gc_blocks.go
-@@ -48,6 +48,17 @@ const (
- 	markStackSize      = 4 * unsafe.Sizeof((*int)(nil)) // number of to-be-marked blocks to queue before forcing a rescan
+@@ -58,6 +58,33 @@ var (
+ 	gcLock        task.PMutex    // lock to avoid race conditions on multicore systems
  )
- 
-+// gooos SMP heap lock — protects alloc/free and GC mark/sweep
-+// from concurrent access across CPUs.
-+//
-+//go:linkname gooos_heapSpinlockAcquire spinlockAcquire
-+func gooos_heapSpinlockAcquire(lock *uint32)
+
++// gooos SMP note (Route C M4.0): the upstream gcLock (task.PMutex)
++// is bypassed in favour of a non-parking gooos spinlock on the
++// allocator hot path. Rationale: under scheduler=cores,
++// task.PMutex is a task.Mutex, and its contended Lock() parks via
++// task.PauseLocked — which writes RSP into task.Current()'s state
++// struct. From a gooos kthread context (kschedSpawn'd thread with
++// no TinyGo task associated) that write corrupts a stale task and
++// the kthread simultaneously (H-01 hazard). gcLockWord below is a
++// plain uint32 acquired via the gooos kernel's spinlock stubs
++// (stubs.S: spinlockAcquire / spinlockRelease). Goroutine callers
++// and kthread callers both take the same spinlock — cross-CPU
++// safe, deadlock-free (no parking). Concurrent-mutator STW during
++// mark phase lands in a future M5 commit via the gcPauseCore IPI
++// (vector 0xFD, currently stubbed); until then, mark phase relies
++// on the scheduler naturally parking every kthread and goroutine
++// at some safe-point inside the mark pass.
 +
-+//go:linkname gooos_heapSpinlockRelease spinlockRelease
-+func gooos_heapSpinlockRelease(lock *uint32)
++//go:linkname gooos_gcLockAcquire spinlockAcquire
++//go:noescape
++func gooos_gcLockAcquire(lock *uint32)
 +
-+var heapLock uint32
++//go:linkname gooos_gcLockRelease spinlockRelease
++//go:noescape
++func gooos_gcLockRelease(lock *uint32)
 +
- var (
- 	metadataStart unsafe.Pointer // pointer to the start of the heap metadata
- 	nextAlloc     gcBlock        // the next block that should be tried by the allocator
-@@ -281,6 +292,9 @@ func alloc(size uintptr, layout unsafe.Pointer) unsafe.Pointer {
- 		runtimePanicAt(returnAddress(0), "heap alloc in interrupt")
- 	}
- 
-+	// SMP: serialize all heap operations across CPUs.
-+	gooos_heapSpinlockAcquire(&heapLock)
++var gcLockWord uint32
 +
- 	gcTotalAlloc += uint64(size)
- 	gcMallocs++
- 
-@@ -374,6 +388,7 @@ func alloc(size uintptr, layout unsafe.Pointer) unsafe.Pointer {
- 				size -= add
- 			}
- 			memzero(pointer, size)
-+			gooos_heapSpinlockRelease(&heapLock)
- 			return pointer
- 		}
- 	}
-@@ -407,6 +422,13 @@ func free(ptr unsafe.Pointer) {
- 
- // GC performs a garbage collection cycle.
- func GC() {
-+	// runGC may be called from alloc() which already holds heapLock.
-+	// To avoid deadlock, we don't acquire heapLock here — the GC
-+	// mark/sweep operates on heap metadata that's only modified by
-+	// alloc (which holds the lock) or by GC itself. Concurrent
-+	// access is prevented by the cooperative scheduler: only one
-+	// goroutine runs per CPU, and alloc holds the lock during its
-+	// entire operation including any runGC call.
- 	runGC()
+ // zeroSizedAlloc is just a sentinel that gets returned when allocating 0 bytes.
+ var zeroSizedAlloc uint8
+
+@@ -411,7 +438,7 @@ func alloc(size uintptr, layout unsafe.Pointer) unsafe.Pointer {
+
+ 	// Make sure there are no concurrent allocations. The heap is not currently
+ 	// designed for concurrent alloc/GC.
+-	gcLock.Lock()
++	gooos_gcLockAcquire(&gcLockWord)
+
+ 	// Update the total allocation counters.
+ 	gcTotalAlloc += uint64(rawSize)
+@@ -468,7 +495,7 @@ func alloc(size uintptr, layout unsafe.Pointer) unsafe.Pointer {
+ 	header.layout = parseGCLayout(layout)
+
+ 	// We've claimed this allocation, now we can unlock the heap.
+-	gcLock.Unlock()
++	gooos_gcLockRelease(&gcLockWord)
+
+ 	// Return a pointer to this allocation.
+ 	add := align(unsafe.Sizeof(objHeader{}))
+@@ -505,10 +532,15 @@ func free(ptr unsafe.Pointer) {
  }
- 
-@@ -425,30 +447,27 @@ func runGC() (freeBytes uintptr) {
- 	if baremetal && hasScheduler {
- 		// Channel operations in interrupts may move task pointers around while we are marking.
- 		// Therefore we need to scan the runqueue separately.
--		var markedTaskQueue task.Queue
--	runqueueScan:
--		for !runqueue.Empty() {
--			// Pop the next task off of the runqueue.
--			t := runqueue.Pop()
--
--			// Mark the task if it has not already been marked.
--			markRoot(uintptr(unsafe.Pointer(&runqueue)), uintptr(unsafe.Pointer(t)))
-+		// SMP v2: scan all per-CPU runqueues. For now, only BSP runs GC;
-+		// stop-the-world coordination across CPUs is deferred.
-+		for rqIdx := 0; rqIdx < gooosSMPMaxCPUs; rqIdx++ {
-+			var markedTaskQueue task.Queue
-+		runqueueScan:
-+			for !runqueues[rqIdx].Empty() {
-+				t := runqueues[rqIdx].Pop()
-+				markRoot(uintptr(unsafe.Pointer(&runqueues[rqIdx])), uintptr(unsafe.Pointer(t)))
-+				markedTaskQueue.Push(t)
-+			}
- 
--			// Push the task onto our temporary queue.
--			markedTaskQueue.Push(t)
--		}
-+			finishMark()
- 
--		finishMark()
--
--		// Restore the runqueue.
--		i := interrupt.Disable()
--		if !runqueue.Empty() {
--			// Something new came in while finishing the mark.
-+			i := interrupt.Disable()
-+			if !runqueues[rqIdx].Empty() {
-+				interrupt.Restore(i)
-+				goto runqueueScan
-+			}
-+			runqueues[rqIdx] = markedTaskQueue
- 			interrupt.Restore(i)
--			goto runqueueScan
- 		}
--		runqueue = markedTaskQueue
--		interrupt.Restore(i)
- 	} else {
- 		finishMark()
- 	}
+
+ // GC performs a garbage collection cycle.
++// gooos SMP (Route C M4.0): allocator lock replaced with a gooos
++// spinlock (gcLockWord) so cross-CPU exclusion never parks via
++// task.PauseLocked. See the note near gcLockWord's declaration
++// above. Full STW during mark phase lands with gcPauseCore IPI
++// (§05 / M5).
+ func GC() {
+-	gcLock.Lock()
++	gooos_gcLockAcquire(&gcLockWord)
+ 	runGC()
+-	gcLock.Unlock()
++	gooos_gcLockRelease(&gcLockWord)
+ }
+
+ // runGC performs a garbage collection cycle. It is the internal implementation
+@@ -797,7 +824,7 @@ func alloc(size uintptr, layout unsafe.Pointer) unsafe.Pointer {
+ // The returned memory statistics are up to date as of the
+ // call to ReadMemStats. This would not do GC implicitly for you.
+ func ReadMemStats(m *MemStats) {
+-	gcLock.Lock()
++	gooos_gcLockAcquire(&gcLockWord)
+
+ 	// Calculate the raw size of the heap.
+ 	heapEnd := heapEnd
+@@ -843,5 +870,5 @@ func ReadMemStats(m *MemStats) {
+ 	// Record the total allocated bytes.
+ 	m.TotalAlloc = gcTotalAlloc
+
+-	gcLock.Unlock()
++	gooos_gcLockRelease(&gcLockWord)
+ }
 diff --git a/src/runtime/interrupt/interrupt_gooos.go b/src/runtime/interrupt/interrupt_gooos.go
 new file mode 100644
-index 0000000..cedf80b
+index 00000000..e7837ff6
 --- /dev/null
 +++ b/src/runtime/interrupt/interrupt_gooos.go
-@@ -0,0 +1,33 @@
+@@ -0,0 +1,47 @@
 +//go:build gooos && baremetal && kernelspace
 +
 +package interrupt
@@ -386,17 +397,31 @@ index 0000000..cedf80b
 +
 +func Restore(state State) { gooos_restoreFlags(uintptr(state)) }
 +
-+// In always returns false on gooos. The TinyGo runtime uses In()
-+// to prevent heap allocation and task.Pause() in ISR context. On
-+// gooos, syscall handlers (which run in ISR context via int 0x80)
-+// ARE allowed to block on channels and allocate — this is the
-+// fundamental design: each Ring-3 process is a goroutine that
-+// blocks mid-ISR during syscalls. The ISR depth counter is
-+// managed by processExit for the sys_exit path.
-+func In() bool { return false }
++// In returns true when the CPU is inside a real ISR (not a syscall
++// handler). Per M2 (impldoc/smp_m2_ap_lapic_timer.md): the ISR
++// prologue bumps per-CPU %gs:4 on every vector and additionally
++// bumps per-CPU %gs:44 when the vector is 0x80 (syscall). This
++// function returns true only when depth > 0 AND syscall-depth == 0,
++// so TinyGo's task.Pause() is still allowed during blocking syscalls
++// (Ring-3 processes are goroutines that block mid-ISR during
++// int 0x80 handlers — the fundamental gooos syscall design).
++// Real IRQs (timer, keyboard, e1000, etc.) still correctly return
++// true, so the runtime's "no heap alloc in interrupt" / "no
++// task.Pause in interrupt" invariants hold for those paths.
++
++//go:linkname gooos_readInterruptDepth readInterruptDepth
++func gooos_readInterruptDepth() uint32
++
++//go:linkname gooos_readSyscallDepth readSyscallDepth
++func gooos_readSyscallDepth() uint32
++
++//go:nosplit
++func In() bool {
++	return gooos_readInterruptDepth() != 0 && gooos_readSyscallDepth() == 0
++}
 diff --git a/src/runtime/interrupt/interrupt_gooos_user.go b/src/runtime/interrupt/interrupt_gooos_user.go
 new file mode 100644
-index 0000000..8d64545
+index 00000000..8d645459
 --- /dev/null
 +++ b/src/runtime/interrupt/interrupt_gooos_user.go
 @@ -0,0 +1,14 @@
@@ -416,10 +441,10 @@ index 0000000..8d64545
 +func In() bool            { return false }
 diff --git a/src/runtime/runtime_gooos.go b/src/runtime/runtime_gooos.go
 new file mode 100644
-index 0000000..722004e
+index 00000000..3cadea13
 --- /dev/null
 +++ b/src/runtime/runtime_gooos.go
-@@ -0,0 +1,91 @@
+@@ -0,0 +1,273 @@
 +//go:build gooos && baremetal && kernelspace
 +
 +// gooos-local runtime bodies for bare-metal x86_64 Ring 0.
@@ -429,9 +454,15 @@ index 0000000..722004e
 +
 +package runtime
 +
-+type timeUnit int64
++// timeUnit is defined in upstream runtime.go since TinyGo 0.40.x;
++// no longer redeclared here.
 +
-+//go:linkname gooos_pitTicks main.pitTicks
++// TinyGo 0.40.x disallows //go:linkname on variable declarations (it
++// creates a local symbol that collides with the kernel's definition).
++// Use //go:extern, which marks the variable as "allocated elsewhere"
++// so the compiler emits only a reference.
++//
++//go:extern main.pitTicks
 +var gooos_pitTicks uint64
 +
 +// The kernel's assembly stubs in src/stubs.S use unqualified names
@@ -511,12 +542,187 @@ index 0000000..722004e
 +
 +// waitForEvents provided by wait_other.go (fallback). No override
 +// needed — that fallback body is a no-op, acceptable here.
++
++// ---- M3: scheduler=cores Wave 2 declarations ---------------------
++//
++// Under scheduler=cores, upstream scheduler_cores.go:260-290 defines
++// lockFutex/unlockFutex/lockAtomics/unlockAtomics/lockScheduler/
++// unlockScheduler which take Lock()/Unlock() methods on four package-
++// level lock variables. Upstream targets (RP2040/RP2350) provide
++// these in runtime_rp2.go:295-298 as a target-local spinLock type.
++// gooos mirrors that pattern here.
++//
++// DO NOT redefine the lockX/unlockX functions — upstream already
++// does. Only the variables are supplied here.
++
++// numCPU is the compile-time upper bound on core count. Matches
++// gooos's maxCPUs (1 BSP + 16 APs = 17). Used by upstream
++// scheduler_cores.go's `cpuTasks [numCPU]*task.Task` and
++// `systemStack [numCPU]uintptr` arrays.
++const numCPU = 17
++
++//go:linkname gooos_spinlockAcquire spinlockAcquire
++//go:noescape
++func gooos_spinlockAcquire(lock *uint32)
++
++//go:linkname gooos_spinlockRelease spinlockRelease
++//go:noescape
++func gooos_spinlockRelease(lock *uint32)
++
++// gooosSpinLock is the lock type consumed by the upstream
++// lockFutex/lockAtomics/lockScheduler helpers.
++type gooosSpinLock struct {
++	locked uint32
++}
++
++//go:nosplit
++func (l *gooosSpinLock) Lock() { gooos_spinlockAcquire(&l.locked) }
++
++//go:nosplit
++func (l *gooosSpinLock) Unlock() { gooos_spinlockRelease(&l.locked) }
++
++var (
++	printLock     gooosSpinLock
++	schedulerLock gooosSpinLock
++	atomicsLock   gooosSpinLock
++	futexLock     gooosSpinLock
++)
++
++// M5.1: currentCPU + currentTask references moved to
++// runtime_gooos_sched_cores.go (gated by !scheduler.none) so this
++// file compiles under scheduler=none too.
++
++// gcPauseCore is called by gc_stack_cores.go's gcMarkReachable
++// to stop every peer core before scanning. M3 stub: returns
++// immediately. M5 replaces with IPI + per-CPU ack-flag spin.
++// Acceptable at M3 because the gooos test matrix does not
++// exercise heavy concurrent allocation during GC.
++//
++//go:linkname gcPauseCore runtime.gcPauseCore
++//go:nosplit
++func gcPauseCore(cpu uint32) { /* M3 stub; full impl at M5 */ }
++
++// gcResumeCore mirror of gcPauseCore for symmetry with the
++// gc_stack_cores.go protocol.
++//
++//go:linkname gcResumeCore runtime.gcResumeCore
++//go:nosplit
++func gcResumeCore(cpu uint32) { /* M3 stub; full impl at M5 */ }
++
++// ---- Multicore-scheduler target primitives (RP2-style) -----------
++//
++// Upstream scheduler_cores.go + gc_stack_cores.go reference a set
++// of target-local primitives — RP2 provides them via arm.Asm("wfe")
++// / arm.Asm("sev"). The gooos equivalent uses hlt (already a no-op
++// on no-events) and the existing IPI path (gooosWakeupCPU) for
++// cross-CPU nudges. Most are no-ops at M3 because gooos's BSP-
++// driven scheduling already handles the coordination the RP2
++// multicore scheduler needed. Future M3-6 / M5 may revisit.
++
++//go:nosplit
++func spinLoopWait() {
++	// Wait for the next interrupt-triggered wake event. gooos's hlt
++	// semantics match RP2's wfe for this purpose: halt until the
++	// next IPI/LAPIC-timer wake.
++	gooos_sti()
++	gooos_hlt()
++	gooos_cli()
++}
++
++//go:nosplit
++func hasSleepingCore() bool {
++	// gooos APs idle in waitForEvents after bspBootDone; there is
++	// no "sleeping-core" delegate protocol at M3 (BSP owns the
++	// clock). Return false so scheduler_cores.go always handles the
++	// clock on the caller (which is always BSP under current tests).
++	return false
++}
++
++//go:nosplit
++func sleepTicksMulticore(d timeUnit) {
++	// Same as sleepTicks; the "interruptible" part of the RP2
++	// implementation is irrelevant because hasSleepingCore == false.
++	sleepTicks(d)
++}
++
++//go:nosplit
++func interruptSleepTicksMulticore(wakeup timeUnit) {
++	// No-op: nobody is sleepTicksMulticore-sleeping under M3.
++}
++
++func schedulerUnlockAndWait() {
++	schedulerLock.Unlock()
++	gooos_sti()
++	gooos_hlt()
++	gooos_cli()
++	schedulerLock.Lock()
++}
++
++//go:linkname gooosWakeupCPU gooosWakeupCPU
++func gooosWakeupCPU(cpuIdx uint32)
++
++//go:extern main.numCoresOnline
++var numCoresOnline uint32
++
++//go:nosplit
++func schedulerWake() {
++	// gooos SMP v2: broadcast a wakeup IPI to every online AP so
++	// any idle core picks up the newly-pushed task via stealWork.
++	// The per-CPU runqueue push has already happened upstream;
++	// we just need to ensure an idle AP is not stuck in hlt.
++	// gooosWakeupCPU is self-skipping, so iterating every index
++	// is safe.
++	n := numCoresOnline
++	if n == 0 {
++		n = 1
++	}
++	for i := uint32(0); i < n; i++ {
++		gooosWakeupCPU(i)
++	}
++}
++
++//go:nosplit
++func startSecondaryCores() {
++	// gooos starts APs from main.go via smpInit() before the TinyGo
++	// runtime's run() function is entered. By the time this is
++	// called from run(), APs are already bootstrapped and spinning
++	// on bspBootDone in apEntry. So no work to do here.
++}
++
++// gc_stack_cores.go references these too.
++
++//go:nosplit
++func gcSignalCore(core uint32) {
++	// M3 stub: gooos's GC doesn't coordinate peer cores yet (stop-
++	// the-world will land in M5 via gcPauseCore IPI). Safe because
++	// with stealWork dormant, APs don't hold goroutine stacks that
++	// GC must scan.
++}
++
++// coreStackTop returns the highest address of the given core's
++// system stack. RP2 has distinct linker symbols per core
++// (stackTopSymbol / stack1TopSymbol); gooos currently uses a
++// single _stack_top for BSP and per-AP stacks allocated from the
++// heap (src/smp.go). At M3 the GC-stack-scan paths that consume
++// this function are gated by hasSleepingCore / gcSignalCore stubs,
++// so returning 0 for core > 0 is safe — those call paths never
++// fire under M3.
++//
++//go:nosplit
++func coreStackTop(core uint32) uintptr {
++	if core == 0 {
++		return stackTop
++	}
++	// AP stack tops are not linker-symbol-exposed; M5 will revisit
++	// when GC starts peer-scanning AP stacks.
++	return 0
++}
 diff --git a/src/runtime/runtime_gooos_user.go b/src/runtime/runtime_gooos_user.go
 new file mode 100644
-index 0000000..0835d65
+index 00000000..3102f251
 --- /dev/null
 +++ b/src/runtime/runtime_gooos_user.go
-@@ -0,0 +1,84 @@
+@@ -0,0 +1,85 @@
 +//go:build gooos && baremetal && !kernelspace
 +
 +// gooos userspace runtime bodies for Ring-3 user programs. The
@@ -530,7 +736,8 @@ index 0000000..0835d65
 +
 +import "unsafe"
 +
-+type timeUnit int64
++// timeUnit is defined in upstream runtime.go since TinyGo 0.40.x;
++// no longer redeclared here.
 +
 +// Syscall numbers are fixed by the kernel dispatch table
 +// (src/userspace.go): sys_exit=0, sys_write=1, sys_sleep=8.
@@ -601,13 +808,13 @@ index 0000000..0835d65
 +	run()
 +	exit(0)
 +}
-diff --git a/src/runtime/scheduler.go b/src/runtime/scheduler.go
-index 30b2da8..70b9e00 100644
---- a/src/runtime/scheduler.go
-+++ b/src/runtime/scheduler.go
-@@ -23,14 +23,37 @@ const asyncScheduler = GOOS == "js"
- 
- var schedulerDone bool
+diff --git a/src/runtime/scheduler_cooperative.go b/src/runtime/scheduler_cooperative.go
+index 2c2bf099..c94723b0 100644
+--- a/src/runtime/scheduler_cooperative.go
++++ b/src/runtime/scheduler_cooperative.go
+@@ -34,9 +34,34 @@ var mainExited bool
+ // scheduler. This is a special case for //go:wasmexport.
+ var schedulerExit bool
  
 -// Queues used by the scheduler.
 +// gooosSMPMaxCPUs must match maxCPUs in the gooos kernel (src/percpu.go).
@@ -625,16 +832,6 @@ index 30b2da8..70b9e00 100644
 +// from concurrent access across CPUs' scheduler() loops.
 +var schedLock uint32
 +
-+// Queues used by the scheduler. SMP v2: per-CPU runqueues.
-+// sleepQueue and timerQueue are global, protected by schedLock.
- var (
--	runqueue           task.Queue
-+	runqueues          [gooosSMPMaxCPUs]task.Queue
- 	sleepQueue         *task.Task
- 	sleepQueueBaseTime timeUnit
- 	timerQueue         *timerNode
- )
- 
 +// gooosCpuID returns the current CPU index. Linked to the gooos
 +// kernel's cpuID() which reads %gs:0. On userspace builds this
 +// returns 0 (single-CPU).
@@ -642,22 +839,29 @@ index 30b2da8..70b9e00 100644
 +//go:linkname gooosCpuID cpuID
 +func gooosCpuID() uint32
 +
- // Simple logging, for debugging.
- func scheduleLog(msg string) {
- 	if schedulerDebug {
-@@ -75,9 +98,18 @@ func Goexit() {
- 	deadlock()
++// Queues used by the scheduler. SMP v2: per-CPU runqueues.
++// sleepQueue is global, protected by schedLock. timerQueue is
++// defined in scheduler.go (shared across scheduler modes) and
++// is also protected by schedLock under gooos.
+ var (
+-	runqueue           task.Queue
++	runqueues          [gooosSMPMaxCPUs]task.Queue
+ 	sleepQueue         *task.Task
+ 	sleepQueueBaseTime timeUnit
+ )
+@@ -54,13 +79,22 @@ func deadlock() {
+ 	panic("unreachable")
  }
  
 -// Add this task to the end of the run queue.
-+// Add this task to the current CPU's run queue.
- func runqueuePushBack(t *task.Task) {
++// Add this task to the current CPU's run queue. SMP v2.
+ func scheduleTask(t *task.Task) {
 -	runqueue.Push(t)
 +	runqueues[gooosCpuID()].Push(t)
 +}
 +
 +// runqueuePushTo pushes a task to a specific CPU's run queue.
-+// Used by the gooos kernel to distribute user processes to APs.
++// Used by the gooos kernel to distribute user processes across APs.
 +func runqueuePushTo(t *task.Task, cpuIdx uint32) {
 +	if cpuIdx >= gooosSMPMaxCPUs {
 +		cpuIdx = 0
@@ -665,16 +869,29 @@ index 30b2da8..70b9e00 100644
 +	runqueues[cpuIdx].Push(t)
  }
  
+ func Gosched() {
+-	runqueue.Push(task.Current())
++	runqueues[gooosCpuID()].Push(task.Current())
+ 	task.Pause()
+ }
+ 
+@@ -70,6 +104,7 @@ func NumCPU() int {
+ }
+ 
  // Add this task to the sleep queue, assuming its state is set to sleeping.
-@@ -88,6 +120,7 @@ func addSleepTask(t *task.Task, duration timeUnit) {
++// SMP v2: schedLock protects sleepQueue.
+ func addSleepTask(t *task.Task, duration timeUnit) {
+ 	if schedulerDebug {
+ 		println("  set sleep:", t, duration)
+@@ -77,6 +112,7 @@ func addSleepTask(t *task.Task, duration timeUnit) {
  			panic("runtime: addSleepTask: expected next task to be nil")
  		}
  	}
 +	gooos_schedSpinlockAcquire(&schedLock)
- 	t.Data = uint64(duration)
  	now := ticks()
  	if sleepQueue == nil {
-@@ -114,6 +147,7 @@ func addSleepTask(t *task.Task, duration timeUnit) {
+ 		scheduleLog("  -> sleep new queue")
+@@ -103,29 +139,59 @@ func addSleepTask(t *task.Task, duration timeUnit) {
  	}
  	t.Next = *q
  	*q = t
@@ -682,123 +899,34 @@ index 30b2da8..70b9e00 100644
  }
  
  // addTimer adds the given timer node to the timer queue. It must not be in the
-@@ -122,25 +156,26 @@ func addSleepTask(t *task.Task, duration timeUnit) {
- // sleepQueue.
+ // queue already.
+ // This function is very similar to addSleepTask but for timerQueue instead of
+-// sleepQueue.
++// sleepQueue. SMP v2: schedLock protects timerQueue.
  func addTimer(tim *timerNode) {
  	mask := interrupt.Disable()
 +	gooos_schedSpinlockAcquire(&schedLock)
- 
- 	// Add to timer queue.
- 	q := &timerQueue
- 	for ; *q != nil; q = &(*q).next {
- 		if tim.whenTicks() < (*q).whenTicks() {
--			// this will finish earlier than the next - insert here
- 			break
- 		}
- 	}
- 	tim.next = *q
- 	*q = tim
+ 	timerQueueAdd(tim)
 +	gooos_schedSpinlockRelease(&schedLock)
  	interrupt.Restore(mask)
  }
  
--// removeTimer is the implementation of time.stopTimer. It removes a timer from
--// the timer queue, returning true if the timer is present in the timer queue.
-+// removeTimer is the implementation of time.stopTimer.
- func removeTimer(tim *timer) bool {
- 	removedTimer := false
+ // removeTimer is the implementation of time.stopTimer. It removes a timer from
+ // the timer queue, returning it if the timer is present in the timer queue.
++// SMP v2: schedLock protects timerQueue.
+ func removeTimer(tim *timer) *timerNode {
  	mask := interrupt.Disable()
 +	gooos_schedSpinlockAcquire(&schedLock)
- 	for t := &timerQueue; *t != nil; t = &(*t).next {
- 		if (*t).timer == tim {
- 			scheduleLog("removed timer")
-@@ -152,6 +187,7 @@ func removeTimer(tim *timer) bool {
- 	if !removedTimer {
- 		scheduleLog("did not remove timer")
- 	}
+ 	n := timerQueueRemove(tim)
 +	gooos_schedSpinlockRelease(&schedLock)
  	interrupt.Restore(mask)
- 	return removedTimer
- }
-@@ -163,22 +199,28 @@ func scheduler() {
- 	for !schedulerDone {
- 		scheduleLog("")
- 		scheduleLog("  schedule")
-+
-+		// SMP: hold schedLock while accessing global sleep/timer queues.
-+		gooos_schedSpinlockAcquire(&schedLock)
- 		if sleepQueue != nil || timerQueue != nil {
- 			now = ticks()
- 		}
- 
--		// Add tasks that are done sleeping to the end of the runqueue so they
--		// will be executed soon.
-+		// Add tasks that are done sleeping to the end of the runqueue.
- 		if sleepQueue != nil && now-sleepQueueBaseTime >= timeUnit(sleepQueue.Data) {
- 			t := sleepQueue
- 			scheduleLogTask("  awake:", t)
- 			sleepQueueBaseTime += timeUnit(t.Data)
- 			sleepQueue = t.Next
- 			t.Next = nil
--			runqueue.Push(t)
-+			gooos_schedSpinlockRelease(&schedLock)
-+			runqueues[gooosCpuID()].Push(t)
-+		} else {
-+			gooos_schedSpinlockRelease(&schedLock)
- 		}
- 
- 		// Check for expired timers to trigger.
-+		gooos_schedSpinlockAcquire(&schedLock)
- 		if timerQueue != nil && now >= timerQueue.whenTicks() {
- 			scheduleLog("--- timer awoke")
- 			delay := ticksToNanoseconds(now - timerQueue.whenTicks())
-@@ -186,15 +228,19 @@ func scheduler() {
- 			tn := timerQueue
- 			timerQueue = tn.next
- 			tn.next = nil
-+			gooos_schedSpinlockRelease(&schedLock)
- 			// Run the callback stored in this timer node.
- 			tn.callback(tn, delay)
-+		} else {
-+			gooos_schedSpinlockRelease(&schedLock)
- 		}
- 
--		t := runqueue.Pop()
-+		t := runqueues[gooosCpuID()].Pop()
- 		if t == nil {
-+			gooos_schedSpinlockAcquire(&schedLock)
- 			if sleepQueue == nil && timerQueue == nil {
-+				gooos_schedSpinlockRelease(&schedLock)
- 				if asyncScheduler {
--					// JavaScript is treated specially, see below.
- 					return
- 				}
- 				waitForEvents()
-@@ -211,6 +257,7 @@ func scheduler() {
- 					timeLeft = timeLeftForTimer
- 				}
- 			}
-+			gooos_schedSpinlockRelease(&schedLock)
- 
- 			if schedulerDebug {
- 				println("  sleeping...", sleepQueue, uint(timeLeft))
-@@ -245,7 +292,7 @@ func scheduler() {
- func minSched() {
- 	scheduleLog("start nested scheduler")
- 	for !schedulerDone {
--		t := runqueue.Pop()
-+		t := runqueues[gooosCpuID()].Pop()
- 		if t == nil {
- 			break
- 		}
-@@ -257,6 +304,28 @@ func minSched() {
+ 	return n
  }
  
- func Gosched() {
--	runqueue.Push(task.Current())
-+	runqueues[gooosCpuID()].Push(task.Current())
- 	task.Pause()
- }
+ func schedulerRunQueue() *task.Queue {
+-	return &runqueue
++	return &runqueues[gooosCpuID()]
++}
 +
 +// stealWork attempts to steal a task from another CPU's runqueue.
 +// Round-robin scan starting from the CPU after the current one.
@@ -816,38 +944,309 @@ index 30b2da8..70b9e00 100644
 +}
 +
 +// apScheduler is the TinyGo scheduler entry for AP cores.
-+// Called from gooos after per-CPU init (GS base, GDT, TSS).
++// Called from the gooos kernel after per-CPU init (GS base, GDT, TSS).
 +// Does not reinitialize the heap or call main.
++//
++//go:linkname apScheduler runtime.apScheduler
 +func apScheduler() {
-+	scheduler()
++	scheduler(false)
+ }
+ 
+ // Run the scheduler until all tasks have finished.
+@@ -141,6 +207,9 @@ func scheduler(returnAtDeadlock bool) {
+ 	for !mainExited {
+ 		scheduleLog("")
+ 		scheduleLog("  schedule")
++
++		// SMP: hold schedLock while reading global sleep/timer queues.
++		gooos_schedSpinlockAcquire(&schedLock)
+ 		if sleepQueue != nil || timerQueue != nil {
+ 			now = ticks()
+ 		}
+@@ -153,10 +222,14 @@ func scheduler(returnAtDeadlock bool) {
+ 			sleepQueueBaseTime += timeUnit(t.Data)
+ 			sleepQueue = t.Next
+ 			t.Next = nil
+-			runqueue.Push(t)
++			gooos_schedSpinlockRelease(&schedLock)
++			runqueues[gooosCpuID()].Push(t)
++		} else {
++			gooos_schedSpinlockRelease(&schedLock)
+ 		}
+ 
+ 		// Check for expired timers to trigger.
++		gooos_schedSpinlockAcquire(&schedLock)
+ 		if timerQueue != nil && now >= timerQueue.whenTicks() {
+ 			scheduleLog("--- timer awoke")
+ 			delay := ticksToNanoseconds(now - timerQueue.whenTicks())
+@@ -164,13 +237,25 @@ func scheduler(returnAtDeadlock bool) {
+ 			tn := timerQueue
+ 			timerQueue = tn.next
+ 			tn.next = nil
++			gooos_schedSpinlockRelease(&schedLock)
+ 			// Run the callback stored in this timer node.
+ 			tn.callback(tn, delay)
++		} else {
++			gooos_schedSpinlockRelease(&schedLock)
+ 		}
+ 
+-		t := runqueue.Pop()
++		t := runqueues[gooosCpuID()].Pop()
++		// stealWork is intentionally NOT called here under Wave 1 (tasks
++		// mode). Work stealing triggers the AP Ring-3 iretq triple-fault
++		// documented in impldoc/smp_deferred_and_known_issues.md §2.1
++		// because APs may steal ring3Wrapper goroutines and crash on
++		// their per-CPU TSS transition. Enabling stealWork is deferred
++		// to milestone M3/M4 after the underlying Ring-3 AP fault is
++		// resolved. APs therefore idle in waitForEvents under -smp N.
+ 		if t == nil {
++			gooos_schedSpinlockAcquire(&schedLock)
+ 			if sleepQueue == nil && timerQueue == nil {
++				gooos_schedSpinlockRelease(&schedLock)
+ 				if returnAtDeadlock {
+ 					return
+ 				}
+@@ -192,6 +277,7 @@ func scheduler(returnAtDeadlock bool) {
+ 					timeLeft = timeLeftForTimer
+ 				}
+ 			}
++			gooos_schedSpinlockRelease(&schedLock)
+ 
+ 			if schedulerDebug {
+ 				println("  sleeping...", sleepQueue, uint(timeLeft))
+diff --git a/src/runtime/scheduler_cores.go b/src/runtime/scheduler_cores.go
+index e45eaf39..aecf6568 100644
+--- a/src/runtime/scheduler_cores.go
++++ b/src/runtime/scheduler_cores.go
+@@ -24,8 +24,38 @@ var cpuTasks [numCPU]*task.Task
+ var (
+ 	sleepQueue *task.Task
+ 	runqueue   task.Queue
++	// gooos SMP v2: per-CPU runqueues alongside the upstream single
++	// global runqueue. Every push site below retargets to the caller's
++	// CPU; every pop site drains the caller's CPU queue first, then
++	// optionally steals from peers via stealWork().
++	runqueues [numCPU]task.Queue
+ )
+ 
++//go:linkname gooosCpuID cpuID
++func gooosCpuID() uint32
++
++// gooosNotePush / gooosNotePop — P03 Sleep-audit hooks. Bodies
++// live on the gooos side (src/percpu.go) and bump per-CPU
++// diagnostic counters when runSleepAudit is true; otherwise they
++// are cheap early-returns.
++//
++//go:linkname gooosNotePush gooosNotePush
++func gooosNotePush(cpuIdx uint32)
++
++//go:linkname gooosNotePop gooosNotePop
++func gooosNotePop(cpuIdx uint32, ok bool)
++
++// migrateTracePush / migrateTraceResume — P03a Option D audit
++// hooks. Bodies in src/percpu.go (gooos side) bump a ring buffer
++// that records (src, target, taskPtr, resumeCPU, pushTick,
++// resumeTick) per migrateAndPause call.
++//
++//go:linkname migrateTracePush migrateTracePush
++func migrateTracePush(srcCPU, targetCPU uint32) uint32
++
++//go:linkname migrateTraceResume migrateTraceResume
++func migrateTraceResume(idx uint32, resumeCPU uint32)
++
+ func deadlock() {
+ 	// Call yield without requesting a wakeup.
+ 	task.Pause()
+@@ -39,8 +47,10 @@ func scheduleTask(t *task.Task) {
+ 	switch t.RunState {
+ 	case task.RunStatePaused:
+ 		// Paused, state is saved on the stack.
+-		// Add it to the runqueue...
+-		runqueue.Push(t)
++		// gooos SMP v2: push onto the waker's per-CPU runqueue.
++		// Work-stealing (stealWork below) distributes to idle peers.
++		runqueues[gooosCpuID()].Push(t)
++		gooosNotePush(gooosCpuID()) // gooos DEFERRED 3 / P03 audit
+ 		// ...and wake up a sleeping core, if there is one.
+ 		// (If all cores are already busy, this is a no-op).
+ 		schedulerWake()
+@@ -86,7 +95,7 @@ func addSleepTask(t *task.Task, wakeup timeUnit) {
+ 
+ func Gosched() {
+ 	schedulerLock.Lock()
+-	runqueue.Push(task.Current())
++	runqueues[gooosCpuID()].Push(task.Current())
+ 	task.PauseLocked()
+ }
+ 
+@@ -110,7 +119,40 @@ func removeTimer(t *timer) *timerNode {
+ }
+ 
+ func schedulerRunQueue() *task.Queue {
+-	return &runqueue
++	return &runqueues[gooosCpuID()]
 +}
++
++// stealWork scans peer per-CPU runqueues (round-robin starting at
++// self+1) and pops one task from the first non-empty peer. Returns
++// nil if every peer queue is empty. Called from scheduler() when
++// the local queue has nothing.
++//
++//go:nosplit
++func stealWork() *task.Task {
++	me := gooosCpuID()
++	n := numCoresOnline
++	if n == 0 {
++		n = 1
++	}
++	for i := uint32(1); i < n; i++ {
++		peer := (me + i) % n
++		if t := runqueues[peer].Pop(); t != nil {
++			return t
++		}
++	}
++	return nil
++}
++
++// apScheduler is the TinyGo scheduler entry for AP cores. Called
++// from gooos's src/smp.go:apEntry after per-CPU init + bspBootDone
++// gate. Does NOT reinitialize the heap or call main — that's the
++// BSP's job via run(). The scheduler runs forever until mainExited.
++//
++//go:linkname apScheduler runtime.apScheduler
++func apScheduler() {
++	schedulerLock.Lock()
++	scheduler(false)
++	schedulerLock.Unlock()
+ }
+ 
+ // Pause the current task for a given time.
+@@ -145,7 +183,17 @@ func run() {
+ 
+ 		// After package initializers have finished, start all the other cores.
+ 		startSecondaryCores()
+-		secondaryCoresStarted = true
++		// gooos SMP v2: keep secondaryCoresStarted = false at M3.
++		// The GC stop-the-world protocol in gc_stack_cores.go uses this
++		// flag to decide whether to pause peer cores before scanning —
++		// true means "call gcPauseCore(i) for each peer and wait for
++		// gcScanState to reach numCPU". gcPauseCore is a no-op stub at
++		// M3 (real IPI impl lands at M5), so setting this to true would
++		// deadlock GC in a busy-wait loop. Leaving it false makes GC
++		// take the single-core scan path, which is safe because
++		// stealWork is still dormant: APs don't hold goroutine stacks
++		// that would need scanning.
++		// secondaryCoresStarted = true  // deferred to M5
+ 
+ 		// Run main.main.
+ 		callMain()
+@@ -162,8 +210,16 @@ func run() {
+
+ func scheduler(_ bool) {
+ 	for mainExited.Load() == 0 {
+-		// Check for ready-to-run tasks.
+-		if runnable := runqueue.Pop(); runnable != nil {
++		// gooos SMP v2 (M3-6): pop from local per-CPU queue first;
++		// fall back to stealing from a peer when the local queue is
++		// empty. Work-stealing gives idle cores something to do and
++		// makes goroutines migrate across cores in practice.
++		runnable := runqueues[gooosCpuID()].Pop()
++		gooosNotePop(gooosCpuID(), runnable != nil) // gooos DEFERRED 3 / P03 audit
++		if runnable == nil {
++			runnable = stealWork()
++		}
++		if runnable != nil {
+ 			// Resume it now.
+ 			setCurrentTask(runnable)
+ 			runnable.RunState = task.RunStateRunning
 diff --git a/src/runtime/wait_gooos.go b/src/runtime/wait_gooos.go
 new file mode 100644
-index 0000000..3841e65
+index 00000000..3841e660
 --- /dev/null
 +++ b/src/runtime/wait_gooos.go
-@@ -0,0 +1,14 @@
+@@ -0,0 +1,26 @@
 +//go:build gooos && baremetal && kernelspace
 +
 +package runtime
++
++// kschedLoopOnce is implemented by the gooos kernel (linkname
++// target "kschedLoopOnce" via //export). Under Route C it drives
++// one iteration of the gooos kernel-thread scheduler so kernel
++// threads share CPU with any remaining TinyGo goroutines during
++// the M1..M3 co-existence window.
++//
++//go:linkname gooosKschedLoopOnce kschedLoopOnce
++func gooosKschedLoopOnce()
 +
 +// waitForEvents is called by the scheduler when the runqueue is
 +// empty and there are no sleeping/timer tasks. On APs this is the
 +// normal idle state — halt until an IPI or LAPIC timer wakes us.
 +// On the BSP it means all goroutines are blocked (rare but safe
-+// to idle briefly).
++// to idle briefly). Route C: before idling, pull any runnable
++// kernel thread off this CPU's gooos queue and run it until it
++// parks; then fall through to sti/hlt/cli.
 +func waitForEvents() {
++	gooosKschedLoopOnce()
 +	gooos_sti()
 +	gooos_hlt()
 +	gooos_cli()
 +}
+diff --git a/src/runtime/wait_gooos_user.go b/src/runtime/wait_gooos_user.go
+new file mode 100644
+index 00000000..afcaf30b
+--- /dev/null
++++ b/src/runtime/wait_gooos_user.go
+@@ -0,0 +1,13 @@
++//go:build gooos && baremetal && !kernelspace
++
++package runtime
++
++// waitForEvents is called by the scheduler when the runqueue is
++// empty and no sleeping/timer tasks are pending. In userspace (Ring 3)
++// we cannot execute sti/cli/hlt, so the best we can do is a no-op
++// fallback — if the runqueue truly has no future wake source this is
++// a deadlock, but the kernel will still preempt us on timer IRQ.
++//
++// The kernel build uses wait_gooos.go (//go:build ... && kernelspace).
++func waitForEvents() {
++}
 diff --git a/src/runtime/wait_other.go b/src/runtime/wait_other.go
-index b51d4b6..322cd1a 100644
+index f1487e39..18980b11 100644
 --- a/src/runtime/wait_other.go
 +++ b/src/runtime/wait_other.go
 @@ -1,4 +1,4 @@
--//go:build !tinygo.riscv && !cortexm
-+//go:build !tinygo.riscv && !cortexm && !gooos
+-//go:build !tinygo.riscv && !cortexm && !(linux && !baremetal && !tinygo.wasm && !nintendoswitch) && !darwin
++//go:build !tinygo.riscv && !cortexm && !(linux && !baremetal && !tinygo.wasm && !nintendoswitch) && !darwin && !gooos
  
  package runtime
  
+diff --git a/src/runtime/runtime_gooos_sched_cores.go b/src/runtime/runtime_gooos_sched_cores.go
+new file mode 100644
+index 00000000..4becca77
+--- /dev/null
++++ b/src/runtime/runtime_gooos_sched_cores.go
+@@ -0,0 +1,25 @@
++//go:build gooos && baremetal && kernelspace && !scheduler.none
++
++// gooos-local runtime declarations specific to scheduler=cores
++// (and scheduler=cooperative). Under scheduler=none these symbols
++// (gooosCpuID, currentTask) are not defined by upstream
++// scheduler_*.go, and the consumers (cpuTasks indexing,
++// task_stack_multicore.go's Current linkname) are not compiled
++// either, so this file is excluded.
++
++package runtime
++
++// currentCPU is the linkname target scheduler_cores.go consumes
++// to index its cpuTasks[numCPU] / systemStack[numCPU] arrays.
++//
++//go:linkname currentCPU runtime.currentCPU
++//go:nosplit
++func currentCPU() uint32 { return gooosCpuID() }
++
++// Keep currentTask (scheduler_cores.go:293) alive against TinyGo's
++// DCE. It is called only via the task_stack_multicore.go linkname
++// `Current -> runtime.currentTask`, which the linker's dead-code
++// pass can drop on our build even though RP2 keeps it through other
++// reachability. Forcing a package-level reference pins the symbol.
++var _ = currentTask

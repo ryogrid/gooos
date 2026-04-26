@@ -20,11 +20,9 @@ const (
 	etherTypeARP  = uint16(0x0806)
 )
 
-// broadcastMAC is the all-ones destination address for broadcast frames.
-var broadcastMAC = [6]byte{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}
-
-// zeroMAC is the all-zero sentinel, useful for un-resolved ARP targets.
-var zeroMAC = [6]byte{0, 0, 0, 0, 0, 0}
+func broadcastMACAddr() [6]byte {
+	return [6]byte{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}
+}
 
 // EthernetHeader mirrors the 14-byte on-wire Ethernet II header. Callers
 // should not depend on Go's struct layout — use ethernetParse to extract
@@ -67,7 +65,7 @@ func ethernetBuild(dst, src [6]byte, etherType uint16, payload []byte) []byte {
 // isForUs returns true when the destination MAC matches either the NIC's
 // station address or the broadcast address.
 func isForUs(dst [6]byte) bool {
-	if dst == broadcastMAC {
+	if dst == broadcastMACAddr() {
 		return true
 	}
 	return dst == e1000MAC

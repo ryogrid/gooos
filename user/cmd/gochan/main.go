@@ -4,8 +4,9 @@
 //	$ gochan
 //
 // Two mini-demos:
-//  1. A 3-stage pipeline (producer → squarer → printer) threaded on
-//     three goroutines joined by unbuffered channels.
+//  1. A 3-stage pipeline (producer → squarer → printer). The producer
+//     and squarer run on goroutines; the main goroutine acts as the
+//     printer so the demo stays stable on the current TinyGo target.
 //  2. A `select` over two tickers that fire at different intervals.
 //
 // Unlike goprobe (which is a PASS/FAIL probe), this command prints
@@ -22,50 +23,37 @@ import (
 )
 
 func main() {
-	gooos.Println("gochan: pipeline demo (5 items across 3 goroutines)")
+	gooos.Println("gochan: pipeline demo (5 items across 2 goroutines + main)")
 
-	source := make(chan int)
-	squared := make(chan int)
-	done := make(chan struct{})
+	source := make(chan int, 5)
+	squared := make(chan int, 5)
 
-	// Stage 1: emit 1..5 with a short gap between items.
+	// Stage 1: enqueue 1..5 on the main goroutine.
+	for i := 1; i <= 5; i++ {
+		source <- i
+	}
+
+	// Stage 2: square every input on a worker goroutine.
 	go func() {
-		for i := 1; i <= 5; i++ {
-			source <- i
-			time.Sleep(10 * time.Millisecond)
-		}
-		close(source)
-	}()
-
-	// Stage 2: square every input.
-	go func() {
-		for n := range source {
+		for i := 0; i < 5; i++ {
+			n := <-source
 			squared <- n * n
 		}
-		close(squared)
 	}()
 
-	// Stage 3: print + signal done.
-	go func() {
-		for v := range squared {
-			gooos.Println("gochan: squared=" + strconv.Itoa(v))
-		}
-		done <- struct{}{}
-	}()
+	// Stage 3 runs on main goroutine: print five squared values.
+	for i := 0; i < 5; i++ {
+		v := <-squared
+		gooos.Println("gochan: squared=" + strconv.Itoa(v))
+	}
 
-	<-done
-
-	gooos.Println("gochan: select over two tickers (alpha/beta)")
+	gooos.Println("gochan: select over two ready channels (alpha/beta)")
 	a := make(chan string, 1)
 	b := make(chan string, 1)
-	go func() {
-		time.Sleep(20 * time.Millisecond)
-		a <- "alpha"
-	}()
-	go func() {
-		time.Sleep(30 * time.Millisecond)
-		b <- "beta"
-	}()
+	go func() { a <- "alpha" }()
+	go func() { b <- "beta" }()
+	// Brief sleep to allow goroutines to execute before select blocks
+	time.Sleep(1 * time.Millisecond)
 	for i := 0; i < 2; i++ {
 		select {
 		case v := <-a:
