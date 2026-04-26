@@ -13,6 +13,16 @@
 
 set -u
 
+# §14 §6.2: under uniprocessorKernel the kernel runs as a
+# uniprocessor on BSP and no kthread runs on any AP — the
+# `smp_basic_cpu=N` distribution assertion is structurally
+# false. Re-purposing for Ring-3 distribution is M7 follow-up.
+if grep -q '^const uniprocessorKernel = true' src/preempt_config.go 2>/dev/null; then
+    echo "test_smp_basic: SKIP under uniprocessorKernel"
+    echo "result: SKIP — pending M7 Ring-3-on-AP dispatch (see no_goroutine_kernel_design/14_uniprocessor_kernel.md §6.2)"
+    exit 0
+fi
+
 OUT="tmp/serial_smp_basic.log"
 CONF="src/preempt_config.go"
 BACKUP="tmp/preempt_config_smp_basic.go.bak"

@@ -16,7 +16,7 @@ Branch: `smp-no-goroutine-in-kernel`. Starting HEAD:
 - [x] Step 2 — pin every kthread spawn to BSP (§3.2/§3.3/§3.6)
 - [x] Step 3 — APs idle in kernel mode (§3.1/§3.4/§3.5)
 - [x] Step 4 — re-enable net services on BSP (§3.7/§3.8)
-- [ ] Step 5 — SMP-distribution tests SKIP/re-purposed (§6.2)
+- [x] Step 5 — SMP-distribution tests SKIP/re-purposed (§6.2)
 - [ ] Step 6 — lock-rank doc + RR counter cleanup (§4)
 - [ ] Reviewer sub-agent pass (`hoge.md` §5)
 - [ ] README + impldoc refresh (`hoge.md` §6)

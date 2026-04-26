@@ -9,6 +9,16 @@
 
 set -u
 
+# §14 §6.2: under uniprocessorKernel smpprobe.elf runs entirely on
+# BSP and worker cpu lines all show cpu=0; the AP-distribution
+# assertion is structurally false. M7 will land Ring-3 dispatch
+# on APs and re-purpose this; until then it SKIPs.
+if grep -q '^const uniprocessorKernel = true' src/preempt_config.go 2>/dev/null; then
+    echo "test_smp_shell_smpprobe: SKIP under uniprocessorKernel"
+    echo "result: SKIP — pending M7 Ring-3-on-AP dispatch (see no_goroutine_kernel_design/14_uniprocessor_kernel.md §6.2)"
+    exit 0
+fi
+
 OUT="tmp/serial_smp_shell_smpprobe.log"
 CONF="src/preempt_config.go"
 BACKUP="tmp/preempt_config_smp_shell_smpprobe.go.bak"

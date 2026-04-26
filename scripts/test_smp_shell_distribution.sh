@@ -20,6 +20,15 @@
 
 set -u
 
+# §14 §6.2: under uniprocessorKernel no kthread runs on any
+# AP, so the kernel-goroutine distribution invariant becomes
+# false by design. Ring-3 distribution probe is M7 follow-up.
+if grep -q '^const uniprocessorKernel = true' src/preempt_config.go 2>/dev/null; then
+    echo "test_smp_shell_distribution: SKIP under uniprocessorKernel"
+    echo "result: SKIP — pending M7 Ring-3-on-AP dispatch (see no_goroutine_kernel_design/14_uniprocessor_kernel.md §6.2)"
+    exit 0
+fi
+
 OUT="tmp/serial_smp_dist.log"
 CONF="src/preempt_config.go"
 BACKUP="tmp/preempt_config_smp_dist.go.bak"
