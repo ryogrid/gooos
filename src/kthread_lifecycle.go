@@ -17,8 +17,15 @@ import "unsafe"
 // Used when round-robin placement is wrong (e.g., fsTask must be
 // on BSP/CPU 0 so the boot-time BSP elf-pump can dispatch it
 // without depending on AP idle hooks).
+//
+// §14 invariant U4: under uniprocessorKernel, every kthread is
+// pinned to BSP. We honour the request defensively here so a
+// missed call site cannot break the invariant.
 func kschedSpawnAt(name string, entry func(), targetCPU uint32) *KernelThread {
 	t := kschedSpawnInternal(name, entry)
+	if uniprocessorKernel {
+		targetCPU = 0
+	}
 	if numCoresOnline > 0 && targetCPU >= numCoresOnline {
 		targetCPU = 0
 	}
@@ -31,16 +38,24 @@ func kschedSpawnAt(name string, entry func(), targetCPU uint32) *KernelThread {
 // to the thread so the caller can join / park on it later.
 //
 // Panics if the kthread pool is exhausted.
+//
+// §14 invariant U4: under uniprocessorKernel, the round-robin
+// branch is bypassed and every spawn lands on BSP. The
+// round-robin code is preserved so a future M7 revert is one
+// `git revert` away.
 func kschedSpawn(name string, entry func()) *KernelThread {
 	t := kschedSpawnInternal(name, entry)
-	// Round-robin placement across online CPUs. kschedSpawnRRCounter
-	// is racey; kschedPush's queue lock linearises the push itself.
-	target := kschedSpawnRRCounter
-	kschedSpawnRRCounter++
-	if numCoresOnline == 0 {
-		target = 0
-	} else {
-		target = target % numCoresOnline
+	target := uint32(0)
+	if !uniprocessorKernel {
+		// Round-robin placement across online CPUs. kschedSpawnRRCounter
+		// is racey; kschedPush's queue lock linearises the push itself.
+		target = kschedSpawnRRCounter
+		kschedSpawnRRCounter++
+		if numCoresOnline == 0 {
+			target = 0
+		} else {
+			target = target % numCoresOnline
+		}
 	}
 	kschedPush(t, target)
 	return t

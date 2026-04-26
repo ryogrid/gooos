@@ -449,7 +449,9 @@ func main() {
 		netSpawnServices()
 		if e1000Found {
 			// M4.2.g: periodic netDiag, was inline `go func()`.
-			kschedSpawn("netDiagLoop", netDiagLoop)
+			// §14 U4: BSP-pinned (covered by kschedSpawnAt clamp,
+			// but the explicit form documents intent).
+			kschedSpawnAt("netDiagLoop", netDiagLoop, 0)
 		}
 	}
 	runtime.Gosched()
@@ -630,6 +632,11 @@ func bootActivatePostShellReady() {
 		// M4.2.g: was `go smpBasicProbe()`. Pin to AP 1 (not BSP)
 		// so the test_smp_basic harness can observe non-zero cpuIDs
 		// (proves a kthread runs on an AP, not just BSP).
+		//
+		// §14 U4: under uniprocessorKernel, no kthread runs on AP.
+		// kschedSpawnAt's flag clamp routes the spawn to BSP. The
+		// test_smp_basic harness is updated to SKIP under M6 per
+		// §14 §6.2 (re-purposed for Ring-3 distribution under M7).
 		var apTarget uint32 = 1
 		if numCoresOnline <= 1 {
 			apTarget = 0
@@ -656,8 +663,10 @@ func bootActivatePostShellReady() {
 		// expected to be resolved by the M4.0 + M4.1 stack
 		// (kthread ring3Wrapper, gcLock spinlock, sysYield
 		// kthread fork). Each runs to preempt-IPI rescheduling.
-		kschedSpawn("kpMarker", kpMarker)
-		kschedSpawn("kpHog", kpHog)
+		// §14 U4: BSP-pinned (covered by kschedSpawn flag clamp,
+		// but the explicit form documents intent).
+		kschedSpawnAt("kpMarker", kpMarker, 0)
+		kschedSpawnAt("kpHog", kpHog, 0)
 	}
 
 	preemptPhaseAdvance(preemptPhaseSchedReady)

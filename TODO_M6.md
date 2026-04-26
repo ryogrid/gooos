@@ -13,7 +13,7 @@ Branch: `smp-no-goroutine-in-kernel`. Starting HEAD:
 - [x] Bootstrap — create this tracker, run baseline smoke tests
 - [x] Step 0 — add `scripts/test_run_smp_keyboard.sh` harness
 - [x] Step 1 — add `const uniprocessorKernel = true`
-- [ ] Step 2 — pin every kthread spawn to BSP (§3.2/§3.3/§3.6)
+- [x] Step 2 — pin every kthread spawn to BSP (§3.2/§3.3/§3.6)
 - [ ] Step 3 — APs idle in kernel mode (§3.1/§3.4/§3.5)
 - [ ] Step 4 — re-enable net services on BSP (§3.7/§3.8)
 - [ ] Step 5 — SMP-distribution tests SKIP/re-purposed (§6.2)
@@ -38,6 +38,12 @@ Branch: `smp-no-goroutine-in-kernel`. Starting HEAD:
   expected failure. Sample run 1: `PF: addr=0x670C1333
   rip=0x40105072` (Ring-3 user-space PF — keyboard input
   reaching shell with corrupt state). Confirms §14 motivation.
+- **Step 2** (HEAD `fc83121` + Step 2 edits, all kthread
+  spawns BSP-pinned): 10-iter — helpRan=0/10, M8=3/10,
+  M9=0/10, PF=6/10. PARTIAL as expected per §7 (net services
+  still gated by `runMinimalKthreads=true`; boot shell does
+  not exec before keystroke; functional behavior identical
+  to baseline). Structural fix lands at Step 3.
 
 ## Deferred
 

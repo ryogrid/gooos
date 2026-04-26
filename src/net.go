@@ -68,9 +68,11 @@ func netSpawnServices() {
 		return
 	}
 	kschedInit() // idempotent
-	kschedSpawn("netRxLoop", netRxLoop)
+	// §14 U4: BSP-pinned net services (covered by kschedSpawn flag
+	// clamp, but the explicit form documents intent).
+	kschedSpawnAt("netRxLoop", netRxLoop, 0)
 	serialPrintln("NET: RX dispatch kthread started")
-	kschedSpawn("udpEcho", udpEchoServer)
+	kschedSpawnAt("udpEcho", udpEchoServer, 0)
 }
 
 // netRxLoop drives the receive side. Simplest possible poller:

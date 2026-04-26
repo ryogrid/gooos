@@ -42,16 +42,20 @@ func kschedSpawnRing3Wrapper(proc *Process) *KernelThread {
 	// Record the proc BEFORE the push so a wake on the target CPU
 	// can resolve the proc as soon as the kthread is dispatched.
 	kthreadHostedProc[t.Slot] = proc
-	// Round-robin placement across online CPUs so exec'd children
-	// don't all queue behind the boot shell on CPU 0. The boot
-	// shell itself uses kschedSpawnRing3WrapperOnBSP to pin to
-	// CPU 0 (where the BSP elf.go pump dispatches it).
-	target := kschedSpawnRRCounter
-	kschedSpawnRRCounter++
-	if numCoresOnline == 0 {
-		target = 0
-	} else {
-		target = target % numCoresOnline
+	// §14 U4 / U6: under uniprocessorKernel, exec'd children also
+	// land on BSP and run sequentially with the boot shell. The
+	// round-robin block is preserved (gated) for M7 revert; M7
+	// will wire AP Ring-3 dispatch and re-enable the round-robin
+	// placement so child processes spread across APs.
+	target := uint32(0)
+	if !uniprocessorKernel {
+		target = kschedSpawnRRCounter
+		kschedSpawnRRCounter++
+		if numCoresOnline == 0 {
+			target = 0
+		} else {
+			target = target % numCoresOnline
+		}
 	}
 	kschedPush(t, target)
 	return t

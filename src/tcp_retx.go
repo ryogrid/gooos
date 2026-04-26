@@ -128,7 +128,8 @@ func tcpStartRTOScanner() {
 	// kernel thread; the loop body uses kschedTimedPark which
 	// avoids the H-01 chan-recv hazard.
 	kschedInit() // idempotent; this function may run before main()
-	kschedSpawn("tcpRTOScanner", tcpRTOScannerLoop)
+	// §14 U4: BSP-pinned (covered by kschedSpawn flag clamp).
+	kschedSpawnAt("tcpRTOScanner", tcpRTOScannerLoop, 0)
 }
 
 // tcpRTOScannerLoop is the kernel-wide RTO scanner. Runs forever

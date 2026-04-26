@@ -1344,7 +1344,8 @@ func tcpInit() {
 	// M4.2.d: was `go tcpEchoServer()`. Migrated to a gooos
 	// kernel thread; body uses kschedTimedPark.
 	kschedInit() // idempotent
-	kschedSpawn("tcpEcho", tcpEchoServer)
+	// §14 U4: BSP-pinned (covered by kschedSpawn flag clamp).
+	kschedSpawnAt("tcpEcho", tcpEchoServer, 0)
 }
 
 // tcpEchoServer is the kernel-internal echo service for port
