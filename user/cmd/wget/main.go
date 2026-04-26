@@ -82,6 +82,8 @@ func main() {
 		gooos.TCPShutdown(fd, gooos.SHUT_WR)
 		return
 	}
+	defer gooos.Close(outfd)
+	defer gooos.TCPShutdown(fd, gooos.SHUT_WR)
 
 	totalBody := 0
 
@@ -92,8 +94,6 @@ func main() {
 		w := gooos.Write(outfd, prefix)
 		if w != len(prefix) {
 			gooos.Println("wget: short write (FS limit ~256 KiB)")
-			gooos.Close(outfd)
-			gooos.TCPShutdown(fd, gooos.SHUT_WR)
 			return
 		}
 		totalBody += len(prefix)
@@ -107,22 +107,16 @@ func main() {
 		}
 		if n < 0 {
 			gooos.Println("wget: recv error " + strconv.Itoa(n))
-			gooos.Close(outfd)
-			gooos.TCPShutdown(fd, gooos.SHUT_WR)
 			return
 		}
 		w := gooos.Write(outfd, buf[:n])
 		if w != n {
 			gooos.Println("wget: short write (FS limit ~256 KiB)")
-			gooos.Close(outfd)
-			gooos.TCPShutdown(fd, gooos.SHUT_WR)
 			return
 		}
 		totalBody += n
 	}
 
-	gooos.Close(outfd)
-	gooos.TCPShutdown(fd, gooos.SHUT_WR)
 	gooos.Println("wget: saved " + filename + " (" +
 		strconv.Itoa(totalBody) + " bytes)")
 }
