@@ -11,7 +11,7 @@ Branch: `smp-no-goroutine-in-kernel`. Starting HEAD:
 ## Steps
 
 - [x] Bootstrap — create this tracker, run baseline smoke tests
-- [ ] Step 0 — add `scripts/test_run_smp_keyboard.sh` harness
+- [x] Step 0 — add `scripts/test_run_smp_keyboard.sh` harness
 - [ ] Step 1 — add `const uniprocessorKernel = true`
 - [ ] Step 2 — pin every kthread spawn to BSP (§3.2/§3.3/§3.6)
 - [ ] Step 3 — APs idle in kernel mode (§3.1/§3.4/§3.5)
@@ -33,7 +33,11 @@ Branch: `smp-no-goroutine-in-kernel`. Starting HEAD:
 
 ## Per-step measurements
 
-(populated as each step lands)
+- **Step 0** (HEAD `aad1a04`, no §14 code yet): pre-§14
+  baseline measurement on the new harness reproduced the
+  expected failure. Sample run 1: `PF: addr=0x670C1333
+  rip=0x40105072` (Ring-3 user-space PF — keyboard input
+  reaching shell with corrupt state). Confirms §14 motivation.
 
 ## Deferred
 
