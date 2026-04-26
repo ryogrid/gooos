@@ -11,7 +11,11 @@
 
 package main
 
-import "github.com/ryogrid/gooos/user/gooos"
+import (
+	"strconv"
+
+	"github.com/ryogrid/gooos/user/gooos"
+)
 
 func main() {
 	argline := gooos.Args()
@@ -20,7 +24,140 @@ func main() {
 		gooos.Println("usage: wget <url>")
 		return
 	}
-	gooos.Println("wget: url=" + tokens[0])
+	url := tokens[0]
+	ip, port, path, filename, errMsg := parseURL(url)
+	if errMsg != "" {
+		gooos.Println(errMsg)
+		return
+	}
+	gooos.Println("wget: url=" + url)
+	gooos.Println("wget: ip=" + formatIP(ip) +
+		" port=" + strconv.Itoa(int(port)) +
+		" path=" + path +
+		" filename=" + filename)
+}
+
+// parseURL splits an HTTP URL of the form
+//
+//	http://<IPv4>[:port]/<path>
+//
+// into its components. Returns errMsg = "" on success and
+// non-empty errMsg on rejection. Reject cases:
+//   - HTTPS or no scheme        → "wget: only http:// supported"
+//   - non-IPv4-literal host     → "wget: hostname not supported (no DNS); use IP literal"
+//   - host == 0.0.0.0           → "wget: 0.0.0.0 is not a valid target"
+//   - bad port                  → "wget: bad port"
+//   - empty basename (URL ends  → "wget: URL has no basename"
+//     in /, or path is "" / ".")
+//
+// parseURL distinguishes "0.0.0.0" from malformed IPv4
+// input via parseIPOK so the user sees the right error.
+func parseURL(s string) (ip uint32, port uint16, path string, filename string, errMsg string) {
+	const httpsPrefix = "https://"
+	if hasPrefix(s, httpsPrefix) {
+		errMsg = "wget: only http:// supported"
+		return
+	}
+	const httpPrefix = "http://"
+	if !hasPrefix(s, httpPrefix) {
+		errMsg = "wget: only http:// supported"
+		return
+	}
+	rest := s[len(httpPrefix):]
+
+	// Split off the path at the first '/'.
+	pathStart := -1
+	for i := 0; i < len(rest); i++ {
+		if rest[i] == '/' {
+			pathStart = i
+			break
+		}
+	}
+	var authority string
+	if pathStart < 0 {
+		authority = rest
+		path = ""
+	} else {
+		authority = rest[:pathStart]
+		path = rest[pathStart:]
+	}
+
+	// Split authority on ':'.
+	host := authority
+	port = 80
+	for i := 0; i < len(authority); i++ {
+		if authority[i] == ':' {
+			host = authority[:i]
+			p := parseInt(authority[i+1:])
+			if p <= 0 || p > 65535 {
+				errMsg = "wget: bad port"
+				return
+			}
+			port = uint16(p)
+			break
+		}
+	}
+
+	if len(host) == 0 {
+		errMsg = "wget: missing host"
+		return
+	}
+	parsedIP, ok := parseIPOK(host)
+	if !ok {
+		errMsg = "wget: hostname not supported (no DNS); use IP literal"
+		return
+	}
+	if parsedIP == 0 {
+		errMsg = "wget: 0.0.0.0 is not a valid target"
+		return
+	}
+	ip = parsedIP
+
+	// Filename = last '/'-delimited segment of path. Reject "",
+	// "/", and "." / "/.".
+	if path == "" || path == "/" {
+		errMsg = "wget: URL has no basename"
+		return
+	}
+	last := -1
+	for i := 0; i < len(path); i++ {
+		if path[i] == '/' {
+			last = i
+		}
+	}
+	if last == len(path)-1 {
+		errMsg = "wget: URL has no basename"
+		return
+	}
+	filename = path[last+1:]
+	if filename == "." || filename == ".." {
+		errMsg = "wget: URL has no basename"
+		return
+	}
+	return
+}
+
+// hasPrefix reports whether s begins with prefix.
+func hasPrefix(s, prefix string) bool {
+	if len(s) < len(prefix) {
+		return false
+	}
+	for i := 0; i < len(prefix); i++ {
+		if s[i] != prefix[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// formatIP renders a host-order IPv4 uint32 as "a.b.c.d".
+func formatIP(ip uint32) string {
+	a := int((ip >> 24) & 0xff)
+	b := int((ip >> 16) & 0xff)
+	c := int((ip >> 8) & 0xff)
+	d := int(ip & 0xff)
+	return strconv.Itoa(a) + "." + strconv.Itoa(b) + "." +
+		strconv.Itoa(c) + "." + strconv.Itoa(d)
 }
 
 // splitSpace — copied from user/cmd/tcpcli/main.go:58–82.
@@ -48,4 +185,59 @@ func splitSpace(s string) []string {
 		i = j
 	}
 	return out
+}
+
+// parseIPOK is derived from user/cmd/tcpcli/main.go:84–116
+// but returns an explicit ok bool so callers can
+// distinguish the literal "0.0.0.0" from malformed input.
+// Returns (0, false) on parse failure; (ip, true) on
+// success (including ip == 0 for "0.0.0.0").
+func parseIPOK(s string) (uint32, bool) {
+	var parts [4]uint32
+	idx := 0
+	cur := uint32(0)
+	have := false
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c == '.' {
+			if !have || idx == 3 {
+				return 0, false
+			}
+			parts[idx] = cur
+			idx++
+			cur = 0
+			have = false
+			continue
+		}
+		if c < '0' || c > '9' {
+			return 0, false
+		}
+		cur = cur*10 + uint32(c-'0')
+		if cur > 255 {
+			return 0, false
+		}
+		have = true
+	}
+	if !have || idx != 3 {
+		return 0, false
+	}
+	parts[3] = cur
+	return parts[0]<<24 | parts[1]<<16 | parts[2]<<8 | parts[3], true
+}
+
+// parseInt — copied from user/cmd/tcpcli/main.go:120–133.
+// Decimal string → int; returns 0 on malformed input.
+func parseInt(s string) int {
+	if len(s) == 0 {
+		return 0
+	}
+	v := 0
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c < '0' || c > '9' {
+			return 0
+		}
+		v = v*10 + int(c-'0')
+	}
+	return v
 }
