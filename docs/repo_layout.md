@@ -145,7 +145,8 @@ gooos/
 │       ├── udpecho/main.go                # userspace UDP echo
 │       ├── dhcp/main.go                   # RFC 2131 DHCP client
 │       ├── tcpecho/main.go                # userspace TCP echo
-│       └── tcpcli/main.go                 # TCP active-open client
+│       ├── tcpcli/main.go                 # TCP active-open client
+│       └── wget/main.go                   # minimal HTTP/1.0 downloader (IP literal only)
 │
 └── src/                                   # kernel source (51 Go files + 7 .S files)
     ├── boot.S                             # Multiboot 1 header + 32→64 bootstrap

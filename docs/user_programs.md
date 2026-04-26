@@ -134,3 +134,4 @@ The full roster of programs embedded in the kernel ISO:
 | `dhcp` | RFC 2131 DHCP client |
 | `tcpecho` | TCP port-8081 echo server (userspace) |
 | `tcpcli` | TCP active-open client (`ip port message`) |
+| `wget` | Minimal HTTP/1.0 downloader. `wget http://<IPv4>[:port]/<path>` saves the response body to a flat-FS file named after the URL's basename. IP literal only (no DNS), HTTP only (no HTTPS / redirects / chunked). Body capped at the FS per-file limit (~256 KiB). Test recipe: `python3 -m http.server 8000` on the host, then `wget http://10.0.2.2:8000/<file>` from the gooos shell — see [networking_demos.md](networking_demos.md) for the host-side setup. |
