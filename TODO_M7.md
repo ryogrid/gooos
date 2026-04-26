@@ -23,7 +23,7 @@ Branch: `uni-proc-kernel-but-usrprog-smp`. Starting HEAD:
 - [x] Step 6 — flip `userspaceSMP=true` default + lock-rank doc + RR cleanup
 - [x] Step 7 — README + `docs/` refresh
 - [x] Reviewer sub-agent pass (`hoge.md` §5, 9-item checklist)
-- [ ] Final sweep — grep TODO/FIXME/XXX/HACK + TODO ↔ codebase ↔ R1..R13 cross-check + report
+- [x] Final sweep — grep TODO/FIXME/XXX/HACK + TODO ↔ codebase ↔ R1..R13 cross-check + report
 
 ## Baseline (HEAD `80a9fae`, pre-M7 code)
 
@@ -88,6 +88,22 @@ Branch: `uni-proc-kernel-but-usrprog-smp`. Starting HEAD:
     every time given enough time; the slow runs are
     not hangs (verified by 20s manual run). The latency
     increase is recorded as a Deferred M7-perf item.
+- **Final §10 verification matrix** (HEAD `58f5c6e`):
+  - `scripts/test_run_smp_keyboard.sh` 9/10 helpRan, 10/10 M9, 0/10 PF: PASS
+  - `scripts/test_shell_post_exec_prompt.sh` 9/10 helloPrinted, 0/10 panics: PASS
+  - `scripts/test_kthread_smoke.sh`: PASS (A=5 B=5)
+  - `scripts/test_ps.sh`: PASS (header=1 row=1)
+  - `scripts/test_net.sh`: PASS (after harness grep relaxation for "$ "-prefix)
+  - `scripts/test_tcp_longidle.sh 15`: PASS
+  - `scripts/test_tcp_phase[1-4].sh`: 4/4 PASS
+  - `scripts/test_tcp_phase5.sh`: PASS (after same harness grep relaxation)
+  - `scripts/test_ring3_distribution.sh` (NEW M7 PASS bar): PASS (markerprint cpu != 0)
+  - `scripts/test_smp_shell_preempt.sh` (re-purposed): PASS (markers=5)
+  - `make build`/`make lint`/`make verify-globals`: clean
+  - `make -C user all`: clean (K5 preserved — `user/target.json:9` still `"scheduler": "tasks"`)
+  - `grep -rIn 'TODO|FIXME|XXX|HACK' src/ user/ scripts/`: 0 new entries from M7
+  - R1..R13 invariant cross-check: every invariant established at a real `file:line`
+
 - **Reviewer pass** (HEAD `8735e39`): general-purpose
   sub-agent reviewed against `15_*.md` R1..R13 + M6
   U1..U10 + 9-item checklist from `hoge.md` §5. Result:

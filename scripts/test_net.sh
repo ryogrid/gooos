@@ -75,7 +75,12 @@ NETINIT=$(grep -c '^NET: initialized' "$OUT")
 ARPGRAT=$(grep -c '^ARP: sent gratuitous' "$OUT")
 ICMP=$(grep -c '^TEST: icmp echo reply PASS' "$OUT")
 NETBUF=$(grep -c '^TEST: netbuf lifecycle PASS' "$OUT")
-UDPLISTEN=$(grep -c '^UDP echo: listening' "$OUT")
+# §M7: under userspaceSMP=true the boot shell prints the
+# "$ " prompt before udpEcho's "UDP echo: listening" line
+# emerges, producing "$ UDP echo: listening on port 7" as a
+# combined line. Drop the ^anchor so the line matches with
+# or without the shell-prompt prefix.
+UDPLISTEN=$(grep -cE '(^|^\$ )UDP echo: listening' "$OUT")
 DIAG=$(grep -c '=== Network Diagnostics ===' "$OUT")
 : "${PCI:=0}"; : "${MAC:=0}"; : "${LINK:=0}"; : "${NETINIT:=0}"
 : "${ARPGRAT:=0}"; : "${ICMP:=0}"; : "${NETBUF:=0}"
