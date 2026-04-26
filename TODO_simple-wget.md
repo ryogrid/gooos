@@ -4,7 +4,7 @@ Design doc: [design_docs/01_simple-wget_overview.md](design_docs/01_simple-wget_
 
 ## Steps
 
-- [ ] 1. Create wget skeleton + Makefile wiring (usage stub + CMDS append)
+- [x] 1. Create wget skeleton + Makefile wiring (usage stub + CMDS append)
 - [ ] 2. URL parser (parseURL, parseIPOK, parseInt, splitSpace; print parsed components)
 - [ ] 3. HTTP transaction (TCP connect + send GET + read raw response into 4 KiB buf, print)
 - [ ] 4. Header parser (readHeaders, parseStatus, indexOfSeq; print status + body-prefix length)
