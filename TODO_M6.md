@@ -18,7 +18,7 @@ Branch: `smp-no-goroutine-in-kernel`. Starting HEAD:
 - [x] Step 4 — re-enable net services on BSP (§3.7/§3.8)
 - [x] Step 5 — SMP-distribution tests SKIP/re-purposed (§6.2)
 - [x] Step 6 — lock-rank doc + RR counter cleanup (§4)
-- [ ] Reviewer sub-agent pass (`hoge.md` §5)
+- [x] Reviewer sub-agent pass (`hoge.md` §5)
 - [ ] README + impldoc refresh (`hoge.md` §6)
 - [ ] Final sweep — grep TODO/FIXME/XXX/HACK + verification
 
@@ -59,6 +59,14 @@ Branch: `smp-no-goroutine-in-kernel`. Starting HEAD:
 - **Step 6** (HEAD `e49d47f` + Step 6 doc edits): keyboard
   10-iter helpRan=10/10, M8=10/10, M9=10/10, PF=0/10. ✅
   Doc-only changes do not regress correctness.
+- **Reviewer pass** (HEAD `f1aa3fe`, general-purpose
+  sub-agent): PASS-with-MINOR. 0 BLOCKING. Every
+  invariant U1..U10 is upheld by the code; §14 §8
+  verification matrix confirmed (keyboard PASS measured;
+  5 SMP scripts SKIP-gated; `make build` / `make lint` /
+  `make verify-globals` clean; K5 preserved — user-side
+  build untouched). The only MINOR is the README refresh,
+  which is the next workflow step.
 
 ## Deferred
 
