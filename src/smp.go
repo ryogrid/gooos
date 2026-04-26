@@ -341,7 +341,25 @@ func apEntry(apIndex uint64) {
 // M5.2 (scheduler=none): runtime.apScheduler doesn't exist
 // without a goroutine scheduler. Replace with the gooos kthread
 // scheduler loop directly.
+//
+// §14 invariant U2: under uniprocessorKernel the gooos kernel
+// runs as a uniprocessor on BSP. APs idle in `sti; hlt;` until
+// they receive a Ring-3 dispatch IPI (mechanism is M7 future
+// work). The previous `kschedLoop()` call is preserved as a
+// comment so a future `git revert` of the §14 commit restores
+// the SMP kernel scheduler in one diff.
 func apSchedulerEntry() {
+	if uniprocessorKernel {
+		// M6: AP kernel-mode idle. Per-CPU LAPIC timer continues
+		// to fire (initialised in apEntry); handlePreemptIPI
+		// short-circuits because kschedRunning[c]==nil. Any IPI
+		// (wakeup, freeze) wakes the CPU; without work to do,
+		// it loops back into hlt.
+		for {
+			sti()
+			hlt()
+		}
+	}
 	kschedLoop()
 }
 

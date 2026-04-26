@@ -128,8 +128,16 @@ func kschedPop(cpu uint32) *KernelThread {
 // kschedSteal dequeues one thread from `from`'s queue for `to`.
 // nil on empty. Caller (idle path) holds no other lock.
 //
+// §14 invariant U3: under uniprocessorKernel, only BSP runs
+// kthreads, so no AP queue ever has work to steal AND BSP never
+// needs to steal from itself. Returning nil unconditionally is
+// safe; the kschedLoop steal block (gated below) is bypassed.
+//
 //go:nosplit
 func kschedSteal(from, to uint32) *KernelThread {
+	if uniprocessorKernel {
+		return nil
+	}
 	if from >= maxCPUs || from == to {
 		return nil
 	}
@@ -182,8 +190,13 @@ func kschedLoop() {
 			return
 		}
 		t := kschedPop(cpu)
-		if t == nil {
+		if t == nil && !uniprocessorKernel {
 			// Try to steal from a peer.
+			//
+			// §14 invariant U3: under uniprocessorKernel only BSP
+			// has a populated queue; stealing is wasted work (and
+			// kschedSteal would return nil anyway). The block is
+			// kept for one-revert M7 restoration.
 			for i := uint32(1); i < numCoresOnline; i++ {
 				t = kschedSteal((cpu+i)%numCoresOnline, cpu)
 				if t != nil {

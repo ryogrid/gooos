@@ -14,7 +14,7 @@ Branch: `smp-no-goroutine-in-kernel`. Starting HEAD:
 - [x] Step 0 — add `scripts/test_run_smp_keyboard.sh` harness
 - [x] Step 1 — add `const uniprocessorKernel = true`
 - [x] Step 2 — pin every kthread spawn to BSP (§3.2/§3.3/§3.6)
-- [ ] Step 3 — APs idle in kernel mode (§3.1/§3.4/§3.5)
+- [x] Step 3 — APs idle in kernel mode (§3.1/§3.4/§3.5)
 - [ ] Step 4 — re-enable net services on BSP (§3.7/§3.8)
 - [ ] Step 5 — SMP-distribution tests SKIP/re-purposed (§6.2)
 - [ ] Step 6 — lock-rank doc + RR counter cleanup (§4)
@@ -44,6 +44,12 @@ Branch: `smp-no-goroutine-in-kernel`. Starting HEAD:
   still gated by `runMinimalKthreads=true`; boot shell does
   not exec before keystroke; functional behavior identical
   to baseline). Structural fix lands at Step 3.
+- **Step 3** (HEAD `82a123b` + Step 3 edits, APs idle in
+  kernel mode): **10-iter helpRan=10/10, M8=10/10, M9=10/10,
+  PF=0/10. ✅ §14 §8 PASS bar met.** Both Bug A (cross-CPU
+  PF) and Bug B (parked shell never drains) eliminated by the
+  apSchedulerEntry idle-loop change. The §14 hypothesis is
+  confirmed.
 
 ## Deferred
 
