@@ -14,18 +14,16 @@ Design doc: [design_docs/01_simple-wget_overview.md](design_docs/01_simple-wget_
 
 ## Deferred
 
-- **Verification §4–§9 require manual QEMU testing.** They
-  need a host-side `python3 -m http.server 8000` bound to a
-  TCP port, which the build sandbox refuses to start. The
-  build/lint/ISO/regression checks (§1–§3, §10–§11) cover
-  the gates the agent can run unattended; the user should
-  run §4–§9 interactively when convenient. The recipe is
+- **Verification §4 / §5 / §9 require manual QEMU testing.**
+  These need a host-side `python3 -m http.server 8000` bound
+  to a TCP port, which the build sandbox refuses to start.
+  Build/lint/ISO/regression checks (§1–§3, §10–§11) cover
+  the gates the agent can run unattended; deterministic
+  parseURL rejections (§6–§8) are now automated via
+  `scripts/test_wget_parse_rejections.sh`. The user should
+  run §4 / §5 / §9 interactively when convenient — recipes
   preserved verbatim in `design_docs/01_simple-wget_overview.md`
-  "Verification" §4 (happy path) and §9 (FS-limit), and
-  the error-path inputs (§5–§8) are deterministic strings
-  that will print the parseURL-rejection messages
-  unconditionally — no host server needed for §6–§8 in
-  practice.
+  "Verification" §4 (happy path), §5 (HTTP 404), §9 (FS-limit).
 
 ## Verification
 
@@ -34,9 +32,9 @@ Design doc: [design_docs/01_simple-wget_overview.md](design_docs/01_simple-wget_
 - [x] 3. `make iso` succeeds; `tmp/kernel.iso` exists (3779 sectors, ~7.4 MiB)
 - [ ] 4. Happy path (manual, QEMU) — **deferred to user; needs host http.server**
 - [ ] 5. Error path — HTTP 404 — **deferred to user; needs host http.server**
-- [ ] 6. Error path — HTTPS rejection — **deferred to user (deterministic; no server needed)**
-- [ ] 7. Error path — hostname rejection — **deferred to user (deterministic; no server needed)**
-- [ ] 8. Error path — empty basename — **deferred to user (deterministic; no server needed)**
+- [x] 6. Error path — HTTPS rejection — `scripts/test_wget_parse_rejections.sh` PASS (https=1)
+- [x] 7. Error path — hostname rejection — `scripts/test_wget_parse_rejections.sh` PASS (host=1)
+- [x] 8. Error path — empty basename — `scripts/test_wget_parse_rejections.sh` PASS (basename=1)
 - [ ] 9. FS-limit path (manual, QEMU) — **deferred to user; needs host http.server**
 - [x] 10. Regression — non-net build path: 12s QEMU smoke boot reached `gooos shell v0.1` + `$ ` prompt with no `panic`/`PF`/`FATAL` markers
 - [x] 11. Regression — net build path: `scripts/test_net.sh` PASS (UDP echo + ARP + ICMP + netbuf + netDiag); `scripts/test_tcp_phase5.sh` exit 0

@@ -203,6 +203,20 @@ this file from `user/build/*.elf`; the wget ELF lands
 automatically once it appears in the build directory. The
 kernel rebuild re-embeds it.
 
+### 3. `src/main.go` — boot-time FS registration
+
+The kernel writes each embedded ELF into the in-memory FS
+at boot via an explicit `fsCreate(name)` + `fsWrite(name,
+userElf_<name>[:])` pair (the registration is **not**
+auto-generated). Add a 3-line block for `wget.elf`
+mirroring the surrounding entries (`yieldtest.elf`,
+`tcpcli.elf`, etc.) so the shell's `gooos.Exec("wget.elf",
+args)` dispatch can find the binary. Without this entry
+the symbol exists in the kernel but the file does not
+appear in the FS, and the shell prints
+`elfSpawn: file not found: wget.elf` /
+`sh: command not found: wget`.
+
 ### 3. `README.md` (line 42 — BusyBox-style shell row)
 
 Append `wget` to the comma-separated external command

@@ -555,6 +555,10 @@ func main() {
 	fsWrite("yieldtest.elf", userElf_yieldtest[:])
 	serialPrintln("  yieldtest.elf: " + utoa(uint64(len(userElf_yieldtest))) + " bytes")
 
+	fsCreate("wget.elf")
+	fsWrite("wget.elf", userElf_wget[:])
+	serialPrintln("  wget.elf: " + utoa(uint64(len(userElf_wget))) + " bytes")
+
 	// Store a test file for cat/wc demos.
 	fsCreate("hello.txt")
 	fsWrite("hello.txt", []byte("Hello from the gooos filesystem!\nThis is a test file.\n"))
