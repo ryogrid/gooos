@@ -577,7 +577,16 @@ func processExit(exitCode uintptr) {
 		serialPrintln("processExit: child exit code " + utoa(uint64(exitCode)) +
 			", resuming parent")
 		serialPrintln("MARKER: M4 processExit pre-exitCh-send")
-		proc.exitCh <- exitCode
+		// §M6.fix-1: under scheduler=none + kthread parent, the
+		// parent's processWait polls proc.Exited (process.go:481)
+		// rather than `<-proc.exitCh`. The chan send was M6's
+		// root-cause known-issue (cap=1 chan; second send from
+		// kthread context panics via task.Pause). Skip the send
+		// entirely when the parent is a kthread; the chan path is
+		// kept for legacy goroutine-parent compatibility.
+		if kschedRunning[cpuID()] == nil {
+			proc.exitCh <- exitCode
+		}
 		serialPrintln("MARKER: M5 processExit post-exitCh-send")
 	} else {
 		serialPrintln("processExit: no parent, halting")

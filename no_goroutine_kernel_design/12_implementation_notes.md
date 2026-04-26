@@ -432,6 +432,33 @@ deletions remove every `go ` site, the M5 flip won't compile.
   (`scripts/test_net.sh`) PASS. The 5 SMP-distribution
   scripts SKIP under the flag and become M7 work.
 
+  **M6.fix-1 (post-cycle, on
+  `uni-proc-kernel-but-usrprog-smp`):** post-push the user
+  reported that under M6 the shell did not print a fresh
+  `$ ` prompt after `hello` / `ls`. Diagnosis with serial-
+  marker bisection found `ring3StackRelease` panicked with
+  "scheduler is disabled" inside `internal/task.Pause`
+  (rip 0x100fc1). Root cause: `ring3StackPoolCh chan int`
+  send under `scheduler=none` routes through TinyGo's
+  chansend → `task.Pause` path, which the patched runtime
+  hard-panics. Fix:
+  - `src/ring3_pool.go` — replaced `ring3StackPoolCh chan
+    int` (cap=`maxRing3Procs`) with a spinlock-protected
+    free bitmap (`ring3StackInUse [maxRing3Procs]uint32` +
+    `ring3StackPoolLk Spinlock` + `ring3StackPoolHnt`
+    round-robin scan hint). Mirrors `kthreadPool` pattern.
+  - `src/process.go` — gated `proc.exitCh <- exitCode` on
+    `kschedRunning[cpuID()] == nil` so the kthread parent
+    path (which polls `proc.Exited`) skips the legacy chan
+    send entirely. The chan path remains for goroutine-
+    parent compatibility.
+  Verification: `scripts/test_shell_post_exec_prompt.sh`
+  (new) — 10/10 hello echoed, 0/10 panics.
+  `scripts/test_run_smp_keyboard.sh` 10/10. Full §8 matrix
+  green. Pattern note: the same chan→spinlock substitution
+  applies to the still-open `pipe.ch chan byte` known issue
+  when the first pipe-using user program lands.
+
 ### P1 reviewer-pass MINOR findings (post-§13 Phase 4)
 
 The Phase 4 reviewer pass found 2 BLOCKING items (both fixed

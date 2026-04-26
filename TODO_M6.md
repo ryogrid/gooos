@@ -86,4 +86,24 @@ Branch: `smp-no-goroutine-in-kernel`. Starting HEAD:
 
 ## Deferred
 
-(items punted from this cycle; surface in final report)
+- **`pipe.ch chan byte` (Ring-3 pipe fds)** — pre-existing
+  known issue from `12_implementation_notes.md` § Open
+  issues + risks. Not addressed in M6.fix-1 because no
+  pipe-using user binary is currently in the test matrix;
+  the fix pattern (chan → spinlock-protected primitive)
+  is identical to M6.fix-1's `ring3StackRelease` change.
+  Wire when the first pipe-using program lands in M7+.
+
+## Post-cycle fixes
+
+- **M6.fix-1** (commit `<TBD>`): `ring3StackRelease`
+  panicked under scheduler=none because its `chan int`
+  send routes through TinyGo's `task.Pause` path. Symptom:
+  no `$ ` prompt after `hello`/`ls`. Fix: replaced
+  `ring3StackPoolCh chan int` with a spinlock-protected
+  free bitmap (mirrors `kthreadPool` pattern); also
+  flag-gated `proc.exitCh <- exitCode` send to skip the
+  send when parent is a kthread (parent uses `proc.Exited`
+  poll instead). New regression harness:
+  `scripts/test_shell_post_exec_prompt.sh` — 10/10 PASS,
+  0 panics. All §8 gates re-confirmed green.
