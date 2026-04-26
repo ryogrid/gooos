@@ -14,7 +14,7 @@ Branch: `uni-proc-kernel-but-usrprog-smp`. Starting HEAD:
 
 - [x] Bootstrap — create this tracker, commit M7 design docs, add `00_index.md` TOC entry
 - [x] Baseline — run smoke + keyboard + post-exec harnesses, record pre-M7 numbers
-- [ ] Step 0 — add `scripts/test_ring3_distribution.sh` per `17_*.md` §1
+- [x] Step 0 — add `scripts/test_ring3_distribution.sh` per `17_*.md` §1
 - [ ] Step 1 — add `const userspaceSMP = false` to `src/preempt_config.go`
 - [ ] Step 2 — Ring-3 tier scaffolding (`kschedQueuesRing3` + helpers)
 - [ ] Step 3 — APs dispatch Ring-3 tier under flag + BSP combined pump
@@ -39,7 +39,12 @@ Branch: `uni-proc-kernel-but-usrprog-smp`. Starting HEAD:
 
 ## Per-step measurements
 
-(populated as each step lands)
+- **Step 0** (HEAD `337977c`, no §M7 code yet): the new
+  harness ran cleanly, made an ISO with
+  `runSMPShellPreemptProbe=true`, captured 15 s of serial
+  output, and reported FAIL with `distinct_cpus=0..1`
+  (cpuhog + markerprint run entirely on BSP under M6 —
+  the very condition M7 fixes).
 
 ## Deferred
 
